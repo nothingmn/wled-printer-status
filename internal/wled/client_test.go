@@ -576,6 +576,87 @@ func TestTheClientSerialisesItsCalls(t *testing.T) {
 	}
 }
 
+// panelStateBody is what a 2D controller answers: the segment is a rectangle, so it
+// carries row bounds beside the LED bounds. The numbers are the ones the panel this
+// module is meant to drive reported.
+const panelStateBody = `{"on":true,"bri":128,"transition":7,"mainseg":0,"seg":[
+  {"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"len":256,"grp":1,"spc":0,"of":7,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"col":[[255,0,0],[0,0,0],[0,0,0]],"fx":153,"sx":169,"ix":207,"pal":0,"sel":true}
+]}`
+
+// TestInfoCarriesTheMatrixGeometry proves the facts that let one client serve both a
+// few-pixel strip and a 16,384-pixel panel: the geometry when the controller
+// publishes it, zero when it does not, and zero rather than an error when it
+// publishes something this package cannot read — the LED count of such a controller
+// is still worth having.
+func TestInfoCarriesTheMatrixGeometry(t *testing.T) {
+	for _, panel := range []struct {
+		name   string
+		body   string
+		leds   int
+		width  int
+		height int
+	}{
+		{
+			name:   "a panel",
+			body:   `{"ver":"14.7.0-mdev","name":"morpheus","leds":{"count":16384,"maxseg":32,"matrix":{"w":256,"h":64},"rgbw":false},"udpport":21324,"live":false}`,
+			leds:   16384,
+			width:  256,
+			height: 64,
+		},
+		{
+			name: "a strip, which publishes no matrix at all",
+			body: `{"ver":"0.14.0","leds":{"count":30,"maxseg":16}}`,
+			leds: 30,
+		},
+		{
+			name: "a matrix this package cannot read",
+			body: `{"ver":"0.14.0","leds":{"count":30,"maxseg":16,"matrix":"nonsense"}}`,
+			leds: 30,
+		},
+	} {
+		server := serve(t, http.StatusOK, panel.body)
+
+		info, err := client(t, server.URL).Info(context.Background())
+		if err != nil {
+			t.Fatalf("%s: Info: %v", panel.name, err)
+		}
+
+		if info.MatrixWidth != panel.width || info.MatrixHeight != panel.height {
+			t.Fatalf("%s: the matrix reads %dx%d, want %dx%d",
+				panel.name, info.MatrixWidth, info.MatrixHeight, panel.width, panel.height)
+		}
+
+		if info.LEDCount != panel.leds {
+			t.Fatalf("%s: the LED count reads %d, want %d", panel.name, info.LEDCount, panel.leds)
+		}
+	}
+}
+
+// TestStateCarriesTheRowBoundsOfAPanel proves the segment model carries both axes: on
+// a panel a segment is a rectangle, and its row bounds are read beside its LED bounds
+// so a caller can tell a full-panel segment from a band of one.
+func TestStateCarriesTheRowBoundsOfAPanel(t *testing.T) {
+	server := serve(t, http.StatusOK, panelStateBody)
+
+	state, err := client(t, server.URL).State(context.Background())
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+
+	if len(state.Segments) != 1 {
+		t.Fatalf("State read %d segments, want 1", len(state.Segments))
+	}
+
+	segment := state.Segments[0]
+	if segment.Start != 0 || segment.Stop != 256 {
+		t.Fatalf("segment 0 covers LEDs %d-%d, want 0-256", segment.Start, segment.Stop)
+	}
+
+	if segment.StartY != 0 || segment.StopY != 64 {
+		t.Fatalf("segment 0 covers rows %d-%d, want 0-64", segment.StartY, segment.StopY)
+	}
+}
+
 // TestADecodeFailureKeepsTheCause proves a body that is not the JSON it should be is
 // reported with the endpoint and the parser's own error, rather than a bare "bad
 // answer" that leaves a person guessing which endpoint and which byte.

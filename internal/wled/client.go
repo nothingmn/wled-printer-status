@@ -33,6 +33,15 @@
 // there. The cost is that a call which is timing out holds the others for up to
 // the timeout, which is why the timeout is short.
 //
+// # A strip and a panel
+//
+// The same client drives a few-pixel strip and a 16,384-pixel panel, because the
+// only difference it sees is geometry: Info carries the panel's width and height
+// when the controller publishes a matrix, and a State segment carries its row
+// bounds beside its LED bounds. Nothing here draws. There is no rectangle helper,
+// no mapping from a position to a pixel, and SetRange stays what it is — a
+// contiguous run of LEDs in one dimension.
+//
 // # What this package does not do
 //
 // It never writes {"live":true}, which hijacks the strip into realtime mode and
@@ -251,6 +260,13 @@ type Info struct {
 	// MaxSegments is how many segments the controller supports, "leds.maxseg".
 	// Also controller-dependent.
 	MaxSegments int
+	// MatrixWidth is the panel's width in pixels, "leds.matrix.w", and 0 on a 1D
+	// controller, which publishes no matrix at all.
+	MatrixWidth int
+	// MatrixHeight is the panel's height in pixels, "leds.matrix.h", and 0 on a 1D
+	// controller. A non-zero height is what tells a caller the LEDs are a
+	// rectangle laid out row by row rather than one run.
+	MatrixHeight int
 	// UDPPort is the port its realtime UDP protocols listen on, "udpport". This
 	// package does not use them; the number is here because a caller that
 	// configures the controller may need it.
@@ -260,11 +276,14 @@ type Info struct {
 	Live bool
 }
 
-// Segment is one length of the strip, as the controller reports it. The fields
-// WLED omits when they equal the surrounding default read here as zero: in
-// particular an omitted "on" reads as false and an omitted "bri" as 0, so a caller
-// that needs to tell "off" from "not stated" should compare against the strip's
-// own brightness and power.
+// Segment is one length of the strip, as the controller reports it. A 2D
+// controller expresses a segment as a rectangle, so the row bounds travel beside
+// the LED bounds; on a 1D controller both are absent and read as zero.
+//
+// The fields WLED omits when they equal the surrounding default read here as zero:
+// in particular an omitted "on" reads as false and an omitted "bri" as 0, so a caller
+// that needs to tell "off" from "not stated" should compare against the strip's own
+// brightness and power.
 type Segment struct {
 	// ID is the segment's number, which is the id every write below addresses.
 	ID int
@@ -272,6 +291,12 @@ type Segment struct {
 	Start int
 	// Stop is the LED after its last one, exclusive, as WLED defines it.
 	Stop int
+	// StartY is the first row it covers, inclusive, on a 2D controller; 0 on a 1D
+	// one, which has no rows.
+	StartY int
+	// StopY is the row after its last one, exclusive, on a 2D controller; 0 on a 1D
+	// one.
+	StopY int
 	// On reports whether the segment is drawn.
 	On bool
 	// Colors is the segment's palette: one colour for a solid segment, up to
@@ -370,6 +395,11 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // Info reads the controller's facts. WLED answers with more fields than this
 // struct names, on every version, and they are ignored: a package that refused an
 // answer because a firmware added a key would break on the next firmware update.
+//
+// The matrix geometry is read separately and tolerantly. A 1D controller publishes
+// no "leds.matrix", and a firmware that publishes something else there is a
+// controller whose LED count this package can still use, so a matrix it cannot read
+// leaves the two fields at 0 rather than failing the call.
 func (c *Client) Info(ctx context.Context) (Info, error) {
 	var answer struct {
 		Version string `json:"ver"`
@@ -377,8 +407,9 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 		UDPPort int    `json:"udpport"`
 		Live    bool   `json:"live"`
 		LEDs    struct {
-			Count       int `json:"count"`
-			MaxSegments int `json:"maxseg"`
+			Count       int             `json:"count"`
+			MaxSegments int             `json:"maxseg"`
+			Matrix      json.RawMessage `json:"matrix"`
 		} `json:"leds"`
 	}
 
@@ -386,14 +417,41 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 
+	width, height := decodeMatrix(answer.LEDs.Matrix)
+
 	return Info{
-		Version:     answer.Version,
-		Name:        answer.Name,
-		LEDCount:    answer.LEDs.Count,
-		MaxSegments: answer.LEDs.MaxSegments,
-		UDPPort:     answer.UDPPort,
-		Live:        answer.Live,
+		Version:      answer.Version,
+		Name:         answer.Name,
+		LEDCount:     answer.LEDs.Count,
+		MaxSegments:  answer.LEDs.MaxSegments,
+		MatrixWidth:  width,
+		MatrixHeight: height,
+		UDPPort:      answer.UDPPort,
+		Live:         answer.Live,
 	}, nil
+}
+
+// decodeMatrix reads "leds.matrix" into a width and a height, or 0 and 0 when the
+// controller publishes none or publishes something unrecognisable.
+func decodeMatrix(raw json.RawMessage) (int, int) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return 0, 0
+	}
+
+	var matrix struct {
+		Width  int `json:"w"`
+		Height int `json:"h"`
+	}
+
+	if err := json.Unmarshal(raw, &matrix); err != nil {
+		return 0, 0
+	}
+
+	if matrix.Width < 0 || matrix.Height < 0 {
+		return 0, 0
+	}
+
+	return matrix.Width, matrix.Height
 }
 
 // State reads what the strip is doing now.
@@ -406,6 +464,8 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			ID         int             `json:"id"`
 			Start      int             `json:"start"`
 			Stop       int             `json:"stop"`
+			StartY     int             `json:"startY"`
+			StopY      int             `json:"stopY"`
 			On         bool            `json:"on"`
 			Colors     json.RawMessage `json:"col"`
 			Effect     int             `json:"fx"`
@@ -437,6 +497,8 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			ID:         segment.ID,
 			Start:      segment.Start,
 			Stop:       segment.Stop,
+			StartY:     segment.StartY,
+			StopY:      segment.StopY,
 			On:         segment.On,
 			Colors:     colors,
 			Effect:     segment.Effect,
@@ -630,10 +692,17 @@ type writeState struct {
 
 // writeSegment is one segment of that body, in the order the WLED documentation
 // writes it: which segment, which LEDs, whether it is drawn, its colour, its effect.
+//
+// The row bounds are here because a 2D controller expresses a segment as a rectangle
+// in both axes, and the two are omitted when unset: nothing in this package draws a
+// rectangle, so a write sent from here carries LED bounds alone and a controller with
+// rows keeps the rows it already had.
 type writeSegment struct {
 	ID     int     `json:"id"`
 	Start  *int    `json:"start,omitempty"`
 	Stop   *int    `json:"stop,omitempty"`
+	StartY *int    `json:"startY,omitempty"`
+	StopY  *int    `json:"stopY,omitempty"`
 	On     *bool   `json:"on,omitempty"`
 	Colors [][]int `json:"col,omitempty"`
 	Effect *int    `json:"fx,omitempty"`
