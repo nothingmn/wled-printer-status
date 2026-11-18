@@ -16,14 +16,25 @@ version: 0.1.0
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT
-# What a marketplace card prints beside the name: the title a person reads,
-# one sentence about this module, and who answers for it. The install copies
-# them into the declaration, so `GET /api/v1/resources` carries them for an
-# installed module. Write your own sentence here, a title if the name alone reads badly, and your name or
-# your team's beside it.
-# title: Your module's name
-summary: One sentence saying what wled-printer-status does.
-# codeowner: your-name
+# What a catalogue shows beside the short name: the title a person reads, one
+# sentence saying what this module does, who answers for it, where a defect is
+# filed, and how far along it is. The install copies these into the declaration,
+# so `GET /api/v1/resources` carries them for an installed module.
+#
+# The summary is one sentence on purpose, and every part of it is true: one
+# printer, one controller, a colour, a filled bar. Nothing about a fleet, an
+# animation or a schedule, because none of those exists here yet.
+title: WLED Printer Status
+summary: Shows one Prusa printer's live state as a colour and its progress as a filled bar on a WLED light or matrix panel.
+# Who answers for this module: the GitHub handle that owns the repository.
+codeowner: nothingmn
+# Where a defect is filed: this repository's own issues page.
+issue_tracker: https://github.com/nothingmn/wled-printer-status/issues
+# How far along the module is. The checkout does not define a token set for this
+# field — it is read as free text — so `experimental` is this seat's choice and not
+# a known value: the module has run once against one printer, and no release has yet
+# been proven on hardware in somebody's room.
+lifecycle: experimental
 # The module wire major the process half speaks.
 contract_major: 1
 # Where the fragment describing the routes is, inside this repository.
@@ -111,5 +122,7 @@ needs:
 permissions:
   # read one device and follow its event stream
   - observe
-events:
-  changed: wled-printer-status.changed
+# No events are declared. An entry here says something publishes an event on that
+# endpoint, and nothing in this tree does: no file names the type outside this
+# manifest, and no code in this module emits one. The key comes back with the
+# publisher, the same way `observe` came back with the reader that uses it.
