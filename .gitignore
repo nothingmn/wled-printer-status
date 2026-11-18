@@ -1,0 +1,3 @@
+# What a build writes. It is made again from the files beside it, so it is
+# never committed.
+/dist/

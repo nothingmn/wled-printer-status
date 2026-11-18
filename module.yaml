@@ -1,0 +1,75 @@
+# The manifest for wled-printer-status, a module that is the Go process in main.go and
+# nothing else. There is no ui block, so it draws nothing in the app.
+#
+# `prusa-connect module add` reads it out of the release and writes one
+# declaration from it.
+#
+# The namespace is absent on purpose. The host derives it from the repository
+# address the operator installed, so no module can name another module's
+# address. For this module that is com.github.aux.robchartier.wled-printer-status.
+
+name: wled-printer-status
+# The kind the one instance is declared under. It offers the service runtime,
+# which is what a module with a process needs.
+kind: sink
+version: 0.1.0
+# The licence this module is released under. The marketplace shows it and
+# refuses a release without one. An SPDX identifier is the usual form.
+license: MIT
+# What a marketplace card prints beside the name: the title a person reads,
+# one sentence about this module, and who answers for it. The install copies
+# them into the declaration, so `GET /api/v1/resources` carries them for an
+# installed module. Write your own sentence here, a title if the name alone reads badly, and your name or
+# your team's beside it.
+# title: Your module's name
+summary: One sentence saying what wled-printer-status does.
+# codeowner: your-name
+# The module wire major the process half speaks.
+contract_major: 1
+# Where the fragment describing the routes is, inside this repository.
+openapi: openapi.json
+# The platforms the release ships a binary for, each a GOOS_GOARCH pair. Drop
+# the ones you do not build, and add the ones you do.
+platforms:
+  - linux_amd64
+  - linux_arm64
+  - darwin_arm64
+  - windows_amd64
+
+# Every setting this module reads, each with its type, its default and one
+# sentence saying what it controls. The host applies every default, writes the
+# `config:` block of the instance over it key by key, and sends the result on
+# plugin.configure before the first request arrives. A key not named here is
+# refused before the process starts, and nothing in main.go reads an
+# environment variable, so this list is where an operator finds every knob.
+#
+# An operator who wants another line writes:
+#
+#   resources:
+#     sink:
+#       wled-printer-status:
+#         config:
+#           message: Ready.
+options:
+  - key: message
+    type: string
+    default: "Wled Printer Status is serving."
+    summary: The line GET /wled-printer-status answers with.
+
+# The memory in MiB the server may budget for the process, children included.
+# needs:
+#   memory_mib: 256
+
+# The actions this module may take as itself are a request rather than a grant.
+# Add them here and the operator reads them before `module add -approve` writes
+# them into the declaration and grants this module what they name. There is no
+# entry below, because this module acts
+# only for the person the host authorized and does nothing of its own: no poll,
+# no sync loop, no background work. Write one line per permission saying what it
+# lets this module do.
+#
+# permissions:
+#   # read the fleet and the event stream, so the page can list devices
+#   - observe
+# events:
+#   changed: wled-printer-status.changed
