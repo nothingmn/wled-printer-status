@@ -30,6 +30,14 @@ What those runs proved, on the hardware rather than in a test:
 - **A picture that has stopped moving is written again once a minute**, which is how a controller that
   rebooted into its own saved state comes back to the printer's picture while the printer has nothing new
   to say.
+- **A transition is an event, not just a colour.** When the printer's state word moves, the module
+  puts a picture on the light for a fixed time and then hands the light back to the steady frame. The
+  first one is `FINISHED`: on a panel the word is spelled across it — the segment's own name, drawn by
+  WLED's scrolling-text effect at four times the glyph size, in the finished green — for one minute,
+  after which the whole panel in the finished green takes over. A print that ran into `FINISHED` under
+  this build put exactly that on the panel; the read-back is in
+  [`docs/installing-locally.md`](docs/installing-locally.md). On a strip the finished state stays the
+  solid green it has always been, because the text effect needs a matrix to draw on.
 - **A borrowed segment works on a strip somebody else also uses.** On a six-zone desk light — 48 LEDs,
   WLED 16.0.1, six named zones — the module drove one of the six for the length of a print with the fill
   moving inside that zone, left the other five byte-identical, wrote no brightness and no power on a strip
@@ -37,12 +45,17 @@ What those runs proved, on the hardware rather than in a test:
 
 What that has not shown, and these are gaps rather than formalities: the **starting** state, before a
 print begins to move, has never been seen on a panel, and neither have **idle** or a printer that has gone
-quiet mid-job. And **it has not been through the marketplace**: this beta is the first release, so nobody
-has yet installed it the way a stranger would.
+quiet mid-job. **Nobody has looked at the `FINISHED` word.** It is on the panel — the device reads back the
+name, the effect, the grouping and the finished green, and the install record quotes that read-back — but
+those are the fields a word is drawn from, not the word: whether the letters are the size and in the place
+the parameters intend is a question for eyes, and WLED's websocket pixel read returned nothing on this
+panel the one time it was tried. And **it has not been through the marketplace**: this beta is the first
+release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
-product. Animations, the panel's richer display, a brightness schedule and the composer are still open, and
-none of them is here; the open ones are written down in
+product. One event is here and the mechanism for the rest is; what is still open is the rest of the
+animations — a print starting and a filament change are both wanted and neither is designed — the panel's
+richer display, a brightness schedule and the composer. The open ones are written down in
 [`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## What it is meant to do
@@ -96,6 +109,19 @@ the last write the controller took, so while a print is moving the ordinary writ
 the repaint never fires. It costs traffic only when the picture has stopped moving, where it is one
 write a minute.
 
+**What just happened is an event, not a frame.** A frame is a function of the printer's state, so it
+cannot say that the state *moved* — a whole panel in the finished green looks the same in the first second
+of a finished print as it does an hour later. So the driver turns a state change into an event: a picture
+and a duration, decided from the state the printer left and the state it arrived in, with no clock and no
+socket in the decision. The writer holds that picture for its duration and then goes back to the frame it
+would otherwise have shown; the steady frame the driver keeps deciding waits in the one slot meanwhile, so
+an event delays a frame by its own duration and no longer. The one entry so far is `FINISHED` on a panel:
+the word, spelled across it in the finished green, for a minute (`finishedEventHolds`). A strip is never
+sent it — the text effect needs a matrix and falls back to a solid colour on a run of pixels, and the
+operator asked for his strip to keep its green — and neither is a segment borrowed from a controller
+somebody else also drives, because an animation nobody asked for is not something this module puts on
+another person's light.
+
 A write that fails is not retried on the next tick. The module waits — a second after the first failure,
 then doubling to half a minute — and a picture that changes during that wait is held and sent when the
 controller answers again rather than added to a pile of attempts. The log says so once per change of
@@ -148,8 +174,8 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **148 tests** — 51 in
-the root package, 20 in `internal/printer`, 17 in `internal/render`, 40 in `internal/wled`, 14 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **163 tests** — 65 in
+the root package, 20 in `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in
 `internal/ddp` and 6 in `internal/matrix` — and they pass without touching a network or a real controller:
 the light and the printer are both faked in the tests that need one, and the ones about a minute-long
 heartbeat or a five-minute outage move a fake clock instead of waiting. There is no `go.sum`: the only

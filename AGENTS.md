@@ -56,6 +56,7 @@ Everything odd about this repository follows from that one sentence:
 | `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
 | `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
 | `watch.go` | **The watch.** One `printer.Source`, one `writer` and one `driver` per binding; one `wled.Client` and one write `gate` per controller, so the bindings on one box take turns at its single small web server. `start` builds everything before any goroutine starts, so a set it cannot run leaves the light as it was. Package `main`. |
+| `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the three requests a word on a panel takes. Package `main`, beside the frame path because it is the same writer. |
 | `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
 | `internal/ddp/` | A second transport: frames of pixels over DDP/UDP to port 4048. **Not the shipping path** — JSON over HTTP is what drives the light, because only it reads back and carries names and effects. DDP exists for the day the module draws its own pictures, and is proved to draw the same frame as the JSON body. |
 | `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
@@ -222,6 +223,47 @@ write those pixels; and every borrowed binding owes its own capture and its own 
 multiplies as bindings grow. A whole-controller binding (-1) claims every segment on its box and
 therefore collides with anything else there — the check refuses that pairing rather than letting a
 two-rectangle panel body take the segments somebody else's zone lives in.
+
+**5.13 An event is a transition, and a strip gets nothing.** A frame is a function of the printer's state;
+an event is a function of the transition between two states, which is the one thing a frame cannot carry,
+because a frame does not know what came before it. `event.go` holds the whole of it: `eventFor` takes the
+two state words and the controller's geometry and returns a picture and a duration, purely, so it is
+tested with no clock, no socket and no device; the writer stamps the deadline from its own clock and holds
+the picture for exactly that long.
+
+Four rules, each with the failure it prevents:
+
+- **A strip gets nothing.** WLED's text effect (id 122) needs a two-dimensional target: on a 1D strip the
+  firmware falls back to a **solid colour**, so the three requests a word costs buy no word at all. A
+  strip's finished state is the whole run in the finished green, which is what the operator asked for on
+  that light. §5.4 is the same fact from the other side.
+- **A borrowed segment gets nothing, at the writer's door.** `fire` refuses before the event is even
+  stored. A module pointed at one zone of somebody else's controller was given a colour to show there,
+  not an animation to perform; it writes no brightness and no power on that controller either, and an
+  unrequested animation is the one thing a zone's owner would not have agreed to. Suppression beats
+  carrying the word while preserving the captured name and bounds, because the safest thing to put on a
+  light somebody else is using is nothing.
+- **Only a transition counts.** The driver's first snapshot is a baseline, so a restart fires nothing even
+  if the printer is already `FINISHED`; and a state word that stands still fires nothing however often it
+  is read. Both are the `transitions` bookkeeping the log already kept, reused rather than reimplemented.
+- **An event never costs a frame more than its own duration.** The steady frame the driver keeps deciding
+  waits in the writer's one slot while the event holds, newest first; at the deadline the frame goes out.
+  When the event lands the writer drops what it last delivered (`last = nil`), because the picture on the
+  light has changed underneath it and the frame that follows must paint rather than be suppressed as
+  "already shown". A failed event write goes through the same doubling backoff and the same
+  one-line-per-widening log as any other write, so a controller that is off costs a handful of lines, not
+  one per tick.
+
+Adding an event is one case in `eventFor` plus its word, colour and hold: the next two wanted (a print
+starting, a filament change) need their animation and duration decided by the operator before they get
+one, and a case invented here would be a requirement nobody agreed to. An entry whose picture is not a
+word needs a second body in `paintEvent` as well, and that is a design decision of its own.
+
+**And a name is not cleared everywhere.** The borrow work measured that a body writing a segment without
+its `n` clears that segment's name — WLED 16.0.1 on the desk light. The same steady body was written to
+the panel (WLED 14.7.0-mdev) after a `FINISHED` event and the name survived: segment 0 read
+`"n":"FINISHED"` with `fx` back to 0. So write the name **last** when a word matters, which is what
+`paintEvent` does, and build nothing that depends on a write without a name removing one.
 
 ## 6. The supervision you live inside
 

@@ -293,6 +293,70 @@ say which writer each difference belongs to.
 `10.0.0.136` was restored to the state captured for it before this work, by POSTing that document back, and
 reads back with no field differing from it.
 
+**Fifth run, 2026-11-18 22:07Z, from `c649b90`.** The desk light went back to its owner and the instance was
+pointed at the panel: `controller_address` `http://10.0.0.136`, the same printer id, `brightness` 128, and
+**no `segment`** in the settings — the whole controller. The release was built from `c649b90`, whose
+`linux_amd64` digest is `b6f96bb0c75c5983a2a6718822b25488c77735851b87df00ee7235df64b13b54`, and that is what
+the installed binary reads back. `module add` answered `5 files verified against checksums.txt`,
+`memory 32 MiB, set by the author`, `enabled yes`. `docker restart prusa_connect` came back `healthy` in
+twelve seconds, readiness answered `serving 4 declared 4 blocked []`, the instance `ready`, and the log:
+
+```console
+… wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128
+… wled-printer-status: the controller drives 16384 LEDs
+… wled-printer-status: the controller is a 256x64 panel, so a frame is drawn as a rectangle
+… pid=14 ppid=1 cmd=config/config.d/modules/wled-printer-status/bin/wled-printer-status_linux_amd64
+```
+
+The desk light, given back before the new instance started:
+
+```console
+… gave segment 2 "Front 1" back to http://10.0.0.253: pixels 14-24, colour 8,255,0 0,0,0 0,0,0,
+  effect 102, brightness 255
+```
+
+All six segments read back afterwards: `Base 1`, `Back 1`, `Base 2`, `Back 2` and `Front 2` byte-identical
+to the document captured before the repoint, and `Front 1` at 14–24 in `8,255,0` with `fx` 102 — the borrow's
+own capture, not the green bar it was carrying at the moment of the repoint, which is the give-back doing
+its job. The controller's `bri` stayed 255 and `mainseg` 5 throughout.
+
+The panel tracked the print, and then spelled out the transition. Two pairs, taken in the same session:
+
+```console
+--- 22:08:28Z  module  "state":"PRINTING","frame":{"colour":{"r":0,"g":170,"b":0},"lit":8683,"total":16384,"reason":"progress"}
+--- 22:08:28Z  panel   seg 0 start 0 stop 136 startY 0 stopY 64  col [[0,170,0]]  fx 0
+                      136/256 = 53.1 %, and 8683/16384 = 53.0 %
+
+--- 22:58:21Z  module  "state":"FINISHED","frame":{"colour":{"r":0,"g":170,"b":0},"lit":0,"total":16384,"reason":"not-a-live-job"},
+                      "last_send":{"at":"2026-11-18T22:58:18.461221809Z","ok":true}
+--- 22:58:21Z  panel   seg 0 start 0 stop 256 startY 0 stopY 64 len 256 grp 4 on true
+                      n "FINISHED"  col [[0,170,0]]  fx 122  sx 128  ix 24  pal 0  c1 0  c2 0  c3 0
+                      seg 1 on false
+--- 22:58:18Z  log     the printer Hermes MK4 went from PRINTING to FINISHED
+```
+
+That is the event on the device: the word as the segment's name, the effect at 122, the grouping at 4 and
+the finished green, over the whole panel, a second after the printer said `FINISHED`. A minute later the
+steady frame took the light back —
+
+```console
+--- 22:59:18Z  panel   seg 0 start 0 stop 256 startY 0 stopY 64 on true col [[0,170,0]] fx 0
+                      seg 1 start 253 stop 256 on false
+```
+
+— which is `last_send` at 22:59:18, sixty seconds after the event's own write. Two things a reader should
+know about that second read: the word is gone from the drawing because `fx` is back to 0, and **the name
+survived** — `n` still reads `FINISHED` — where on WLED 16.0.1 the desk light cleared a name from any body
+written without one. The clear-the-name behaviour is firmware's, not the wire's, so nothing may depend on
+it; the event writes the name last for that reason.
+
+What is still unverified: **nobody has looked at the light.** The read-back proves the fields the word is
+drawn from; whether the letters are 48 pixels tall and where `ix` 24 puts them is a question for eyes, and
+WLED's websocket pixel read returned all-zero frames the one time it was tried on this panel. `grp` 4 and
+`ix` 24 are this build's guess at the operator's *"big green letters"*.
+
+The two release directories from `bd85035` and `d141884` were removed after this install proved healthy.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
