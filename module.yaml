@@ -55,6 +55,29 @@ options:
     type: string
     default: "Wled Printer Status is serving."
     summary: The line GET /wled-printer-status answers with.
+  - key: controller_address
+    type: string
+    required: true
+    summary: The WLED controller to drive, as its base URL such as http://10.0.0.136, with no path and no trailing slash.
+  - key: printer
+    type: string
+    summary: The printer to watch, by the server's device id for it or by the name an operator gave it. Empty watches the only printer the instance holds, and refuses to choose between several.
+  - key: brightness
+    type: int
+    default: "128"
+    summary: The brightness written to the controller once at start, 0-255. This module never changes it afterwards.
+
+# Every connection this module makes outside Prusa Connect, which the operator
+# reads before they approve the install. There is exactly one: the controller they
+# named above. It is an `option:` entry rather than a `host:` one because the address
+# is typed in rather than one this module could declare — a fixed host here would be a
+# module that can only ever drive one light.
+egress:
+  - option: controller_address
+    ports: [80]
+    from: process
+    why: The module drives the WLED controller the operator names, and a WLED controller answers HTTP on its own port 80.
+    sends: The current status colour and progress, as a WLED state write to /json/state. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
 
 # The memory in MiB the server may budget for the process, children included.
 # needs:
@@ -65,15 +88,14 @@ options:
 # them into the declaration and grants this module what they name. Write one line
 # per permission saying what it lets this module do.
 #
-# No permission is requested as of 2026-11-18. Watching a printer will need
-# `observe`: without it a device read answers an empty page and the subscription
-# is refused. That reader — subscribing to the device event stream and reading
-# one device — lives in internal/printer and is not wired into main.go, so
-# nothing here uses the grant, and asking for it would be a false statement to
-# the operator installing this module. Restore it with the reader:
-#
-#   permissions:
-#     # read one device and follow its event stream
-#     - observe
-# events:
-#   changed: wled-printer-status.changed
+# `observe` returned on 2026-11-18, with the reader that uses it: the module now
+# lists one device to turn the `printer` setting into an id, reads that device, and
+# follows its event stream, and all three are calls it makes as itself with nobody
+# behind them. It was withheld until then because the reader existed in
+# internal/printer and nothing the module served called it, and asking for a grant
+# nothing uses is a false statement to the operator installing this module.
+permissions:
+  # read one device and follow its event stream
+  - observe
+events:
+  changed: wled-printer-status.changed

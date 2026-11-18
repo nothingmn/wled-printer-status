@@ -8,16 +8,17 @@ that somebody walking past can tell what the printer is doing without opening an
 
 ## Status
 
-**This module is early.** The Prusa Connect half — reading one printer's state, and honouring a printer
-that has gone quiet — and the WLED half — driving a light in three tiers — are both written and tested,
-but neither is wired into the program the host launches. The module as installed serves one fixed status
-route: `GET /wled-printer-status` answers a line of text you set in `module.yaml`, and the principal the
-host says is calling. It does not light anything up.
+**This module is early, and it has never been run against a live host or a live controller.** What is
+written is wired: the program the server launches reads one printer, decides what a 1D strip should
+show, and writes that to the controller named in its settings. `GET /status` answers what it currently
+thinks — the printer, how old its reading is, the frame it has decided, and what the last write to the
+light did — so a person can read the decision without walking over to the light.
 
-So: do not install this expecting a lit lamp. Install it if you want to watch the plumbing work, or if
-you intend to help finish it. Nothing here is a workaround for that — the code that decides what the
-light should show now exists for a 1D strip (`internal/render`), but nothing calls it yet, so nothing is
-lit.
+So: it is a working first light and not a finished product. Colour and a progress bar are the part that
+is decided. Animations, the panel's richer display, a brightness schedule and the composer are still
+open, and none of them is here; the open ones are written down in
+[`docs/product-requirements.md`](docs/product-requirements.md). Nothing has been proven on real
+hardware: there is no record of this module driving a strip in somebody's room.
 
 ## What it is meant to do
 
@@ -37,9 +38,10 @@ Both halves of that are built:
   so that a light which cannot animate can still show a colour and a light which cannot draw a rectangle
   can still be given individual pixels.
 
-What is missing is the rest of the decision layer: which tier to use on a given controller, what
-animations play at the events the operator named, how often to look, and what to do when two things want
-the light at once. Those are product decisions, not coding ones, and the ones still open are written down
+The 1D strip's share of the decision is made: the state's colour, and a fill for the job's progress. What
+is missing is the rest of the decision layer: which tier to use on a controller that can do more than
+colour, what animations play at the events the operator named, and what to do when two things want the
+light at once. Those are product decisions, not coding ones, and the ones still open are written down
 as open questions in [`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## Rendering
@@ -50,8 +52,9 @@ the job, and a short reason naming the rule that fired. It is a pure function: n
 state kept between calls. It gives each of the ten reported states the operator's colour, and it gives a
 disconnected or stale printer a dim red strip with nothing filled, whatever percentage the server still
 remembers. Two sub-decisions are **provisional** and marked as such in the source: the fill rounds down
-rather than to the nearest LED, and the LEDs past the fill are off. **Nothing calls it yet** — the module
-still lights nothing.
+rather than to the nearest LED, and the LEDs past the fill are off. `main.go` calls it once a second, and
+`drive.go` writes the frame it returns to the controller — so this is the rule the light is showing, not
+a rule waiting for a caller.
 
 ## What you need
 
@@ -100,17 +103,17 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **71 tests** — 4 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **84 tests** — 17 in
 the root package, 20 in `internal/printer`, 14 in `internal/render`, 33 in `internal/wled` — and they pass
-without touching a network or a real controller. There is no `go.sum`: the only dependency is the SDK,
-replaced by a directory, so nothing is fetched and there is no hash to record.
+without touching a network or a real controller: the light and the printer are both faked in the tests
+that need one. There is no `go.sum`: the only dependency is the SDK, replaced by a directory, so nothing
+is fetched and there is no hash to record.
 
 ## Installing
 
 There is no install path worth following today. `install.sh` in this tree is the project generator's
 script and is stale: it wants a Go toolchain on your machine and a Prusa Connect checkout at a fixed
-path, and it installs a program that serves one text route. Do not read it as documentation of how this
-module installs.
+path. Do not read it as documentation of how this module installs.
 
 When there is a release, a module is installed through the server's own command, which verifies the
 release, records its digest, and writes the declaration:
@@ -120,9 +123,9 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 ```
 
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
-for so you can read it first. This module asks for no permission today. Reading one printer and following
-its event stream will need `observe`, but the code that does that is not wired into the program yet, so
-`module.yaml` withholds the grant rather than ask for one nothing uses.
+for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
+follow that printer's event stream as itself, with nobody behind the call. It declares one outbound
+connection: the WLED controller named in `controller_address`, on port 80, from this process.
 
 ## Binding a printer to a light
 
@@ -134,12 +137,15 @@ mutex only serialises its own calls. A progress bar belonging to two jobs is not
 The address is **typed in, not discovered**. Automatic discovery does not work from inside a container
 on Docker's default bridge — see below — and the module does not attempt it.
 
-**The setting that takes the address does not exist in code yet.** `module.yaml` declares one option
-today, `message`. Binding a printer to a controller is a setting still to be written, and this README
-will not pretend otherwise.
+The address is the setting `controller_address`, and it is required: the module refuses to start until one
+is written and says so on the instance, rather than running and never mentioning why the light is dark.
+`printer` names the printer to watch, by the server's device id or by the name an operator gave it; left
+empty it takes the only printer the instance holds, and refuses to choose between several rather than
+put somebody's strip on the wrong machine. `brightness` is what the module writes to the controller once at
+start and does not move again.
 
-What the address should be, when it exists, is what you would put in a browser: `http://10.0.0.136`, no
-path, no trailing slash needed.
+What you write for the address is what you would put in a browser: `http://10.0.0.136`, no path, no
+trailing slash needed.
 
 ## Finding your controller from Docker
 

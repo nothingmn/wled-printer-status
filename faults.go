@@ -39,6 +39,18 @@ var (
 		fault.ShowDetail,
 		"path",
 	))
+
+	// NoReadingYet is a status read that arrived before the first frame was
+	// decided. It is transient by construction — the first reading is taken when the
+	// watch starts, and a frame follows within a tick — and it exists so that the route
+	// never answers with a frame of zeros, which a reader would take for a strip that is
+	// black rather than for a module that has not looked yet.
+	NoReadingYet = fault.Register(faultDomain, "NO_READING_YET", http.StatusServiceUnavailable, fault.Document(
+		"This module has not decided a frame yet",
+		"It answers once it has taken its first reading, which is within a second of starting. Send the same request again.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

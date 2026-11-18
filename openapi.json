@@ -6,6 +6,100 @@
     "description": "The routes wled-printer-status serves. Every path is relative to the mount the host assigns, and the host serves this document rebased under it at <mount>/openapi.json."
   },
   "paths": {
+    "/status": {
+      "get": {
+        "operationId": "read-status",
+        "summary": "What this module currently thinks",
+        "description": "The frame this module has decided for the light, the printer it decided it from, how old that reading is, and what the last write to the controller did — so a person can tell what the module thinks without looking at a light. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The module's answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "printer": {
+                      "type": "object",
+                      "description": "The printer being watched.",
+                      "properties": {
+                        "id": {"type": "string", "description": "The host's id for the printer."},
+                        "name": {"type": "string", "description": "The name an operator gave it."},
+                        "connected": {"type": "boolean", "description": "Whether the host holds a session for it now."},
+                        "retired": {"type": "boolean", "description": "Whether the id no longer names a machine."},
+                        "state": {"type": "string", "description": "The last state the printer reported, such as PRINTING."},
+                        "state_known": {"type": "boolean", "description": "Whether this build had a reading of that word. False means the printer said something unrecognised, not that it said nothing."}
+                      },
+                      "required": ["id", "name", "connected", "retired", "state", "state_known"]
+                    },
+                    "reading": {
+                      "type": "object",
+                      "description": "How old the newest fact about the printer is.",
+                      "properties": {
+                        "last_change": {"type": "string", "description": "When anything about the printer last moved, in UTC, and empty when nothing has been reported yet."},
+                        "observed_at": {"type": "string", "description": "When the reading behind the frame was taken, in UTC."},
+                        "age_seconds": {"type": "number", "description": "How old last_change was at observed_at, to the millisecond."},
+                        "stale": {"type": "boolean", "description": "Whether the newest fact is older than the module's staleness threshold, so no reading describes the printer now."}
+                      },
+                      "required": ["last_change", "observed_at", "age_seconds", "stale"]
+                    },
+                    "frame": {
+                      "type": "object",
+                      "description": "What the light is being asked to show.",
+                      "properties": {
+                        "colour": {
+                          "type": "object",
+                          "description": "The colour of the whole range, one byte per channel.",
+                          "properties": {
+                            "r": {"type": "integer", "minimum": 0, "maximum": 255},
+                            "g": {"type": "integer", "minimum": 0, "maximum": 255},
+                            "b": {"type": "integer", "minimum": 0, "maximum": 255}
+                          },
+                          "required": ["r", "g", "b"]
+                        },
+                        "lit": {"type": "integer", "description": "How many LEDs, counted from the first, carry the completed part of the job. Zero means the whole range is the colour."},
+                        "total": {"type": "integer", "description": "How many LEDs the range holds, and zero until the controller has said."},
+                        "reason": {"type": "string", "description": "The rule that decided this frame, such as progress or disconnected. For a log line and for a test, never for a person looking at the light."}
+                      },
+                      "required": ["colour", "lit", "total", "reason"]
+                    },
+                    "last_send": {
+                      "type": ["object", "null"],
+                      "description": "What the last write to the controller did, and null before the first one has been attempted.",
+                      "properties": {
+                        "at": {"type": "string", "description": "When the attempt was made, in UTC."},
+                        "ok": {"type": "boolean", "description": "Whether the controller took the frame."},
+                        "error": {"type": "string", "description": "What went wrong, absent when nothing did."}
+                      },
+                      "required": ["at", "ok"]
+                    }
+                  },
+                  "required": ["printer", "reading", "frame", "last_send"]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The module has not decided a frame yet, which is true only in the moment between its first reading and its first tick.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "description": "The module's own refusal, as faults.go registers it.",
+                  "properties": {
+                    "code": {"type": "string", "description": "The registered code, ending in NO_READING_YET."},
+                    "title": {"type": "string", "description": "The English title of the code."},
+                    "detail": {"type": "string", "description": "What to do about it."},
+                    "retryable": {"type": "boolean", "description": "Whether sending the same request again can work."}
+                  },
+                  "required": ["code", "title"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/wled-printer-status": {
       "get": {
         "operationId": "read-wled-printer-status",
