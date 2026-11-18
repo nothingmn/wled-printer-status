@@ -362,6 +362,92 @@ the frame read `"reason":"starting"`, which is the first time that state has bee
 
 The two release directories from `bd85035` and `d141884` were removed after this install proved healthy.
 
+**Sixth and seventh runs, 2026-11-18 23:18Z and 23:21Z, from `3dd9ce7` and then `ea3bafa`.** These two installs
+are the change from *a word the firmware draws* to *a word this module draws*: a 5×7 font carried in
+`internal/text`, rasterised onto the panel and written one LED at a time. `AGENTS.md` §5.4 has why, and the
+short of it is that effect 122 lit only the first few columns on this panel at four different groupings.
+
+Two runs, because the first one found a defect that only the device could show. The first is worth recording
+before the second, because the failure shape is the same fragment the whole change exists to end.
+
+**Run six — `3dd9ce7`, 23:18Z.** Built and installed the same way as the runs above, with one difference in
+the build: the release was built from `git archive HEAD` rather than from the working tree, because another
+writer was editing this checkout during the session — two files were restored under the session at
+16:14:47 local and one was left with a torn tail at 16:15:14, and a build that reads the working tree can
+pick up a file mid-write. `git archive` reads committed objects only, so what was built is what was
+committed:
+
+```console
+$ docker run --rm --user $(id -u):$(id -g) \
+    -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath -e CGO_ENABLED=0 \
+    -v ~/prusa:/work -v /tmp/wled-release-3dd9ce7:/out -w /work/wled-printer-status \
+    golang:1.26.11 sh -c 'mkdir -p /out/src && git archive HEAD | tar -x -C /out/src &&
+      ln -s /work/prusa-connect /out/src/.core && cd /out/src &&
+      for p in linux_amd64 linux_arm64 darwin_arm64 windows_amd64; do …; done'
+exit[linux_amd64]=0  exit[linux_arm64]=0  exit[darwin_arm64]=0  exit[windows_amd64]=0
+$ sha256sum -c checksums.txt
+module.yaml: OK   wled-printer-status_linux_amd64: OK   … (four platforms)
+```
+
+`module add` answered `5 files verified against checksums.txt`, `memory 32 MiB, set by the author`,
+`enabled yes`; the restart at **23:18:56Z** was `healthy` at **23:19:06Z** (fifteen seconds), readiness
+`serving 4 declared 4 blocked []`, and the installed `linux_amd64` digest read back as
+`bad378ef82…9632b`, which is the release's own line. The log said what it always says — `the controller
+drives 16384 LEDs`, `the controller is a 256x64 panel`.
+
+Then the preview, fired at **23:19:12Z**:
+
+```console
+$ curl -s -X POST localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/preview-finished
+{"colour":{"r":0,"g":170,"b":0},"controller":"http://10.0.0.136","event":"FINISHED","holds_seconds":60,"scale":5}
+$ curl -s http://10.0.0.136/json/state | …        # 23:19:14Z
+seg 0 start 0 stop 256 rows 0..64 on true  fx 0  n 'FINISHED'  col [0,0,0]
+seg 1 start 28 stop 256 rows 0..64 on true  fx 0  n None        col [0,0,0]
+```
+
+**Segment 1 was still on, over columns 28 to 256, in black — drawn on top of the word.** The event's
+establishing body gave segment 0 the whole panel and left the frame's remainder where it was; a panel draws
+its segments in order, so most of the word was under a black band and what was left was a fragment at the
+left. Exactly the fragment that started this work, arrived at from the other direction.
+
+**Run seven — `ea3bafa`, 23:21Z.** The body now switches segment 1 off as well, as the steady frame's
+"everything filled" edge already did, and the test pins both segments in the first request. Same build, same
+`module add` arguments, release `/config/config.d/wled-release-ea3bafa`; restart at **23:21:03Z**, `healthy`
+at **23:21:14Z**, readiness `serving 4 declared 4 blocked []`, installed digest `9375e0b6dd…90cc2`.
+
+The preview, fired at **23:21:17Z** — one event, sixty seconds, and this is the read-back either side of it:
+
+```console
+$ curl -s -X POST …/preview-finished            # PREVIEW_FIRED_AT 2026-11-18T23:21:17Z
+ HTTP=202 {"event":"FINISHED","controller":"http://10.0.0.136","colour":{"r":0,"g":170,"b":0},"scale":5,"holds_seconds":60}
+
+$ curl -s http://10.0.0.136/json/state          # 23:21:19Z, inside the hold
+seg 0  start 0  stop 256  rows 0..64  on true   fx 0  n 'FINISHED'  col [0,0,0]
+seg 1  start 33 stop 256  rows 0..64  on FALSE  fx 0  n None        col [0,0,0]
+
+$ …  /status                                    # 23:21:19Z
+"last_send":{"at":"2026-11-18T23:21:17.462501271Z","ok":true}   printer PRINTING, frame progress 2129/16384
+
+$ curl -s http://10.0.0.136/json/state          # 23:22:32Z, after the hold
+seg 0  start 0  stop 36   on true   n None  col [0,170,0]
+seg 1  start 36 stop 256  on true   n None  col [0,0,0]
+"last_send":{"at":"2026-11-18T23:22:17.463009126Z","ok":true}   frame progress 2293/16384
+```
+
+Three things that read-back proves and one it cannot. The event went out in **one** painting and the module
+recorded it as taken; it held for **60.0 s** — the write that ended it is 23:22:17.463Z against the event's
+23:21:17.462Z — and the frame that took the light back is the running print's progress bar, 36 of 256
+columns at 2293/16384 = 14.0 %, which is the printer's own number a second earlier. What it cannot prove is
+the letters: **this firmware's `/json/state` carries no `i` array at all** — the segment keys on
+`14.7.0-mdev` are `bri c1 c2 c3 cct col frz fx grp id ix len m12 mY mi n o1 o2 o3 of on pal rY rev sel set si
+spc start startY stop stopY sx tp` — so a per-pixel read-back is not available here, and the geometry plus
+the segment's name is the whole of what the device will say about the word. The letters themselves are the
+operator's to look at, which is what the preview route is for.
+
+Neither of the two earlier release directories (`c649b90`, `3dd9ce7`) was removed: they are still the
+declared source of an install until this one is signed off, and a directory removed mid-run leaves the
+declaration pointing at nothing.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console

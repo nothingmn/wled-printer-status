@@ -48,11 +48,12 @@ What that has not shown, and these are gaps rather than formalities: **idle** an
 quiet mid-job have never been seen on a panel. The **starting** state — a print the machine has taken and
 has not yet started to move — has, in the waiting yellow at 0 %; it appeared for the first time on the
 evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word drawn in pixels yet.**
-Its predecessor — the word as the segment's name, drawn by effect 122 — was on the panel and read back
-field by field, and what it put there was the fragment described above rather than a word; that reading is
-why the module draws the letters itself now. Whether the pixels read from across a room is a question for
-eyes, and the install record in [`docs/installing-locally.md`](docs/installing-locally.md) says what was
-seen when the word was put up. And **it has not been through the marketplace**: this beta is the first
+The module has put it on the panel, and the device reads back the picture it can — segment 0 holding the
+whole panel in black with `FINISHED` as its name, the frame's remainder switched off so nothing covers it
+— but this firmware's `/json/state` carries no per-pixel array at all, so the letters themselves are only
+verifiable by eye. That is what `POST /preview-finished` is for: one request puts the word up for its
+minute, and the install record in [`docs/installing-locally.md`](docs/installing-locally.md) has the
+read-back either side of the first one. And **it has not been through the marketplace**: this beta is the first
 release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished

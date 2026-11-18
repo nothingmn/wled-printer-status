@@ -318,11 +318,20 @@ Nothing in this module has ever run against a live Prusa Connect host. Specifica
 - **The bus subscription has never carried a real printer's frames.** Its cadence, the origin narrowing
   and the 30 s staleness horizon are proven against **fakes only**. A module's bus does not exist until
   the module is installed and serving, which is why this has not been done yet.
-- **No live WLED write has been made from the module.** Reads have been made against real controllers;
-  every write is proven against `httptest` servers and nothing else. What the live panel did show is that
-  the writes it was given were the wrong shape: one segment, black, over the unfilled half. The two-segment
-  body that replaces it has been proven as bytes in a request body and **not** on the panel; the first
-  deploy is where that gets checked, by reading `/json/state` back and by looking at the light.
+- **The writes have run against the panel, and its *pixels* cannot be read back.** Frames and the finished
+  event have been installed and driven the operator's 256×64 panel since 2026-11-18, and `/json/state` reads
+  back the geometry each one leaves — segment 0's four bounds, the name, which segments are switched off —
+  and the module's own `last_send`. What it does not carry is the per-LED `i` array: on `14.7.0-mdev` the
+  segment keys are `bri c1 c2 c3 cct col frz fx grp id ix len m12 mY mi n o1 o2 o3 of on pal rY rev sel set
+  si spc start startY stop stopY sx tp`, and WLED's websocket pixel read returned all-zero frames the one
+  time it was tried here. So **a picture's pixels are unverified except by a person looking at the light**,
+  which is what `POST /preview-finished` exists for. A claim that the letters are the right size, or in the
+  right place, has no evidence behind it but someone's eyes.
+- **The first live run of the pixel word drew it under the frame's remainder.** The establishing body left
+  segment 1 switched on, so the black band over columns 28..256 covered the word and the panel showed a
+  fragment on the left — the failure the change exists to end, from the other direction. Fixed, pinned in
+  the test, and the install record has the read-back either side of it. It is here because a body that
+  writes one segment has to think about every other segment the panel will draw after it.
 - **The release workflow has never executed.** It is written from the builder's documented interface,
   not from a green run.
 
