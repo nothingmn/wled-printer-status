@@ -183,6 +183,22 @@ empty it takes the only printer the instance holds, and refuses to choose betwee
 put somebody's strip on the wrong machine. `brightness` is what the module writes to the controller once at
 start and does not move again.
 
+`segment` names one segment of a controller that carries several, and the module then drives that segment
+and leaves the rest of the controller alone. It reads the segment once at start — its run, its colour, its
+effect and its name — draws inside that run while it runs, and writes all of it back when it stops, so a
+controller that remembers what was put on it is given back what it had. In this mode it writes **no**
+brightness and **no** power, because both are controller-wide and would move every segment at once, and it
+never writes a second segment. The default, -1, drives the whole strip, which is what this module did
+before the setting existed. On a controller that reports a matrix the setting is refused and the log says
+so: a panel's body is two rectangles covering the whole of it, and two rectangles on a controller carrying
+somebody else's segments would be two of theirs.
+
+A segment is borrowed and not taken, and that has one limit worth knowing: the captured segment is held in
+the module's memory and nowhere else. A stop the module can see — the host stopping it, a second
+configuration, an interrupt — gives the segment back. A process killed without warning, a power cut, or a
+container stopped hard cannot, and the segment then stays as the module left it until something writes it
+again.
+
 What you write for the address is what you would put in a browser: `http://10.0.0.136`, no path, no
 trailing slash needed.
 

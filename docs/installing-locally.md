@@ -246,6 +246,53 @@ transition strings are in the installed binary — `grep -a "went from %s to %s"
 but a transition line only appears when the printer's state word moves, so a print that is already
 `PRINTING` when the core restarts produces the start lines and no transition until it ends.
 
+**Fourth run, 2026-11-18 21:40Z, from `d141884`.** Two commits, both of the same change: `30e45a0` adds
+the `segment` setting and the borrow, `7c9b825` and `d141884` are what the first run against a real
+multi-segment controller taught — WLED 16.0.1 answers `o1`–`o3` and `tp` as booleans rather than numbers, so
+the read of `/json/state` failed and no segment could be borrowed; and a body written into a segment without
+its `n` clears the name that segment had, so the first frames left the operator's zone unnamed.
+
+The target this time was the operator's desk light, **`CyberDesk` at `http://10.0.0.253`** — WLED 16.0.1 on
+an ESP32, 48 LEDs in one run, and six named segments he uses: `Base 1` 0–4, `Back 1` 4–14, `Front 1` 14–24,
+`Base 2` 24–28, `Back 2` 28–38, `Front 2` 38–48. The settings file named `"segment": 2` — `Front 1` — with
+`brightness` 128 left in place and never written:
+
+```console
+$ docker exec prusa_connect cat /config/config.d/wled-settings.json
+{ "message": "…", "controller_address": "http://10.0.0.253",
+  "printer": "07e893bb-…", "brightness": 128, "segment": 2 }
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-d141884 \
+    -settings /config/config.d/wled-settings.json -approve
+  setting   segment (int, default -1). The number of the one segment to drive … 
+  enabled   yes
+```
+
+What the run proved, all of it read off the device rather than off the module:
+
+- **The borrow is said once, and it is a read.** `borrowed segment 2 "Front 1" from http://10.0.0.253:
+  pixels 14-24, colour 8,255,0 0,0,0 0,0,0, effect 102, brightness 255`.
+- **The controller's brightness was never written.** His strip runs at `bri` 255 and stayed 255 for the
+  whole run, while the instance's `brightness` setting is 128 — a settle would have written 128. The panel
+  at `10.0.0.136`, which this module settles, reads 128 for the same reason.
+- **The five segments he did not name were byte-identical before and after**, comparing each `seg` entry
+  as a whole: `Base 1`, `Back 1`, `Base 2`, `Back 2`, `Front 2` — bounds, rows, `col`, `fx`, `sx`, `ix`,
+  `pal`, `bri` and `n` — over two reads a minute apart and a third four minutes in. `Front 1` went
+  14–24 → 14–16 → 14–17 as the print moved, with `n` still `"Front 1"`.
+- **The give-back works on hardware.** Three graceful stops each wrote the captured segment back and said
+  so: `gave segment 1 "Back 1" back to http://10.0.0.253: pixels 4-14, colour 255,255,255 …, effect 0,
+  brightness 255`, after which all six segments were byte-identical to the state captured before the run.
+
+One thing to know when repeating this: **something else writes to that controller too.** Between two reads
+`mainseg` moved and `Front 2`'s colour changed, with its `sel` flag flipping. This module's body cannot
+carry `mainseg` or `sel`, and it names one segment id per body, so those changes were another client — an
+open WLED app or an automation — not this module. A proof against a light somebody else also drives has to
+say which writer each difference belongs to.
+
+`10.0.0.136` was restored to the state captured for it before this work, by POSTing that document back, and
+reads back with no field differing from it.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console

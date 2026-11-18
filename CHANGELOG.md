@@ -18,6 +18,13 @@ refusal. Name the route and the setting key, never a function or a file.
 - The setting `printer` picks the printer to watch, by device id or by name. Left empty it takes the only
   printer the instance holds, and refuses to choose between several.
 - The setting `brightness` sets what the module writes to the controller once at start, 0-255.
+- The setting `segment` names one segment of a controller that carries several. The module drives that
+  segment and leaves the others alone: it reads the segment's run, colour, effect and name once at start,
+  draws inside that run, and writes them all back when it stops. In this mode it writes no brightness and
+  no power at all — both are controller-wide and would move every segment at once — and no body it sends
+  names a second segment. `-1`, the default, drives the whole strip as before. On a controller that reports
+  a matrix the setting is refused and the log says why, because a panel's body is two rectangles covering
+  the whole of it.
 - The module drives the light. It writes the decided colour and progress to the controller as one request
   carrying two segments — the lit part in the state's colour and the rest in the off colour — and writes
   nothing when the picture has not changed, so a state that is merely being re-read does not flicker.
