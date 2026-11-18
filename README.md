@@ -37,8 +37,15 @@ What those runs proved, on the hardware rather than in a test:
   panel in the finished green takes over. **The word is this module's pixels and not a firmware
   feature.** WLED's Scrolling Text effect (id 122) was the first attempt and is not used any more: on
   this panel it lit only the first few columns on the left, at every grouping that was tried, and the
-  operator watched all four and saw the same fragment. On a strip the finished state stays the solid
-  green it has always been, because a word needs a second dimension and a strip has one.
+  operator watched all four and saw the same fragment. The second attempt put the same pixels into a
+  JSON body one LED at a time, and this firmware accepted every one of them — `200`, `{"success":true}`,
+  nothing in the log — and drew none: four variants tried on the panel, and the operator looked twice at
+  a light that stayed blank. So the pixels go on the transport a controller keeps for pixels, **DDP**:
+  raw colour datagrams to UDP port 4048, one frame of 16,384 pixels, pushed again once a second for the
+  minute the word holds, because the controller drops live mode 2.5 seconds after the last datagram. The
+  steady frame still goes over JSON, and when the minute is up the light goes back to it. On a strip the
+  finished state stays the solid green it has always been, because a word needs a second dimension and a
+  strip has one.
 - **A borrowed segment works on a strip somebody else also uses.** On a six-zone desk light — 48 LEDs,
   WLED 16.0.1, six named zones — the module drove one of the six for the length of a print with the fill
   moving inside that zone, left the other five byte-identical, wrote no brightness and no power on a strip
@@ -47,13 +54,14 @@ What those runs proved, on the hardware rather than in a test:
 What that has not shown, and these are gaps rather than formalities: **idle** and a printer that has gone
 quiet mid-job have never been seen on a panel. The **starting** state — a print the machine has taken and
 has not yet started to move — has, in the waiting yellow at 0 %; it appeared for the first time on the
-evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word drawn in pixels yet.**
-The module has put it on the panel, and the device reads back the picture it can — segment 0 holding the
-whole panel in black with `FINISHED` as its name, the frame's remainder switched off so nothing covers it
-— but this firmware's `/json/state` carries no per-pixel array at all, so the letters themselves are only
-verifiable by eye. That is what `POST /preview-finished` is for: one request puts the word up for its
-minute, and the install record in [`docs/installing-locally.md`](docs/installing-locally.md) has the
-read-back either side of the first one. And **it has not been through the marketplace**: this beta is the first
+evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word since it moved to DDP.**
+The module puts it on the panel and the device confirms what it can — segment 0 holding the whole panel in
+black with `FINISHED` as its name, the frame's remainder switched off so nothing covers it, and
+`/json/info` reporting `live: true` because the datagrams arrived — but this firmware's `/json/state`
+carries no per-pixel array at all, so the letters themselves are only verifiable by eye, and so is the
+question of whether this panel's wiring is row-major the way the frame assumes. That is what
+`POST /preview-finished` is for: one request puts the word up for its minute, and the install record in
+[`docs/installing-locally.md`](docs/installing-locally.md) has the read-back either side of one. And **it has not been through the marketplace**: this beta is the first
 release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
@@ -78,7 +86,11 @@ Both halves of that are built:
 - **`internal/wled`** is an HTTP client for one controller. It reads the controller's facts and state,
   and writes power, brightness, colour, a rectangle, or one colour per LED. Three tiers, tried in order,
   so that a light which cannot animate can still show a colour and a light which cannot draw a rectangle
-  can still be given individual pixels.
+  can still be given individual pixels — though on this panel the last of those three is accepted and
+  drawn by nothing, which is why the word does not use it.
+- **`internal/ddp`** is the transport for a picture: one frame is 35 UDP datagrams of raw colour to port
+  4048, ten bytes of header each, the push flag on the last one so the controller draws the frame rather
+  than each datagram as it lands.
 
 The 1D strip's share of the decision is made: the state's colour, and a fill for the job's progress. What
 is missing is the rest of the decision layer: which tier to use on a controller that can do more than
@@ -121,10 +133,20 @@ socket in the decision. The writer holds that picture for its duration and then 
 would otherwise have shown; the steady frame the driver keeps deciding waits in the one slot meanwhile, so
 an event delays a frame by its own duration and no longer. The one entry so far is `FINISHED` on a panel:
 the word, spelled across it in the finished green, for a minute (`finishedEventHolds`). A strip is never
-sent it — the text effect needs a matrix and falls back to a solid colour on a run of pixels, and the
-operator asked for his strip to keep its green — and neither is a segment borrowed from a controller
-somebody else also drives, because an animation nobody asked for is not something this module puts on
-another person's light.
+sent it — a word is pixels in two dimensions, and the operator asked for his strip to keep its green — and
+neither is a segment borrowed from a controller somebody else also drives, because an animation nobody
+asked for is not something this module puts on another person's light.
+
+An event makes three writes and no more. One JSON body establishes the panel: segment 0 the whole of it,
+switched on, in the background colour, with the word as its name, and segment 1 — the frame's remainder —
+switched off, because a panel draws its segments in order and a remainder left on covers the word. That
+body is also the only thing that puts the word's name on the controller, since a datagram carries none.
+Then one DDP frame carries the pixels, the whole panel, 35 datagrams, the push flag on the last. Then one
+read of `/json/info` says whether the controller took them. For the minute it holds, that same frame is
+pushed again **once a second** — the controller drops live mode 2500 ms after the last datagram, so one a
+second is two and a half times the margin and 35 datagrams a second is what a held picture costs. At the
+end the module stops pushing, writes the steady frame, waits out that timeout and reads the controller
+once more: `live: false` is the only evidence a datagram can never give by itself.
 
 A write that fails is not retried on the next tick. The module waits — a second after the first failure,
 then doubling to half a minute — and a picture that changes during that wait is held and sent when the
@@ -205,7 +227,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **170 tests** — 67 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **177 tests** — 74 in
 the root package, 20 in `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in
 `internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
 or a real controller:
@@ -334,7 +356,10 @@ nobody can read.
 
 The floor tier — one colour per LED — is the expensive one: a full 16,384-pixel repaint is **19 requests**
 at the default 8 KiB body budget. That is fine at one frame every few seconds and wrong for animation,
-which is why it is the fallback and not the default.
+which is why it is not how the word is drawn: pixels go over DDP instead, where the same picture is 35
+datagrams and never touches the controller's web server at all. The event's own rate is chosen against
+the controller rather than against this budget — one repeat a second for a still picture, so that it
+outlives WLED's 2500 ms realtime timeout — and it is still not a stream: the bytes never change.
 
 ## What it deliberately will not do
 

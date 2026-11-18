@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -67,10 +66,24 @@ func paintings(strip *panelStrip) int {
 	return count
 }
 
-// wordPixels is every pixel the controller was left showing in the finished green, which for
-// this event is the word and nothing else.
-func wordPixels(strip *panelStrip) []int {
-	return strip.pixelsIn(render.ColourFinished)
+// wordPixels is every pixel the panel was last given in the finished green, which for this event
+// is the word and nothing else.
+//
+// It reads the picture the module pushed rather than a JSON body: the panel draws no per-LED body
+// on this firmware — see pixels.go — so the pixels are a DDP frame now, and a test that read a
+// "i" array would be reading a body nothing draws.
+func wordPixels(pushed *pushedFrames) []int {
+	frame := pushed.last()
+
+	lit := make([]int, 0, len(frame))
+
+	for index, colour := range frame {
+		if colour == render.ColourFinished {
+			lit = append(lit, index)
+		}
+	}
+
+	return lit
 }
 
 // steadyPaints is every write that carried a frame rather than the word. The word's own first
@@ -151,137 +164,6 @@ func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testi
 	}
 }
 
-// TestTheFinishedWordIsDrawnInPixelsOnThePanel is what the panel is actually sent, quoted as
-// bytes where a body is fixed and decoded where it is arithmetic.
-//
-// Two things are asserted and they are different questions. The first body is quoted exactly:
-// the whole panel, switched on, in the colour the steady frame gives an unfilled range, with the
-// word as the segment's own name — the request that makes the pixels below land. The bodies
-// after it are the pixels: one Paint call split by the client's 8 KiB budget, each naming the
-// LED its first colour belongs to, and the union of them is exactly the pixel list the
-// rasteriser returns for the word. So the panel is not asked to draw anything; it is told which
-// of its 16,384 pixels are green.
-func TestTheFinishedWordIsDrawnInPixelsOnThePanel(t *testing.T) {
-	recorder := &wireCapture{}
-	server := recorder.server(t)
-
-	light, err := wled.New(server.URL)
-	if err != nil {
-		t.Fatalf("wled.New: %v", err)
-	}
-
-	pen := newWriter(light, 128, quiet)
-	pen.setPanel(wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64})
-
-	if err = pen.paintEvent(context.Background(), finishedWordEvent()); err != nil {
-		t.Fatalf("paint the finished event: %v", err)
-	}
-
-	// The panel, established: segment 0 whole, on, in the background colour, with the word as its
-	// name — and segment 1, the frame's remainder, switched off.
-	//
-	// Segment 1 is in this body because a panel draws its segments in order. The first time this
-	// event ran on the live panel, the remainder from the frame before it was still on over
-	// columns 28..256, in black, drawn over the word: the word was a fragment on the left, which
-	// is the failure the pixel word exists to end. The establishing body is what puts it away.
-	const established = `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0,"n":"FINISHED"},{"id":1,"on":false}]}`
-
-	if len(recorder.bodies) < 2 {
-		t.Fatalf("the event was painted in %d requests, want the panel and then its pixels: %v",
-			len(recorder.bodies), recorder.bodies)
-	}
-
-	if recorder.bodies[0] != established {
-		t.Fatalf("the first request is\n%s\nwant\n%s", recorder.bodies[0], established)
-	}
-
-	// The band the word sits in starts at row 14 of a 256-wide panel, so its first LED is
-	// 14*256 = 3,584, and it covers 35 rows of 256 = 8,960 pixels — the word's 235-column
-	// picture, with the background either side of it and between the letters.
-	//
-	// The split is the client's: 907 colours while the LED index has four digits, 906 once it
-	// has five, and the last request carries what is left.
-	wantStarts := []int{3584, 4491, 5398, 6305, 7212, 8119, 9026, 9933, 10840, 11746}
-	wantCounts := []int{907, 907, 907, 907, 907, 907, 907, 907, 906, 798}
-
-	pixelBodies := recorder.bodies[1:]
-	if len(pixelBodies) != len(wantStarts) {
-		t.Fatalf("the word was sent in %d requests, want %d: the band is 8,960 pixels and a body carries about 906",
-			len(pixelBodies), len(wantStarts))
-	}
-
-	lit := make([]int, 0, 16384)
-
-	for index, body := range pixelBodies {
-		var painted struct {
-			Seg []struct {
-				ID     int               `json:"id"`
-				Pixels []json.RawMessage `json:"i"`
-			} `json:"seg"`
-		}
-
-		if err := json.Unmarshal([]byte(body), &painted); err != nil {
-			t.Fatalf("request %d is not a state body: %v: %s", index+2, err, body)
-		}
-
-		if len(painted.Seg) != 1 || painted.Seg[0].ID != firstSegment {
-			t.Fatalf("request %d addresses %+v, want one segment, id %d", index+2, painted.Seg, firstSegment)
-		}
-
-		pixels := painted.Seg[0].Pixels
-		if len(pixels) < 2 {
-			t.Fatalf("request %d carries %d entries in \"i\", want an index and colours", index+2, len(pixels))
-		}
-
-		var first int
-		if err := json.Unmarshal(pixels[0], &first); err != nil {
-			t.Fatalf("request %d does not start with an LED index: %v: %s", index+2, err, body)
-		}
-
-		if first != wantStarts[index] {
-			t.Fatalf("request %d starts at LED %d, want %d", index+2, first, wantStarts[index])
-		}
-
-		if got := len(pixels) - 1; got != wantCounts[index] {
-			t.Fatalf("request %d carries %d colours, want %d", index+2, got, wantCounts[index])
-		}
-
-		// A colour is six hex digits. The finished green is 00AA00, and everything else in the
-		// band is the background the panel was established with.
-		for offset, raw := range pixels[1:] {
-			var colour string
-			if err := json.Unmarshal([]byte(raw), &colour); err != nil {
-				t.Fatalf("request %d carries %s where a colour belongs: %v", index+2, raw, err)
-			}
-
-			if colour == "00AA00" {
-				lit = append(lit, first+offset)
-			}
-		}
-	}
-
-	slices.Sort(lit)
-
-	want, err := text.Raster(finishedWord, finishedWordScale, text.Geometry{Width: 256, Height: 64})
-	if err != nil {
-		t.Fatalf("rasterise %q: %v", finishedWord, err)
-	}
-
-	if !slices.Equal(lit, want) {
-		t.Fatalf("the panel is given %d pixels in the finished green and the word is %d pixels: the two lists differ",
-			len(lit), len(want))
-	}
-
-	// And no request of the event asks a controller to draw anything, which is the whole
-	// correction: the word is this module's pixels, not a firmware feature it has to talk into
-	// working.
-	for _, body := range recorder.bodies {
-		if strings.Contains(body, `"fx":122`) || strings.Contains(body, `"grp":`) {
-			t.Fatalf("a request of the finished event carries the text effect: %s", body)
-		}
-	}
-}
-
 // TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger is the override and its return in one
 // test, either side of the boundary.
 //
@@ -296,6 +178,8 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 	pen := newWriter(strip, 128, quiet)
 	pen.setPanel(strip.info)
 	clock.watch(pen)
+
+	pushed := pushInto(pen)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -314,14 +198,14 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 	mark := clock.mark()
 	pen.fire(finishedWordEvent())
 
-	waitFor(t, "the word's pixels to reach the panel", func() bool { return len(wordPixels(strip)) > 0 })
+	waitFor(t, "the word's pixels to reach the panel", func() bool { return len(wordPixels(pushed)) > 0 })
 
 	want, err := text.Raster(finishedWord, finishedWordScale, text.Geometry{Width: 256, Height: 64})
 	if err != nil {
 		t.Fatalf("rasterise %q: %v", finishedWord, err)
 	}
 
-	if got := wordPixels(strip); !slices.Equal(got, want) {
+	if got := wordPixels(pushed); !slices.Equal(got, want) {
 		t.Fatalf("the panel was given %d green pixels, want the word's %d", len(got), len(want))
 	}
 
@@ -559,6 +443,7 @@ func TestTwentyIdenticalStatesFireOneEventAndOnlyOnTheTransition(t *testing.T) {
 
 	pen := newWriter(strip, 128, quiet)
 	pen.setPanel(strip.info)
+	pushInto(pen)
 
 	reader := newDriver(source, pen, strip, written.logf)
 	reader.leds = 16384
@@ -617,6 +502,8 @@ func TestAFailedEventWriteIsLoggedOncePerWideningRetry(t *testing.T) {
 	pen.setPanel(strip.info)
 	clock.watch(pen)
 
+	pushed := pushInto(pen)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -661,7 +548,7 @@ func TestAFailedEventWriteIsLoggedOncePerWideningRetry(t *testing.T) {
 		t.Fatalf("rasterise %q: %v", finishedWord, err)
 	}
 
-	if lit := wordPixels(strip); len(lit) != 0 {
+	if lit := wordPixels(pushed); len(lit) != 0 {
 		t.Fatalf("%d pixels of the word reached a controller that was not answering", len(lit))
 	}
 
@@ -671,10 +558,10 @@ func TestAFailedEventWriteIsLoggedOncePerWideningRetry(t *testing.T) {
 	clock.Advance(backoffCap)
 
 	waitFor(t, "the recovered event to lay the word on the panel", func() bool {
-		return len(wordPixels(strip)) == len(want)
+		return len(wordPixels(pushed)) == len(want)
 	})
 
-	if got := wordPixels(strip); !slices.Equal(got, want) {
+	if got := wordPixels(pushed); !slices.Equal(got, want) {
 		t.Fatalf("the recovered event left %d green pixels, want the word's %d", len(got), len(want))
 	}
 }

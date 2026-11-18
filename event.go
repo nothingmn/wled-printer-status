@@ -191,6 +191,19 @@ type heldEvent struct {
 	event
 	until   time.Time
 	painted bool
+
+	// frame is the picture the panel was given when the hold started, and repush is when the
+	// next repeat of it is due. A still picture has to outlive the controller's realtime
+	// timeout, so it is pushed again every pixelRepeat for as long as the hold lasts — see
+	// pixels.go for the rate and the arithmetic behind it.
+	frame  []wled.RGB
+	repush time.Time
+
+	// pushFails counts repeats this hold has failed, so that a controller which has stopped
+	// taking datagrams costs one line and not one a second. The hold continues: the picture
+	// may still be on the panel, and the frame after the event is where a dead controller is
+	// reported.
+	pushFails int
 }
 
 // fire offers one event to the writer and never waits for it, the way submit offers a frame.
@@ -293,11 +306,34 @@ func (w *writer) takeEvent() {
 // deliverEvent paints one event and reports what happened to the status route, so that a light
 // which took the word and a light which refused it are distinguishable without looking at the
 // panel.
+//
+// The frame that went out is kept on the hold, because the hold pushes that same frame again
+// every pixelRepeat until it ends: the picture does not move, and only its repetition is what
+// keeps the panel drawing it.
 func (w *writer) deliverEvent(ctx context.Context, ev event) error {
-	return w.report(func() error { return w.paintEvent(ctx, ev) })
+	var frame []wled.RGB
+
+	err := w.report(func() error {
+		var pushErr error
+
+		frame, pushErr = w.paintEvent(ctx, ev)
+
+		return pushErr
+	})
+	if err != nil {
+		return err
+	}
+
+	if w.held != nil {
+		w.held.frame = frame
+		w.held.repush = w.now().Add(pixelRepeat)
+	}
+
+	return nil
 }
 
-// paintEvent draws one event: the word, in the event's colour, on a dark panel.
+// paintEvent draws one event: the word, in the event's colour, on a dark panel, and returns the
+// picture it put on the panel so that the hold can push it again.
 //
 // # The sequence, and why it is this one
 //
@@ -305,54 +341,50 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 //     in finishedWordBackground, with the word as the segment's own name — and switches segment
 //     1, the frame's remainder, off. It writes no brightness and no power: both are
 //     controller-wide, the operator set them, and a picture does not get to move them. What it
-//     does write is what makes the request below land — a Paint body carries nothing but the
-//     segment's per-LED array, it is not persisted across a reboot, it freezes the segment's
-//     effect, and it needs the segment already on and covering the pixels it addresses. Without
-//     this body the device either refuses the pixels or paints them into whatever span segment 0
-//     happened to have, which on a controller this module has not driven yet is one row of a
-//     panel.
+//     does write is the geometry the panel falls back to when live mode ends, and the name the
+//     state read reports while the word is up: a datagram carries neither.
 //
 //     Segment 1 is not tidiness. It is the frame's remainder, the black part of a progress bar,
 //     and the panel draws segments in order — so a remainder left on from the frame before the
-//     event is drawn **over** the word. Measured on the live panel the first time this event ran:
-//     segment 1 held columns 28..256 in black and the word was a fragment on the left, which is
-//     the same fragment this whole change exists to stop showing. A body that puts the whole
-//     panel on segment 0 therefore has to put the segment in front of it out of the way.
+//     event is drawn **over** the word the moment live mode ends. Measured on the live panel the
+//     first time this event ran: segment 1 held columns 28..256 in black and the word was a
+//     fragment on the left, which is the same fragment this whole change exists to stop showing.
 //
 //     The name travels with it because /json/state then says which picture the panel is holding,
 //     and a body written without one clears the name that was there.
 //
-//  2. **Paint the word.** One Paint call over the rows the word occupies — the band from its
-//     first row to its last, the panel's full width — in the event's colour where the
-//     rasteriser lit a pixel and in finishedWordBackground everywhere else in those rows. One
-//     call, but several requests: the client splits a body that would exceed its 8 KiB budget,
-//     so a 256-pixel band of 35 rows is 8,960 colours and about ten requests, each naming the
-//     LED it starts at. That is the full-panel-paint class of cost, paid once when the event
-//     starts and not at all while it holds — which is why the hold is a minute and not a pulse.
+//  2. **Push the word as pixels.** One DDP frame — the whole panel, 16,384 pixels, 35 datagrams —
+//     in the event's colour where the rasteriser lit a pixel and in finishedWordBackground
+//     everywhere else. A JSON body carrying the same colours one LED at a time is accepted by
+//     this firmware and drawn by nothing, which is why the pixels do not go that way; pixels.go
+//     has the four measurements and what the controller will not report about them.
 //
-// Nothing is written outside those rows: the panel above and below the word is already the
-// background colour from the first request, and repeating it would be traffic for no pixel. The
-// panel shows the steady picture for the length of one request and then the word; measured at
-// 28 ms a request on a 256x64 panel, nobody watching sees it.
+//     The frame goes out in requests of about 490 bytes rather than 16,384 colours in a
+//     document, so the panel is never showing half a picture: a datagram names where its pixels
+//     belong, and the frame is pushed with the push flag on its last one, which is when the
+//     controller draws it.
+//
+//  3. **Confirm it was taken.** One read of /json/info, because live=true is the only thing this
+//     transport can prove. A controller that answers live=false has drawn its own segments and
+//     not the word, and that is one line in the log rather than a silence.
 //
 // A strip, and a panel too small for the word, are refused here as well as in eventFor: a
 // second lock on the same door costs one comparison, and the preview route reaches this function
 // by a path the decision table never walks.
-func (w *writer) paintEvent(ctx context.Context, ev event) error {
+func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 	geometry := w.panelOf()
 
 	if !geometry.matrix() {
-		return fmt.Errorf("the %q event was not drawn: %s reports no matrix, and a word needs one", ev.word, w.where)
+		return nil, fmt.Errorf("the %q event was not drawn: %s reports no matrix, and a word needs one", ev.word, w.where)
 	}
 
-	place, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry))
-	if err != nil {
-		return fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
+	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
+		return nil, fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
 	}
 
 	lit, err := text.Raster(ev.word, finishedWordScale, geometryOf(geometry))
 	if err != nil {
-		return fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
+		return nil, fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
 	}
 
 	if err = w.light.SetSegments(ctx, []wled.SegmentWrite{{
@@ -371,34 +403,16 @@ func (w *writer) paintEvent(ctx context.Context, ev event) error {
 		ID: remainderSegment,
 		On: false,
 	}}); err != nil {
-		return err
+		return nil, err
 	}
 
-	// The band is addressed from the word's first row, so the panel's rows above it come off the
-	// front of the run: y*width + x on the panel is (y-top)*width + x in the band.
-	return w.light.Paint(ctx, place.Top*geometry.width, wordBand(geometry, place, lit, ev.colour))
-}
+	frame := wordFrame(geometry, lit, ev.colour)
 
-// wordBand is the rows the word sits in, as one run of colours: the event's colour where the
-// rasteriser lit a pixel, and the background everywhere else in the band.
-//
-// The background is written rather than left alone because a band sent over a panel erases the
-// letters of the picture before it: the steady frame's own colours are still in those pixels,
-// and a word painted on top of them would be a word inside somebody else's picture.
-func wordBand(geometry panel, place text.Placement, lit []int, colour wled.RGB) []wled.RGB {
-	band := make([]wled.RGB, geometry.width*place.Height)
-
-	for index := range band {
-		band[index] = finishedWordBackground
+	if err = w.pushWord(frame); err != nil {
+		return nil, fmt.Errorf("the %q event's pixels did not reach %s: %w", ev.word, w.where, err)
 	}
 
-	start := place.Top * geometry.width
+	w.confirmRealtime(ctx)
 
-	for _, index := range lit {
-		if offset := index - start; offset >= 0 && offset < len(band) {
-			band[offset] = colour
-		}
-	}
-
-	return band
+	return frame, nil
 }

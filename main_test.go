@@ -186,10 +186,17 @@ func TestTheManifestDeclaresExactlyTheSettingsTheCodeReads(t *testing.T) {
 	}
 }
 
-// TestTheEgressEntryNamesTheAddressSetting is what makes the module publishable
-// with a user-supplied address: the connection the operator is asked to approve is
+// TestTheEgressEntriesNameTheAddressSetting is what makes the module publishable
+// with a user-supplied address: the connections the operator is asked to approve are
 // the setting they type, not a host this module could have hard-coded.
-func TestTheEgressEntryNamesTheAddressSetting(t *testing.T) {
+//
+// There are two of them and they are two ports, because the module makes two kinds of
+// connection to the same box: HTTP on 80 for the state, and UDP on 4048 — DDP — for the
+// pixels of the finished word. The manifest schema has no field for the protocol, so the
+// port is what separates them and the `sends` line is where a reviewer reads that the
+// second one is raw colour bytes. A build that pushed pixels while declaring only port 80
+// would be a module whose permissions do not describe what it does, which is a finding.
+func TestTheEgressEntriesNameTheAddressSetting(t *testing.T) {
 	manifest := readManifest(t)
 
 	field, ok := reflect.TypeOf(Settings{}).FieldByName("ControllerAddress")
@@ -199,16 +206,17 @@ func TestTheEgressEntryNamesTheAddressSetting(t *testing.T) {
 
 	key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 
-	for _, want := range []string{"option: " + key, "ports: [80]", "from: process"} {
+	for _, want := range []string{"option: " + key, "ports: [80]", "ports: [4048]", "from: process", "DDP"} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("module.yaml does not declare %q in its egress entry", want)
 		}
 	}
 
-	// Exactly one of host and option per entry, which is the rule the manifest
-	// parser enforces at load: a module that named both would not load at all.
-	if entries := strings.Count(manifest, "\n  - option: "); entries != 1 {
-		t.Fatalf("module.yaml carries %d egress entries that name an option, want 1", entries)
+	// Two entries, one per port, each naming the setting rather than a host — and exactly one of
+	// host and option per entry, which is the rule the manifest parser enforces at load: a module
+	// that named both would not load at all.
+	if entries := strings.Count(manifest, "\n  - option: "); entries != 2 {
+		t.Fatalf("module.yaml carries %d egress entries that name an option, want 2: HTTP on 80 and DDP on 4048", entries)
 	}
 
 	if entries := strings.Count(manifest, "\n  - host: "); entries != 0 {

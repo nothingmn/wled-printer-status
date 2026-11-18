@@ -146,6 +146,13 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 				pen = newWriter(light, b.Brightness, c.logf)
 			}
 
+			// Every writer knows its controller's address, whether it drives the whole light or
+			// one borrowed segment. The event layer needs it for a second reason the JSON client
+			// does not have: pixels go over DDP to a host and a port, not to a route on the
+			// controller's own web server, and the address has to come from the same setting both
+			// transports are built from so the two cannot drift apart.
+			pen.where = b.Address
+
 			pen.gate = door
 
 			if c.record != nil {

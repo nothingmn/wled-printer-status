@@ -73,6 +73,8 @@ func TestThePreviewPutsTheWordOnThePanelForItsOwnDuration(t *testing.T) {
 	pen.setPanel(strip.info)
 	clock.watch(pen)
 
+	pushed := pushInto(pen)
+
 	forgetPreview()
 	defer forgetPreview()
 
@@ -121,10 +123,10 @@ func TestThePreviewPutsTheWordOnThePanelForItsOwnDuration(t *testing.T) {
 	// The pixels, then the count of paintings: the establishing body is recorded before the pixels
 	// it makes room for, so a test that waited on it would read the panel too early.
 	waitFor(t, "the previewed word to reach the panel", func() bool {
-		return len(wordPixels(strip)) == len(want)
+		return len(wordPixels(pushed)) == len(want)
 	})
 
-	if got := wordPixels(strip); !slices.Equal(got, want) {
+	if got := wordPixels(pushed); !slices.Equal(got, want) {
 		t.Fatalf("the preview left %d green pixels, want the word's %d", len(got), len(want))
 	}
 

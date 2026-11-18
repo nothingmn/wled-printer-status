@@ -233,6 +233,20 @@ type writer struct {
 	// read only by the writer's own goroutine, which is why it needs no lock.
 	held *heldEvent
 
+	// push is the pixel transport the event layer draws through — DDP, the second transport —
+	// opened on the first event and held for this writer's life. It is written and read only by
+	// the writer's own goroutine, like held.
+	push pixelPush
+
+	// dialPixels opens that transport, and is a field rather than a direct call so that a test
+	// can hand the writer a recorder instead of a socket. prepare sets it to dialPixels.
+	dialPixels func(address string, pixels int) (pixelPush, error)
+
+	// handedBack is set when a hold that pushed pixels ends, so that the frame written after it
+	// is followed by one read of what the controller says about realtime — the hand-back's only
+	// proof, because a datagram cannot be read back. See pixels.go.
+	handedBack bool
+
 	wake chan struct{}
 }
 
@@ -267,12 +281,13 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 	}
 
 	return &writer{
-		light:  light,
-		logf:   logf,
-		now:    time.Now,
-		after:  time.After,
-		wake:   make(chan struct{}, 1),
-		record: recordSend,
+		light:      light,
+		logf:       logf,
+		now:        time.Now,
+		after:      time.After,
+		wake:       make(chan struct{}, 1),
+		record:     recordSend,
+		dialPixels: dialPixels,
 	}
 }
 
@@ -386,6 +401,27 @@ func (w *writer) run(ctx context.Context) {
 					last, lastOK = nil, w.now()
 
 					w.held.painted = true
+				} else if !w.held.repush.After(w.now()) {
+					// The word is a still picture and the controller stops drawing it after
+					// realtimeTimeout of silence, so the same frame goes out again once a second
+					// for the length of the hold. A repeat that fails is one line and the hold
+					// continues: the picture may still be on the panel, and a controller that
+					// has stopped taking datagrams is reported by the frame that follows this
+					// hold rather than by forty lines during it.
+					if err := w.republish(w.held); err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+
+						if w.held.pushFails == 0 {
+							w.logf("%s: the %q picture did not reach the panel again and the hold continues: %v",
+								name, w.held.word, err)
+						}
+
+						w.held.pushFails++
+					}
+
+					w.held.repush = w.now().Add(pixelRepeat)
 				}
 
 				// The steady frame waits in the slot, newest first, for the event's own
@@ -393,6 +429,11 @@ func (w *writer) run(ctx context.Context) {
 				// by its duration plus a heartbeat. The wait is re-armed on every pass, so a
 				// frame that arrives during the hold shortens what is left of it rather than
 				// extending it, and the frame painted at the end is the newest one decided.
+				//
+				// A held picture also wakes the writer when the next repeat of it is due, which
+				// is the only reason this is not simply the hold's remaining time.
+				wait = w.until(w.held, wait)
+
 				select {
 				case <-ctx.Done():
 					return
@@ -401,6 +442,13 @@ func (w *writer) run(ctx context.Context) {
 				}
 
 				continue
+			}
+
+			// The hold is over. An event that pushed pixels has to be proved to have let the
+			// light go, and that proof is a read of the controller taken after the frame below
+			// has been written — see handedBack.
+			if w.held.frame != nil {
+				w.handedBack = true
 			}
 
 			w.held = nil
@@ -472,6 +520,16 @@ func (w *writer) run(ctx context.Context) {
 
 		failures, retryAt = 0, time.Time{}
 		last, lastOK = frame, w.now()
+
+		// The frame that takes the light back from a held word is written; now the controller is
+		// read once to prove it left realtime. A JSON state write does not end live mode by
+		// itself — measured on this panel — so the read is taken after the firmware's own
+		// timeout, which is why it lives there and not here.
+		if w.handedBack {
+			w.handedBack = false
+
+			w.confirmHandback(ctx)
+		}
 	}
 }
 
@@ -808,6 +866,10 @@ func litInSpan(frame render.Frame, span int) int {
 // The write goes out on a context of its own, because the one that ended the watch is already
 // cancelled and a cancelled context fails the request before it is sent.
 func (w *writer) release() {
+	// The pixel socket goes first and needs no condition: a writer that never pushed holds
+	// nothing, and one that did is done with it whatever else this function returns early from.
+	w.closePixels()
+
 	if w.borrowed == nil {
 		return
 	}

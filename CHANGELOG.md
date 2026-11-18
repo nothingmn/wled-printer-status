@@ -53,11 +53,18 @@ holds the whole light, and keeps holding it.
   else's controller, a strip, or a panel too small for the word.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
-- The install asks for `observe`, because the module now reads one printer as itself, and declares one
-  outbound connection: the controller in `controller_address`, on port 80, from this process.
+- The install asks for `observe`, because the module now reads one printer as itself, and declares two
+  outbound connections to the controller in `controller_address`, from this process: port 80, where the
+  status colour and the progress are written, and port 4048, where the pixels of the finished word are
+  sent over DDP.
 
 ### Changed
 
+- **The `FINISHED` word reaches the panel.** It is sent as pixels over DDP — to the controller's port 4048
+  — instead of as a per-LED array in a JSON state body, which this firmware accepted and drew by nothing.
+  The word is pushed again once a second for the minute it holds, and the light goes back to the steady
+  picture when that minute is up. Nothing else about the event changes: same word, same colour, same
+  minute, and a preview still shows exactly what a finished print will.
 - A print the printer has taken but has not yet moved shows the waiting yellow, not the printing green. At
   0 % progress the light is the same yellow an idle printer shows, and `GET /status` answers
   `"reason": "starting"` with the printer still reported as printing. A whole panel in green is what a

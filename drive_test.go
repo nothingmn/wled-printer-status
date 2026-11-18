@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1613,14 +1614,39 @@ var livePanel = panel{width: 256, height: 64}
 // through the geometry it would learn from the device rather than setting it by hand.
 type panelStrip struct {
 	*fakeStrip
-	info wled.Info
+	info  wled.Info
+	live  atomic.Bool
+	reads atomic.Int64
 }
 
 func newPanelStrip() *panelStrip {
-	return &panelStrip{fakeStrip: newFakeStrip(), info: wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64}}
+	strip := &panelStrip{fakeStrip: newFakeStrip(), info: wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64}}
+
+	// A panel that takes live mode is the healthy answer, and the only one this module can get: a
+	// datagram is not acknowledged and no pixel is reported, so "live" is the whole of what the
+	// device will say about a pushed picture. A test that wants the failure flips it.
+	strip.live.Store(true)
+
+	return strip
 }
 
-func (p *panelStrip) Info(context.Context) (wled.Info, error) { return p.info, nil }
+// Info answers with the geometry and with whatever the test has said about live mode. The flag is
+// atomic because the writer's goroutine reads it while a test changes it.
+func (p *panelStrip) Info(context.Context) (wled.Info, error) {
+	p.reads.Add(1)
+
+	info := p.info
+	info.Live = p.live.Load()
+
+	return info, nil
+}
+
+// takeRealtime says whether the controller is drawing a live picture, as a test would set it when
+// the panel takes the word and again when its realtime timeout runs out.
+func (p *panelStrip) takeRealtime(live bool) { p.live.Store(live) }
+
+// realtimeReads is how many times the writer asked the controller about live mode.
+func (p *panelStrip) realtimeReads() int64 { return p.reads.Load() }
 
 // TestAPanelIsNotAStrip runs one frame through both shapes. The 1D body is what a strip has
 // always been given, unchanged to the pixel; the 2D body is a rectangle, and the same frame

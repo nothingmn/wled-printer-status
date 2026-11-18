@@ -103,16 +103,25 @@ options:
     summary: The number of the one segment to drive on a multi-segment controller, leaving the controller's other segments, its brightness and its power alone. -1 drives the whole strip, which is what this module has always done.
 
 # Every connection this module makes outside Prusa Connect, which the operator
-# reads before they approve the install. There is exactly one: the controller they
-# named above. It is an `option:` entry rather than a `host:` one because the address
-# is typed in rather than one this module could declare — a fixed host here would be a
-# module that can only ever drive one light.
+# reads before they approve the install. Both of them are the controller they
+# named above, on the two ports a WLED controller listens on: HTTP for its
+# state, and UDP for its pixels. They are two entries because they are two
+# connections — the install lists one line each — and the schema here has no
+# field for the protocol, so the port is what tells them apart and the `sends`
+# line says which is which. Both are `option:` entries rather than `host:` ones
+# because the address is typed in rather than one this module could declare — a
+# fixed host here would be a module that can only ever drive one light.
 egress:
   - option: controller_address
     ports: [80]
     from: process
     why: The module drives the WLED controller the operator names, and a WLED controller answers HTTP on its own port 80.
-    sends: The current status colour and progress, as a WLED state write to /json/state, and — when a print finishes — the word FINISHED as one write per chunk of pixels to the same endpoint. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
+    sends: The current status colour and progress, as a WLED state write to /json/state, and — when a print finishes — the body that gives the panel its geometry and the word as the segment's name. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
+  - option: controller_address
+    ports: [4048]
+    from: process
+    why: The word a finished print shows is pixels this module draws, and a WLED controller takes pixels over DDP — raw UDP datagrams to port 4048, the buffer it draws instead of its own segments.
+    sends: The finished word as one frame of 16,384 pixels over DDP, pushed again once a second for the minute it holds, and nothing else on that port. Raw colour bytes only — no printer data, no credentials, no document.
 
 # The memory in MiB the server may budget for the process, children included.
 # 32 is a measurement, not a guess.

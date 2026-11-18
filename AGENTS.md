@@ -56,10 +56,11 @@ Everything odd about this repository follows from that one sentence:
 | `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
 | `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
 | `watch.go` | **The watch.** One `printer.Source`, one `writer` and one `driver` per binding; one `wled.Client` and one write `gate` per controller, so the bindings on one box take turns at its single small web server. `start` builds everything before any goroutine starts, so a set it cannot run leaves the light as it was. Package `main`. |
-| `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the two things a word on a panel costs — one body that establishes the panel and then a per-pixel paint of the rows the word sits in. `writer.preview` is the same event, fired now, for the route. Package `main`, beside the frame path because it is the same writer. |
+| `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the three things a word on a panel costs — one body that establishes the panel over JSON, one frame of pixels pushed over DDP, and a read that says the controller took it. `writer.preview` is the same event, fired now, for the route. Package `main`, beside the frame path because it is the same writer. |
+| `pixels.go` | **The pixel transport.** The DDP sender for one controller — one socket, opened on the first event — the address arithmetic that turns the operator's `controller_address` into `host:4048`, the frame that lays the word out as the whole panel, and the repeat that keeps a still picture alive past WLED's 2500 ms realtime timeout. It is also where the four measurements that killed per-LED JSON control are written down. Package `main`, because one writer owns both transports. |
 | `internal/text/` | **The word, in pixels.** A 5×7 glyph table drawn for this repository — capitals, digits, a space, a full stop, a hyphen and a percent sign — and a rasteriser that centres a word on a panel, returns the lit pixel indices in the panel's own row-major order, and refuses a word that would not fit at the scale asked for. No transport, no clock, no colour: it answers with indices and leaves the drawing to the caller. It exists because WLED's own text effect does not honour the segment on this firmware — see §5.4. |
 | `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
-| `internal/ddp/` | A second transport: frames of pixels over DDP/UDP to port 4048. **Not the shipping path** — JSON over HTTP is what drives the light, because only it reads back and carries names and effects. DDP exists for the day the module draws its own pictures, and is proved to draw the same frame as the JSON body. |
+| `internal/ddp/` | **The event's transport.** Frames of pixels over DDP/UDP to port 4048: the ten-byte header, the big-endian channel offset, the push flag on the last datagram and no other, 480 pixels a datagram. Steady frames still go over JSON, because only JSON reads back and carries a segment's name and geometry; the word goes over DDP because this firmware draws none of the per-LED colours a JSON body carries. Both paths are proved to draw the same frame by `ddp_agreement_test.go`. |
 | `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
 | `internal/printer/` | The printer half: a pure reducer (`printer.Apply`, `State.Snapshot`) and a `Source` that owns the bus subscription and the periodic device read. It holds no presentation and no policy. The offline-honesty rule lives here — see §5.3. |
 | `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`/`SetSegments`, `Paint`). Per-client mutex, 2 s default timeout. |
@@ -98,7 +99,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **170 tests**: 67 in the root package, 20 in
+`gofmt -l .` printing any path is a failure. Today there are **177 tests**: 74 in the root package, 20 in
 `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp`, 6 in
 `internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
@@ -157,10 +158,21 @@ WLED's own Scrolling Text — **effect 122**, the word in the segment's `n` fiel
 It does not work on the operator's 256×64 panel (`morpheus`, `14.7.0-mdev`): four different groupings,
 each with the word as the name and every parameter written (`ix` 128, `c2` 255), lit **only the first few
 columns on the left**, and the operator watched all four and reported the same fragment. So the word is
-drawn here instead: `internal/text` holds a 5×7 glyph table this repository owns and a rasteriser, and
-`paintEvent` sends the pixels one LED at a time through `Paint`. **Nothing in this module asks a
-controller to draw a string any more**, and a change that puts effect 122 back because it "should work"
-is repeating a measurement this file already records.
+drawn here instead: `internal/text` holds a 5×7 glyph table this repository owns and a rasteriser.
+**Nothing in this module asks a controller to draw a string any more**, and a change that puts effect 122
+back because it "should work" is repeating a measurement this file already records.
+
+**And the pixels do not go over the JSON API either.** `Paint` — a state body whose segment carries an
+`i` array, one colour per LED — is accepted by this firmware and drawn by nothing. Measured on the same
+panel on 2026-11-18, four ways, each one a 200 with `{"success":true}` and no line in the log: a hundred
+pixels at LED 7680 with the segment frozen; the same with it unfrozen; the same with the segment's four
+bounds declared in the same body; and a chunk of sixty colours in case the accepted size was far smaller
+than the 8 KiB budget believed. The operator looked twice at a panel that stayed blank. `/json/state`
+carries no `i` key at all on `14.7.0-mdev` — the segment keys are listed in §8 — so a body that was
+accepted cannot even be read back to see what the controller made of it, while **geometry writes on the
+same endpoint do render**: the progress bar is segment bounds and it has always worked. So the word goes
+on the transport built for pictures, DDP, and `Paint` stays in `internal/wled` as an unused tier with its
+tests rather than as a road back. `pixels.go` has the rate, the frame and the proof.
 
 The 1D half of the rule is unchanged and cannot be fixed from here: a strip has no second dimension, so
 a word is impossible on it and its finished state is the solid green it already shows. Any 2D feature
@@ -181,6 +193,14 @@ controller interpolates instead of the module sending frames. Measured: a 48-LED
 and a 256×64 panel in ~28 ms, so the wire is not the limit — WLED's single small web server is. A full
 16,384-pixel `Paint` is 19 requests at the 8 KiB default budget; that is a once-every-few-seconds floor,
 not an animation path.
+
+**That budget is the HTTP server's, and DDP is not on it.** A datagram never reaches the controller's web
+server, which is the one small task the number above is about, so the event's picture is pushed again
+once a second for as long as it holds (`pixelRepeat`) — 35 datagrams a second of identical bytes, about
+50 kB/s. The rate is chosen against the controller's own `realtimeTimeoutMs` of 2500 ms: a still picture
+needs only enough repeats to survive it, one a second is two and a half times the margin, and faster
+would be the same bytes for nothing. **It is still not permission to stream.** Raising it is a change to
+what the panel's WiFi does all evening, and the arithmetic belongs in the same sentence as the number.
 
 Two waits sit under that budget and neither is an addition to it. A still picture is repainted once a
 minute (`heartbeatEvery`), because a controller that reboots comes back in its own saved state and a
@@ -327,6 +347,18 @@ Nothing in this module has ever run against a live Prusa Connect host. Specifica
   time it was tried here. So **a picture's pixels are unverified except by a person looking at the light**,
   which is what `POST /preview-finished` exists for. A claim that the letters are the right size, or in the
   right place, has no evidence behind it but someone's eyes.
+- **DDP reaches this panel, and that is all that is proved about it.** Measured from inside the
+  `prusa_connect` container on 2026-11-18 — not from the host, because the module's network namespace is the
+  container's — a single datagram carrying a ten-byte header to `10.0.0.136:4048` turned `/json/info`'s `live`
+  from false to true, and a full 35-datagram frame is taken the same way. What `live=true` proves is that the
+  controller took the pixels into the buffer it draws instead of its segments; it cannot prove a pixel of it
+  was drawn, and nothing on this firmware reports individual colours. **Whether the letters appear, and
+  whether the panel's wiring maps row-major the way `y*width+x` assumes, is unverified.**
+- **Live mode ends on the timeout, not on a write.** Also measured on this panel: a JSON state write while the
+  controller was live left `live` true, and it went false about 2.5 s after the last datagram — WLED's
+  `realtimeTimeoutMs`, 2500 ms. So the frame that takes the light back is written first and the controller is
+  read afterwards, once, past that timeout: that read is the only proof the hand-back happened, and the
+  module logs one line saying what it found.
 - **The first live run of the pixel word drew it under the frame's remainder.** The establishing body left
   segment 1 switched on, so the black band over columns 28..256 covered the word and the panel showed a
   fragment on the left — the failure the change exists to end, from the other direction. Fixed, pinned in
