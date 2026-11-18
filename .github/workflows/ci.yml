@@ -1,0 +1,90 @@
+name: CI
+
+# Every push runs the module's own gate, builds the release directory the
+# marketplace takes, and hands that directory to the marketplace's own publish
+# action in --dry-run, signed with a key made in the runner and thrown away.
+#
+# Nothing is uploaded and no attestation is recorded, so a release the
+# marketplace would refuse fails here rather than at publishing, nobody at
+# Prusa is woken to review it, and this job never touches the real signing key.
+# It is the rehearsal for .github/workflows/release.yml, which runs only on
+# `release: published` — the operator's act, not a push.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A dry run needs no privilege of its own: it does not upload, so it needs no
+# OIDC token, and it records no provenance attestation. `id-token: write` and
+# `attestations: write` belong to the publish workflow and to nothing here.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test and check the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # go.mod replaces the SDK with ./.core/sdk — the path the marketplace's
+      # builder makes for itself when it checks Prusa Connect out at core-ref.
+      # The same checkout is made here, at the ref release.yml publishes
+      # against, so this build is against the SDK the release will be.
+      - name: The SDK is a Prusa Connect checkout at .core
+        run: |
+          git -c advice.detachedHead=false clone --quiet --depth 1 \
+            --branch sdk/v0.1.0-beta.1 \
+            https://github.com/prusa3d/prusa-connect.git .core
+
+      # The module's own gate, as README.md states it.
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -count=1
+
+      # The release directory the marketplace takes: module.yaml at its root
+      # and one binary per platform module.yaml declares, named
+      # <name>_<goos>_<goarch>. The platform list is read out of module.yaml, so
+      # a platform added there is built here without this file moving.
+      - name: Build the release directory
+        run: |
+          set -eu
+          name=$(sed -n 's/^name:[[:space:]]*//p' module.yaml | head -1)
+          rm -rf dist
+          mkdir -p dist
+          cp module.yaml dist/module.yaml
+          awk '/^platforms:/{f=1;next} f&&/^[^ ]/{f=0} f&&/^[[:space:]]*-[[:space:]]/{print $2}' module.yaml |
+          while read -r platform; do
+            goos=${platform%%_*}
+            goarch=${platform#*_}
+            exe=""
+            if [ "$goos" = windows ]; then exe=".exe"; fi
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath \
+              -o "dist/${name}_${platform}${exe}" .
+          done
+          ls -l dist
+
+      # A key generated here, used once, discarded with the runner. Its public
+      # half is in no author console and it signs nothing that is published,
+      # which is what makes a dry run safe to run on every push.
+      - name: Throwaway signing key
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out "$RUNNER_TEMP/throwaway.pem" 2>/dev/null
+          { echo 'THROWAWAY_KEY<<EOF'; cat "$RUNNER_TEMP/throwaway.pem"; echo 'EOF'; } >> "$GITHUB_ENV"
+
+      # check-version is off because there is no tag here to name the version;
+      # dry-run signs and packs the release and stops before the upload.
+      - name: Check the release (dry run)
+        uses: prusa3d/prusa-connect-marketplace-publish@v1
+        with:
+          path: dist
+          private-key: ${{ env.THROWAWAY_KEY }}
+          check-version: 'false'
+          dry-run: 'true'
