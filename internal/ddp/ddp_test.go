@@ -28,7 +28,7 @@ const (
 type recorder struct {
 	// packets is every datagram, in the order it was handed over, copied: the sender
 	// reuses its buffer, so a recorder that kept the slice would see the last packet
-	// thirty-four times.
+	// thirty-five times.
 	packets [][]byte
 	// discard takes the datagram and keeps nothing, so that a measurement of
 	// allocations per frame is not measuring the recorder.
@@ -304,7 +304,7 @@ func TestAShortFrameIsNotPadded(t *testing.T) {
 }
 
 // TestThePushFlagIsOnTheLastDatagramAndNoOther is the flag that says a picture is
-// complete. Set on every datagram it asks the controller to draw thirty-four times a
+// complete. Set on every datagram it asks the controller to draw thirty-five times a
 // frame; absent altogether the controller draws each datagram as it lands, and a frame
 // is visible half-drawn.
 func TestThePushFlagIsOnTheLastDatagramAndNoOther(t *testing.T) {
@@ -373,12 +373,12 @@ func TestAnEmptyFrameAndOnePastTheDisplayAreRefused(t *testing.T) {
 }
 
 // TestASecondFrameReusesThePacketBuffer is the allocation claim, and it is measured
-// rather than asserted: a frame of the operator's panel is 34 datagrams, and the sender
+// rather than asserted: a frame of the operator's panel is 35 datagrams, and the sender
 // builds all of them in one buffer it allocated when it was made.
 //
 // This is testing.AllocsPerRun around Send with the recorder discarding its datagrams,
 // so the number is the sender's own allocations and not the test's. Zero means the packet
-// buffer is reused across frames; a per-frame build would report 34 from the copies inside
+// buffer is reused across frames; a per-frame build would report 35 from the copies inside
 // the loop. The socket call is not in the measurement — it is the recorder here — so the
 // claim is about the packet building, which is the part that would grow with the frame.
 func TestASecondFrameReusesThePacketBuffer(t *testing.T) {
@@ -532,7 +532,7 @@ func TestPacketsForTheFramesThatMatter(t *testing.T) {
 }
 
 // TestTheWriteDeadlineBoundsTheWholeFrame is the bound on a frame, not on a datagram: a
-// socket that stops draining must cost the timeout once and not thirty-four times, and
+// socket that stops draining must cost the timeout once and not thirty-five times, and
 // the default has to sit inside the five seconds the host allows a ping to be answered.
 func TestTheWriteDeadlineBoundsTheWholeFrame(t *testing.T) {
 	if DefaultWriteDeadline <= 0 || DefaultWriteDeadline > 5*time.Second {
@@ -593,7 +593,7 @@ func TestTheHeaderFieldsAreTheProtocolsOwn(t *testing.T) {
 // TestTheFirstDatagramOfAnEightyEightPercentFrame is the bytes a person can check against
 // the protocol by eye, taken from the code that would send them rather than written out
 // here: a printing printer at 88 %, a 256x64 panel, the picture the module's own rule gives
-// that frame, and the first of its thirty-four datagrams.
+// that frame, and the first of its thirty-five datagrams.
 //
 // The frame is decided by render.Decide and laid out by matrix, so the colour and the fill
 // are the module's and not this test's. The header is then asserted byte for byte, and the

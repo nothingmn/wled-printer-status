@@ -103,7 +103,7 @@ const (
 	// second id more true.
 	displayID = 1
 
-	// DefaultWriteDeadline is how long a whole frame may take to go out. Thirty-four
+	// DefaultWriteDeadline is how long a whole frame may take to go out. Thirty-five
 	// datagrams to a controller on the same LAN take single-digit milliseconds; half
 	// a second bounds the frame well inside the five seconds a liveness ping allows,
 	// and a write that cannot be made in that time is a socket that is not draining,
