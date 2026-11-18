@@ -112,13 +112,19 @@ dependency and needs the tests re-run against the new tag — not a tidy-up.
 Each of these was learned by breaking it. Each one says what happens if you ignore it, because a rule
 without a failure mode gets refactored away by the next agent who finds it inconvenient.
 
-**5.1 Every 2D segment write carries all four bounds.** `start`, `stop`, `startY`, `stopY` — always, not
-just the first two. A write with only `start`/`stop` is read by the firmware as a **flat LED index
-range**, so on a 256-wide panel a `stop` of 256 collapses to one row and the write paints a single line
-across the top and blacks the rest of the panel. If you write bounds, write four. One shape is
-deliberately flat and still carries four: a progress bar's fill is a count of pixels in row-major order,
-so `SetSegments` sends both rows as zero, which the firmware turns into that flat run. Four bounds, zero
-rows, one meaning.
+**5.1 Every 2D segment write carries all four bounds, and a flat index is not a rectangle.**
+`start`, `stop`, `startY`, `stopY` — always, not just the first two. What the four mean was
+**measured on the live 256×64 panel**, because it had been guessed and the guess was wrong:
+on a 2D build `start`/`stop` are **columns and are clamped to the panel's width**, `startY`/`stopY`
+are **rows**, and a `stopY` of **0 becomes one row**. A body naming pixels 10158 to 16384 with
+`stopY` 0 answered `{"success":true}` and the device then reported *both* segments as
+`start=0 stop=256 startY=0 stopY=1` — the black remainder covering the green fill on a single
+line, and the panel dark. There is no flat pixel index on a panel: the firmware adds nothing to
+`start`, and a pixel count in a `len` field is a count of columns, so a width-times-height number
+is twelve times too large on a 32-row panel. So a panel frame is **rectangles that tile it** —
+columns `0..N` over rows `0..height` for the fill, columns `N..width` over the same rows for the
+remainder — and the boundary is the frame's fraction of the **width**. A 1D controller is the
+other shape and is unchanged: no rows, a run of pixels from the first, both row bounds zero.
 
 **5.2 Telemetry is a patch stream, not a snapshot.** A path is published only when it moves. A state map
 built from the stream is therefore an **accumulation that starts empty** — a path that has not moved

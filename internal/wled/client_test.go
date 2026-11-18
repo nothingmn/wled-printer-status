@@ -1301,18 +1301,26 @@ func TestStateCarriesTheEffectParametersAndTheName(t *testing.T) {
 	}
 }
 
-// TestSetSegmentsWritesBothSegmentsInOneRequest is the body a live 256x64 panel was
-// missing. The frame it held was green for 10158 of 16384 pixels and the panel was black:
-// the fill and the remainder were two writes to the same segment, so the second took the
-// first's place and the fill was covered by nothing. One request, two segments, both
-// named, and every one of them carrying all four bounds.
-func TestSetSegmentsWritesBothSegmentsInOneRequest(t *testing.T) {
+// TestSetSegmentsWritesAPanelAsOneRequestWithFourBounds is the body a live 256x64 panel takes,
+// and it is no longer the body this package used to send.
+//
+// The old body here named a flat pixel range — start 0, stop 10158, then start 10158, stop
+// 16384, both with stopY 0 — on the theory that the firmware added startY times the width to
+// start and read the pair as a row-major run. It was POSTed to a real panel, answered
+// {"success":true}, and the device then reported both segments as start 0, stop 256, startY 0,
+// stopY 1: start and stop are columns and were clamped to the width, stopY 0 became one row,
+// and the black remainder covered the green fill on that single row. Both segments ended up
+// the same line, and the panel was dark.
+//
+// So a panel body is a rectangle: 62 % of 16,384 pixels is 158.72 columns, rounded to 159, and
+// the fill is columns 0 to 159 across all 64 rows with the remainder in columns 159 to 256.
+func TestSetSegmentsWritesAPanelAsOneRequestWithFourBounds(t *testing.T) {
 	recorder := &capture{}
 	server := recorder.server(t)
 
 	err := client(t, server.URL).SetSegments(context.Background(), []SegmentWrite{
-		{ID: 0, First: 0, Count: 10158, On: true, Colour: RGB{R: 0, G: 170, B: 0}},
-		{ID: 1, First: 10158, Count: 6226, On: true, Colour: RGB{}},
+		{ID: 0, First: 0, Count: 159, FirstRow: 0, RowCount: 64, On: true, Colour: RGB{R: 0, G: 170, B: 0}},
+		{ID: 1, First: 159, Count: 97, FirstRow: 0, RowCount: 64, On: true, Colour: RGB{}},
 	})
 	if err != nil {
 		t.Fatalf("SetSegments: %v", err)
@@ -1322,8 +1330,32 @@ func TestSetSegmentsWritesBothSegmentsInOneRequest(t *testing.T) {
 		t.Fatalf("SetSegments sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
 	}
 
-	want := `{"seg":[{"id":0,"start":0,"stop":10158,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0},` +
-		`{"id":1,"start":10158,"stop":16384,"startY":0,"stopY":0,"on":true,"col":[[0,0,0]],"fx":0}]}`
+	want := `{"seg":[{"id":0,"start":0,"stop":159,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+		`{"id":1,"start":159,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0}]}`
+
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetSegments sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestSetSegmentsWritesAStripAsAFlatRun is the other shape, and it is unchanged: a caller that
+// states no rows gets the run of pixels a 1D controller has always been given, with both row
+// bounds as zero. The four bounds travel together on a strip too, and zero on both is what says
+// "one run, no rectangle" — which is the only meaning a strip has.
+func TestSetSegmentsWritesAStripAsAFlatRun(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	err := client(t, server.URL).SetSegments(context.Background(), []SegmentWrite{
+		{ID: 0, First: 0, Count: 24, On: true, Colour: RGB{R: 0, G: 170, B: 0}},
+		{ID: 1, First: 24, Count: 24, On: true, Colour: RGB{}},
+	})
+	if err != nil {
+		t.Fatalf("SetSegments: %v", err)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":24,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0},` +
+		`{"id":1,"start":24,"stop":48,"startY":0,"stopY":0,"on":true,"col":[[0,0,0]],"fx":0}]}`
 
 	if recorder.bodies[0] != want {
 		t.Fatalf("SetSegments sent\n%s\nwant\n%s", recorder.bodies[0], want)
@@ -1373,6 +1405,8 @@ func TestSetSegmentsRefusesABodyAControllerCannotTake(t *testing.T) {
 		{{ID: 0, First: -1, Count: 5, On: true}},
 		{{ID: 0, First: 0, Count: -5, On: true}},
 		{{ID: -1, First: 0, Count: 5, On: true}},
+		{{ID: 0, First: 0, Count: 5, FirstRow: -1, RowCount: 8, On: true}},
+		{{ID: 0, First: 0, Count: 5, FirstRow: 0, RowCount: -8, On: true}},
 	} {
 		if err := clientUnderTest.SetSegments(context.Background(), body); err == nil {
 			t.Fatalf("SetSegments accepted %+v", body)

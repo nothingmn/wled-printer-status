@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1252,5 +1253,344 @@ func TestASuccessResetsTheBackoffToTheFloor(t *testing.T) {
 
 	if shown := strip.shown(); len(shown) != written {
 		t.Fatalf("the light was written %d times, want %d: %+v", len(shown), written, shown)
+	}
+}
+
+// The panel is not a longer strip, and the tests below are the ones that say so.
+//
+// Everything above this line was written when a matrix was believed to accept a flat run of
+// pixels: the firmware would add startY times its width to start and lay the two numbers out
+// row by row. It does not. A body naming pixels 10158 to 16384 with stopY 0 was POSTed to a real
+// 256x64 panel, answered {"success":true}, and the device reported both segments as start 0,
+// stop 256, startY 0, stopY 1 — start and stop are columns, clamped to the width, and stopY 0 is
+// one row. Both segments became the same line and the panel was dark.
+//
+// So a panel frame is two rectangles that cover it between them, and the size of the fill is
+// the frame's own fraction of the panel's width.
+
+// wireCapture is a controller that records the exact body of every request it is sent and
+// answers the success WLED answers. A body is asserted as bytes because that is what goes down
+// the socket; a struct compared here would be a test of this module's encoding rather than of
+// what the device is asked for.
+type wireCapture struct {
+	bodies []string
+}
+
+func (c *wireCapture) server(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read the request body: %v", err)
+		}
+
+		c.bodies = append(c.bodies, string(raw))
+
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// livePanel is the matrix the module was proved against.
+var livePanel = panel{width: 256, height: 64}
+
+// panelStrip is a controller that reports itself as that matrix, so a test drives the writer
+// through the geometry it would learn from the device rather than setting it by hand.
+type panelStrip struct {
+	*fakeStrip
+	info wled.Info
+}
+
+func newPanelStrip() *panelStrip {
+	return &panelStrip{fakeStrip: newFakeStrip(), info: wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64}}
+}
+
+func (p *panelStrip) Info(context.Context) (wled.Info, error) { return p.info, nil }
+
+// TestAPanelIsNotAStrip runs one frame through both shapes. The 1D body is what a strip has
+// always been given, unchanged to the pixel; the 2D body is a rectangle, and the same frame
+// produces both depending only on what the controller said about itself.
+func TestAPanelIsNotAStrip(t *testing.T) {
+	frame := render.Frame{Colour: render.ColourPrinting, Lit: 10158, Total: 16384, Reason: render.ReasonProgress}
+
+	flat := segmentsFor(frame, panel{})
+	if len(flat) != 2 {
+		t.Fatalf("the strip body carries %d segments, want 2: %+v", len(flat), flat)
+	}
+
+	if flat[0].Count != 10158 || flat[0].FirstRow != 0 || flat[0].RowCount != 0 {
+		t.Fatalf("the strip fill is %+v, want 10158 pixels from 0 and no rows", flat[0])
+	}
+
+	if flat[1].First != 10158 || flat[1].Count != 6226 {
+		t.Fatalf("the strip remainder is %+v, want 6226 pixels from 10158", flat[1])
+	}
+
+	rectangles := segmentsFor(frame, livePanel)
+	if len(rectangles) != 2 {
+		t.Fatalf("the panel body carries %d segments, want 2: %+v", len(rectangles), rectangles)
+	}
+
+	fill := rectangles[0]
+	if fill.First != 0 || fill.Count != 159 || fill.FirstRow != 0 || fill.RowCount != 64 {
+		t.Fatalf("the panel fill is columns %d..%d over rows %d..%d, want columns 0..159 over rows 0..64",
+			fill.First, fill.First+fill.Count, fill.FirstRow, fill.FirstRow+fill.RowCount)
+	}
+
+	rest := rectangles[1]
+	if rest.First != 159 || rest.Count != 97 || rest.FirstRow != 0 || rest.RowCount != 64 {
+		t.Fatalf("the panel remainder is columns %d..%d over rows %d..%d, want columns 159..256 over rows 0..64",
+			rest.First, rest.First+rest.Count, rest.FirstRow, rest.FirstRow+rest.RowCount)
+	}
+
+	// The fill and the remainder are adjacent, so no column belongs to both and none belongs to
+	// neither: that is what makes the pair a picture of the panel rather than two bars on it.
+	if fill.First+fill.Count != rest.First || rest.First+rest.Count != livePanel.width {
+		t.Fatalf("the two rectangles do not tile the width: fill ends at %d, remainder starts at %d and ends at %d, want %d",
+			fill.First+fill.Count, rest.First, rest.First+rest.Count, livePanel.width)
+	}
+
+	if fill.Colour != render.ColourPrinting || rest.Colour != unfilled {
+		t.Fatalf("the panel is drawn in %+v and %+v, want the state colour and the unfilled colour",
+			fill.Colour, rest.Colour)
+	}
+}
+
+// TestTheFillBoundaryOnAPanel is the arithmetic between a frame's fraction and a column of a
+// 256-wide panel: the boundary is the fraction times the width, rounded, and never outside one
+// column to all of them.
+//
+// Rounding, where the 48-LED strip floors. A column here is 64 pixels, so a floor would hold the
+// bar still for the first two thirds of a percent of a job; an LED on the strip is over two
+// percent, where flooring is what keeps the bar from claiming more than the printer reported.
+// The unit decides, and the tests say both.
+func TestTheFillBoundaryOnAPanel(t *testing.T) {
+	const total = 16384
+
+	for _, shape := range []struct {
+		name string
+		lit  int
+		want int
+	}{
+		{name: "nothing filled", lit: 0, want: 0},
+		{name: "a job that has just started", lit: 1, want: 1},
+		{name: "one percent", lit: 164, want: 3},           // 2.56 columns, rounded to 3
+		{name: "a tenth", lit: 1638, want: 26},             // 25.59 columns, rounded to 26
+		{name: "sixty-two percent", lit: 10158, want: 159}, // 158.72 columns
+		{name: "half", lit: 8192, want: 128},
+		{name: "ninety-nine percent", lit: 16220, want: 253}, // 253.44 columns
+		{name: "everything filled", lit: total, want: 256},
+		// A printer that reports more than it has must not light a column that does not exist.
+		{name: "more than everything", lit: total * 2, want: 256},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			got := fillColumns(render.Frame{Lit: shape.lit, Total: total}, livePanel)
+			if got != shape.want {
+				t.Fatalf("%d of %d pixels fills %d columns, want %d", shape.lit, total, got, shape.want)
+			}
+		})
+	}
+
+	// A frame decided before the controller had said how many pixels it drives has no
+	// fraction to apply, and no column is an honest answer.
+	if got := fillColumns(render.Frame{Lit: 0, Total: 0}, livePanel); got != 0 {
+		t.Fatalf("a frame with no total fills %d columns, want 0", got)
+	}
+
+	// A panel whose width is zero is not a panel; the 1D path owns that frame.
+	if got := fillColumns(render.Frame{Lit: 10, Total: 20}, panel{}); got != 0 {
+		t.Fatalf("a frame with no geometry fills %d columns, want 0", got)
+	}
+}
+
+// TestAPanelFrameAlwaysCoversTheWholePanel is the two edges, which matter more on a panel than
+// on a strip: a controller keeps a segment's rectangle until something rewrites it, so a frame
+// that leaves a segment alone leaves the frame before it showing.
+//
+// Nothing filled and everything filled are the same body — the whole panel in the frame's colour
+// and the remainder switched off — and the remainder carries no bounds at all, because a
+// rectangle with no width is a segment the controller deletes rather than one that draws
+// nothing, and an off segment draws nothing wherever it points.
+func TestAPanelFrameAlwaysCoversTheWholePanel(t *testing.T) {
+	for _, shape := range []struct {
+		name  string
+		lit   int
+		total int
+	}{
+		{name: "nothing filled", lit: 0, total: 16384},
+		{name: "everything filled", lit: 16384, total: 16384},
+		// The boundary rounds onto the last column: there is no remainder to draw, so this is
+		// the filled edge and not a bar with a rectangle of no width beside it.
+		{name: "all but a handful of pixels", lit: 16380, total: 16384},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			body := segmentsFor(render.Frame{Colour: render.ColourFinished, Lit: shape.lit, Total: shape.total}, livePanel)
+			if len(body) != 2 {
+				t.Fatalf("the body carries %d segments, want 2: %+v", len(body), body)
+			}
+
+			whole := body[0]
+			if whole.First != 0 || whole.Count != 256 || whole.FirstRow != 0 || whole.RowCount != 64 || !whole.On {
+				t.Fatalf("the panel is %+v, want columns 0..256 over rows 0..64 and drawn", whole)
+			}
+
+			if body[1].On || body[1].Count != 0 {
+				t.Fatalf("the remainder is %+v, want it switched off with no span of its own", body[1])
+			}
+		})
+	}
+
+	// The bar a middle frame drew must not survive the edge that follows it. Both frames are
+	// built from the same writer, one after the other, and the second body is asserted to carry
+	// no remainder rectangle at all.
+	strip := newPanelStrip()
+	pen := newWriter(strip, 128, quiet)
+	pen.setPanel(strip.info)
+
+	middle := render.Frame{Colour: render.ColourPrinting, Lit: 8192, Total: 16384, Reason: render.ReasonProgress}
+	if err := pen.paint(context.Background(), middle); err != nil {
+		t.Fatalf("paint the middle frame: %v", err)
+	}
+
+	finished := render.Frame{Colour: render.ColourFinished, Lit: 16384, Total: 16384, Reason: render.ReasonNoLiveJob}
+	if err := pen.paint(context.Background(), finished); err != nil {
+		t.Fatalf("paint the finished frame: %v", err)
+	}
+
+	shown := strip.shown()
+	if len(shown) != 2 {
+		t.Fatalf("two frames were painted in %d requests, want 2", len(shown))
+	}
+
+	if last := shown[1].segments; len(last) != 2 || last[1].On || last[1].Count != 0 {
+		t.Fatalf("the frame after a bar is %+v, want the remainder switched off so the bar cannot stay", last)
+	}
+}
+
+// TestAPanelBodyIsOneRequestWithFourBounds is the body and the wire together: what a frame
+// becomes as bytes on a socket, from the frame through segmentsFor, SetSegments and the client's
+// own encoder. It is the body this module will POST to the panel, so the four bounds and the
+// order of the keys are asserted rather than described.
+//
+// The three frames are the ones the live panel was proved with: 62 % — the frame that was green
+// and arrived dark — then a tenth and then all of it. Each is one request carrying two segments,
+// and the fill's rectangle ends at the column the arithmetic predicts with the remainder
+// starting there.
+func TestAPanelBodyIsOneRequestWithFourBounds(t *testing.T) {
+	for _, shape := range []struct {
+		name string
+		lit  int
+		want string
+	}{
+		{
+			name: "sixty-two percent",
+			lit:  10158,
+			want: `{"seg":[{"id":0,"start":0,"stop":159,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+				`{"id":1,"start":159,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0}]}`,
+		},
+		{
+			name: "a tenth",
+			lit:  1638,
+			want: `{"seg":[{"id":0,"start":0,"stop":26,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+				`{"id":1,"start":26,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0}]}`,
+		},
+		{
+			name: "everything",
+			lit:  16384,
+			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+				`{"id":1,"on":false}]}`,
+		},
+		{
+			name: "nothing",
+			lit:  0,
+			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+				`{"id":1,"on":false}]}`,
+		},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			recorder := &wireCapture{}
+			server := recorder.server(t)
+
+			light, err := wled.New(server.URL)
+			if err != nil {
+				t.Fatalf("wled.New: %v", err)
+			}
+
+			pen := newWriter(light, 128, quiet)
+			pen.setPanel(wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64})
+
+			if err := pen.paint(context.Background(), render.Frame{
+				Colour: render.ColourPrinting,
+				Lit:    shape.lit,
+				Total:  16384,
+				Reason: render.ReasonProgress,
+			}); err != nil {
+				t.Fatalf("paint: %v", err)
+			}
+
+			if len(recorder.bodies) != 1 {
+				t.Fatalf("one frame was painted in %d requests, want 1: %v", len(recorder.bodies), recorder.bodies)
+			}
+
+			if recorder.bodies[0] != shape.want {
+				t.Fatalf("the panel body is\n%s\nwant\n%s", recorder.bodies[0], shape.want)
+			}
+
+			// And the body is a body: it parses as the state write a controller takes, with
+			// two segments in it.
+			var posted struct {
+				Segments []map[string]any `json:"seg"`
+			}
+			if err := json.Unmarshal([]byte(recorder.bodies[0]), &posted); err != nil {
+				t.Fatalf("the body is not JSON: %v", err)
+			}
+
+			if len(posted.Segments) != 2 {
+				t.Fatalf("the body carries %d segments, want 2", len(posted.Segments))
+			}
+		})
+	}
+}
+
+// TestAStripControllerStillGetsTheFlatBody is the other half of the same promise, proved at the
+// wire rather than in the segment list: a controller that reports no matrix — a strip — is given
+// the body it has always been given, with the run of pixels counted from the first and both row
+// bounds as zero.
+//
+// It runs through the driver's own learning step, so what is asserted is what a real strip
+// produces: Info answers, the writer records the geometry, and the frame that follows is flat.
+func TestAStripControllerStillGetsTheFlatBody(t *testing.T) {
+	recorder := &wireCapture{}
+	server := recorder.server(t)
+
+	light, err := wled.New(server.URL)
+	if err != nil {
+		t.Fatalf("wled.New: %v", err)
+	}
+
+	pen := newWriter(light, 128, quiet)
+	strip := newPanelStrip()
+	strip.info = wled.Info{LEDCount: 48}
+	reader := newDriver(nil, pen, strip, quiet)
+
+	reader.learn(context.Background(), time.Now())
+
+	if err := pen.paint(context.Background(), render.Frame{
+		Colour: render.ColourPrinting,
+		Lit:    24,
+		Total:  48,
+		Reason: render.ReasonProgress,
+	}); err != nil {
+		t.Fatalf("paint: %v", err)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":24,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0},` +
+		`{"id":1,"start":24,"stop":48,"startY":0,"stopY":0,"on":true,"col":[[0,0,0]],"fx":0}]}`
+
+	if len(recorder.bodies) != 1 || recorder.bodies[0] != want {
+		t.Fatalf("the strip body is\n%v\nwant one body\n%s", recorder.bodies, want)
 	}
 }

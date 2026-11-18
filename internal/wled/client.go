@@ -893,20 +893,30 @@ func (c *Client) SetRange(ctx context.Context, first, count int, color RGB, opts
 // shapes because a caller states an intent and the controller answers with everything it
 // holds.
 //
-// The span is a run of pixels — First is the first one, inclusive, and Count is how many
-// — because that is what a progress bar counts. On a two-dimensional controller the same
-// run is a flat, row-major range of pixels, which is the shape a bar takes on a panel.
+// The span is a run — First is the first one, inclusive, and Count is how many — and what a
+// run *is* depends on the controller, which is why the row bounds travel beside it. On a 1D
+// controller a run is pixels and RowCount stays zero. On a matrix a segment is a rectangle,
+// so Count is a number of **columns** and RowCount is the panel rows it spans: a flat pixel
+// index cannot be expressed at all, because the firmware clamps start and stop to the
+// panel's width and folds whatever is left onto one row. AGENTS.md §5.1 is the measurement.
 type SegmentWrite struct {
 	// ID is the segment's number. A controller draws them in order, so a later segment
 	// paints over an earlier one.
 	ID int
 	// First is the first pixel the segment covers, counted from the start of the strip,
-	// inclusive.
+	// inclusive — or, on a matrix, its first column.
 	First int
-	// Count is how many pixels it covers. Zero means no span of its own: the segment
-	// keeps whatever span the controller holds for it, which is the whole strip on one
-	// that has never been narrowed.
+	// Count is how many pixels it covers, or how many columns on a matrix. Zero means no
+	// span of its own: the segment keeps whatever span the controller holds for it, which
+	// is the whole strip on one that has never been narrowed.
 	Count int
+	// FirstRow is the first panel row the segment covers, inclusive. It is zero on a strip,
+	// which has no rows, and zero on a matrix is the top row.
+	FirstRow int
+	// RowCount is how many panel rows it covers. Zero means no rows at all: the segment
+	// keeps the flat, one-row shape a strip has, which is what the 1D body sends and what
+	// gives a 1D controller the run it expects.
+	RowCount int
 	// On reports whether the segment is drawn. A segment that is off draws nothing, so it
 	// paints nothing over the segments beneath it — that is how a region is cleared rather
 	// than coloured, and it is what keeps a stale bar from a previous frame out of a frame
@@ -923,8 +933,9 @@ func (s SegmentWrite) validate() error {
 		return fmt.Errorf("%w: segment id %d", ErrInvalidRange, s.ID)
 	}
 
-	if s.First < 0 || s.Count < 0 {
-		return fmt.Errorf("%w: segment %d covers %d pixels from %d", ErrInvalidRange, s.ID, s.Count, s.First)
+	if s.First < 0 || s.Count < 0 || s.FirstRow < 0 || s.RowCount < 0 {
+		return fmt.Errorf("%w: segment %d covers %d pixels from %d over %d rows from %d",
+			ErrInvalidRange, s.ID, s.Count, s.First, s.RowCount, s.FirstRow)
 	}
 
 	return nil
@@ -942,13 +953,18 @@ func (s SegmentWrite) validate() error {
 // pixels 0 to 10157 were dark because nothing covered them, while the module logged every
 // send as taken.
 //
-// Every segment that carries a span carries all four bounds. The row bounds are zero here,
-// and that is deliberate: on a two-dimensional controller the firmware adds startY times
-// the panel's width to start, so a bar running from the first pixel is a flat, row-major
-// range and a non-zero row bound would shift it. The four travel together because a body
-// that names columns without rows, or rows without columns, is read as something other
-// than it means depending on which parser sees it; zero rows and a flat span say the one
-// thing unambiguously.
+// Every segment that carries a span carries all four bounds. What the four mean is the
+// device's, and it was measured rather than assumed: on a two-dimensional build `start` and
+// `stop` are **columns** and are clamped to the panel's width, `startY` and `stopY` are rows,
+// and a `stopY` of zero becomes one row. So a flat pixel index is not a rectangle and cannot
+// be sent as one — 10158 to 16384 on a 256x64 panel arrived as a single row of black over the
+// whole width, with the green it was meant to sit beside covered by it.
+//
+// The two shapes are therefore stated apart. A 1D caller leaves RowCount zero and gets the
+// flat run a strip draws, with both rows as zero, which is the body a strip has always taken.
+// A 2D caller states its rows and gets a rectangle. The four travel together because a body
+// that names columns without rows, or rows without columns, is read as something other than
+// it means depending on which parser sees it.
 //
 // A negative span is refused with ErrInvalidRange before anything is sent, and so is a body
 // that names one id twice: a controller would apply the second entry, and a caller that
@@ -976,10 +992,11 @@ func (c *Client) SetSegments(ctx context.Context, segments []SegmentWrite) error
 		written := writeSegment{ID: segment.ID, On: &on}
 
 		if segment.Count > 0 {
-			start, stop, noRows := segment.First, segment.First+segment.Count, 0
+			start, stop := segment.First, segment.First+segment.Count
+			firstRow, lastRow := segment.FirstRow, segment.FirstRow+segment.RowCount
 
 			written.Start, written.Stop = &start, &stop
-			written.StartY, written.StopY = &noRows, &noRows
+			written.StartY, written.StopY = &firstRow, &lastRow
 		}
 
 		if segment.On {

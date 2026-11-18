@@ -98,6 +98,39 @@ const (
 	remainderSegment = 1
 )
 
+// The shape a frame takes on a panel: the columns from the first to a boundary, across every
+// row, are the fill, and the columns from the boundary to the last are the remainder.
+//
+// PROVISIONAL, and chosen by this seat rather than settled with the operator. A bar that
+// grows left to right is the arrangement that reads as progress from across a room, and it is
+// what a person would expect a progress light to do; it is not a decision anyone asked for on
+// a 256x64 panel, where a paused job, an error and a finished one all have to be told apart by
+// something and a bar alone cannot do it. The constant exists so that the layout the operator
+// eventually chooses is one line and one function, not a shape spread through the painter:
+// nothing else in this module knows what the shape is.
+const (
+	// fillAcrossColumns measures the fill in columns, over the panel's width.
+	fillAcrossColumns = iota
+)
+
+// panelShape is the shape every frame takes on a matrix.
+const panelShape = fillAcrossColumns
+
+// panel is a controller's two-dimensional geometry: how many pixels wide its matrix is and
+// how many rows it has.
+//
+// The zero value is a controller that drives one run of pixels, which is what a strip is, and
+// that is the shape the 1D path writes. Both dimensions are needed before a controller counts
+// as a panel: WLED publishes "leds.matrix" only on a build configured as one, and a half-read
+// geometry is a strip.
+type panel struct {
+	width  int
+	height int
+}
+
+// matrix reports whether the controller has a matrix at all.
+func (p panel) matrix() bool { return p.width > 0 && p.height > 0 }
+
 // logf is where this module's own words go. The host copies the process's
 // standard error into its log, which is the only place a person sees this process.
 func logf(format string, args ...any) {
@@ -131,6 +164,13 @@ type writer struct {
 	// it a clock it can move, because a test about a minute-long heartbeat cannot
 	// spend a minute waiting for one.
 	after func(time.Duration) <-chan time.Time
+
+	// geometry is the matrix the controller reported, and the zero panel for a strip. The
+	// driver's goroutine stores it the moment Info answers and the writer's reads it on
+	// every frame, so it is an atomic pointer rather than a field two goroutines would
+	// race on. Nothing else about a frame depends on it: the colour, the fill and the
+	// total are the printer's, and this is only how they are laid out.
+	geometry atomic.Pointer[panel]
 
 	latest atomic.Pointer[render.Frame]
 	wake   chan struct{}
@@ -394,11 +434,54 @@ func (w *writer) settle(ctx context.Context) {
 // black — exactly the unfilled part — and the 10158 pixels the module had painted green
 // belonged to nothing, so the panel was dark while the module logged every send as taken.
 func (w *writer) paint(ctx context.Context, frame render.Frame) error {
-	return w.light.SetSegments(ctx, segmentsFor(frame))
+	return w.light.SetSegments(ctx, segmentsFor(frame, w.panelOf()))
+}
+
+// setPanel records the geometry the controller reported. It is called from the driver's
+// goroutine the moment the controller answers Info, and it is what turns a frame from a run
+// of pixels into a rectangle.
+//
+// A controller that reports no matrix leaves the zero panel in place, so a strip keeps the
+// body it has always been given. A geometry that changes under a running writer — a
+// controller swapped for a panel and asked again — does not happen in this module, because
+// the LED count is learned once and never re-read; if that changes, the frame that crosses
+// the change is the one to look at.
+func (w *writer) setPanel(info wled.Info) {
+	reported := panel{width: info.MatrixWidth, height: info.MatrixHeight}
+	if !reported.matrix() {
+		return
+	}
+
+	w.geometry.Store(&reported)
+}
+
+// panelOf is the geometry the next frame is written against.
+func (w *writer) panelOf() panel {
+	if held := w.geometry.Load(); held != nil {
+		return *held
+	}
+
+	return panel{}
 }
 
 // segmentsFor is the body one frame becomes: segment 0 the part of the range the job has
 // completed, segment 1 the rest.
+//
+// The shape is the controller's, not the frame's. A strip draws one run of pixels and a panel
+// draws a rectangle, and the two are not the same body: a flat pixel index sent to a panel is
+// clamped to the panel's width and folded onto one row, which is how 62 % of 16,384 pixels
+// arrived as a single line of black across the top. stripSegments and panelSegments below are
+// the two shapes, and each says what it is for.
+func segmentsFor(frame render.Frame, geometry panel) []wled.SegmentWrite {
+	if geometry.matrix() {
+		return panelSegments(frame, geometry)
+	}
+
+	return stripSegments(frame)
+}
+
+// stripSegments is one frame on a controller that drives a single run of pixels: segment 0 the
+// run the job has completed, segment 1 the rest.
 //
 // Three shapes, and each one written for a reason:
 //
@@ -410,7 +493,7 @@ func (w *writer) paint(ctx context.Context, frame render.Frame) error {
 //     finished job.
 //   - anything between: two segments, and both are written even when only the colour
 //     moved, because in that case the fill's colour is the thing that changed.
-func segmentsFor(frame render.Frame) []wled.SegmentWrite {
+func stripSegments(frame render.Frame) []wled.SegmentWrite {
 	if frame.Lit <= 0 || frame.Lit >= frame.Total {
 		return []wled.SegmentWrite{
 			{ID: firstSegment, First: 0, Count: frame.Total, On: true, Colour: frame.Colour},
@@ -428,6 +511,104 @@ func segmentsFor(frame render.Frame) []wled.SegmentWrite {
 			Colour: frame.Unfilled(),
 		},
 	}
+}
+
+// panelSegments is one frame on a controller that drives a matrix: two rectangles that
+// together cover every pixel of the panel, so that neither a stale bar nor an unpainted band
+// is left over from the frame before.
+//
+// The shape is the one panelShape names — the fill is the columns from the first to a
+// boundary, spanning every row, and the remainder is the columns after it. Every segment that
+// carries a span therefore carries all four bounds: columns 0..boundary over rows 0..height on
+// the fill, the columns after it over the same rows on the remainder.
+//
+// The two edges are the same two the strip has, and they matter more here, because a panel
+// keeps a segment's rectangle until something rewrites it. Nothing filled, and so nearly
+// everything filled that the boundary reaches the last column: the whole panel in the frame's
+// colour and the remainder switched off. Written as edges rather than as a boundary of zero or
+// of the full width, because a rectangle with no width is a segment WLED deletes rather than a
+// segment that draws nothing — and a deleted segment leaves the pixels it covered to whatever
+// was under them.
+//
+// A segment that is switched off carries no bounds at all, which is what the 1D body does and
+// what AGENTS.md §5.1 means by "if you write bounds, write four": an off segment draws nothing,
+// so the rectangle it keeps cannot be seen, and any rectangle named for it would be a claim
+// about where the fill ends that the frame does not make.
+func panelSegments(frame render.Frame, geometry panel) []wled.SegmentWrite {
+	columns := fillColumns(frame, geometry)
+
+	if frame.Lit <= 0 || columns >= geometry.width {
+		return []wled.SegmentWrite{
+			{
+				ID:       firstSegment,
+				First:    0,
+				Count:    geometry.width,
+				FirstRow: 0,
+				RowCount: geometry.height,
+				On:       true,
+				Colour:   frame.Colour,
+			},
+			{ID: remainderSegment, On: false},
+		}
+	}
+
+	return []wled.SegmentWrite{
+		{
+			ID:       firstSegment,
+			First:    0,
+			Count:    columns,
+			FirstRow: 0,
+			RowCount: geometry.height,
+			On:       true,
+			Colour:   frame.Colour,
+		},
+		{
+			ID:       remainderSegment,
+			First:    columns,
+			Count:    geometry.width - columns,
+			FirstRow: 0,
+			RowCount: geometry.height,
+			On:       true,
+			Colour:   frame.Unfilled(),
+		},
+	}
+}
+
+// fillColumns is how many of the panel's columns carry the completed part of the job: the
+// frame's fraction of the panel's width, rounded to the nearest column.
+//
+// The fraction is the frame's own — Lit out of Total — and it is rounded rather than floored
+// because a column is a twelfth of a row here: on a 256-wide panel one column is 64 pixels, so
+// flooring would throw away most of a percent of the job and the bar would sit still while the
+// printer was working. That is the opposite of the choice lit makes for a 48-LED strip, where
+// one LED is over two percent and flooring keeps the bar from ever claiming more than was
+// reported; the two are different because the unit is.
+//
+// The answer is zero when nothing is filled, and otherwise clamped to at least one column and
+// at most the whole width. One column, because a job that has started and rounded away to
+// nothing would be a dark panel, which is a light saying the printer had said nothing. The whole
+// width, because a fill that reaches the last column is the "everything filled" edge rather than
+// a bar with a remainder of no width, and panelSegments treats it as one.
+func fillColumns(frame render.Frame, geometry panel) int {
+	if frame.Total <= 0 || frame.Lit <= 0 {
+		return 0
+	}
+
+	// The one place a layout says what "across" means. fillAcrossColumns measures the boundary
+	// in columns, over the panel's width; a layout that filled downwards would be these two
+	// numbers the other way round, and nothing below would change.
+	across := geometry.width
+	if panelShape != fillAcrossColumns {
+		across = geometry.height
+	}
+
+	if across <= 0 {
+		return 0
+	}
+
+	columns := int(math.Round(float64(frame.Lit) / float64(frame.Total) * float64(across)))
+
+	return min(max(columns, 1), across)
 }
 
 // samePicture reports whether two frames would show the same thing, which is what
@@ -529,8 +710,20 @@ func (d *driver) learn(ctx context.Context, at time.Time) {
 	d.infoFailed = false
 	d.leds = info.LEDCount
 
+	// The geometry goes to the writer, which is the thing that builds a body, and it goes
+	// once: the LED count is learned once and never re-read, so the frame that arrives after
+	// this one is written against the matrix the controller reported. A strip reports no
+	// matrix and leaves the writer's zero panel in place, which is the flat body it has
+	// always been given.
+	d.writer.setPanel(info)
+
 	if d.leds > 0 {
 		d.logf("%s: the controller drives %d LEDs", name, d.leds)
+	}
+
+	if info.MatrixWidth > 0 && info.MatrixHeight > 0 {
+		d.logf("%s: the controller is a %dx%d panel, so a frame is drawn as a rectangle",
+			name, info.MatrixWidth, info.MatrixHeight)
 	}
 }
 
