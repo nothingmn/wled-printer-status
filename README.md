@@ -103,7 +103,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **84 tests** — 17 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **85 tests** — 18 in
 the root package, 20 in `internal/printer`, 14 in `internal/render`, 33 in `internal/wled` — and they pass
 without touching a network or a real controller: the light and the printer are both faked in the tests
 that need one. There is no `go.sum`: the only dependency is the SDK, replaced by a directory, so nothing
