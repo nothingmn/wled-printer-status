@@ -1,0 +1,43 @@
+name: Publish to Plugin Marketplace
+
+# Publishing a GitHub release whose tag ends with the version in module.yaml
+# hands that commit to the marketplace's builder. The builder builds the
+# program for every platform module.yaml declares and publishes it together
+# with the commit's source, so the marketplace knows exactly what the release
+# was built from. A person at Prusa reviews it before operators can install it.
+#
+# Pushing a branch publishes nothing. Only `release: published` starts this,
+# and creating a release is the operator's act.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Publish
+    # The builder checks prusa3d/prusa-connect out at core-ref into .core/, and
+    # this module's go.mod replaces the sdk with ./.core/sdk, so core-ref
+    # decides which SDK the published binary is built against.
+    #
+    # sdk/v0.1.0-beta.1 peels to b194cb83, and sdk/ is identical between that
+    # tag and the commit these tests run against, so the release is built
+    # against exactly the SDK proven here. The tag v0.1.0-beta.1 names the same
+    # commit and the same sdk/ tree. Raise this when the SDK moves.
+    uses: prusa3d/prusa-connect-marketplace-publish/.github/workflows/publish.yml@v1
+    with:
+      path: .
+      core-ref: sdk/v0.1.0-beta.1
+      # No bundle-command: module.yaml has no ui: line, so the builder's bundle
+      # job is skipped by design and there is nothing for it to build.
+    # The environment `release` holds PRUSA_CONNECT_EXTENSION_SIGNING_KEY, and
+    # the builder runs the publish job in it. This job does not name the
+    # environment itself, because the builder sets it.
+    #
+    # The secret is passed by name: `secrets: inherit` does not reach a
+    # workflow outside the caller's organisation.
+    secrets:
+      PRUSA_CONNECT_EXTENSION_SIGNING_KEY: ${{ secrets.PRUSA_CONNECT_EXTENSION_SIGNING_KEY }}
+    permissions:
+      contents: read
+      id-token: write     # lets the run prove which repository, workflow and builder it is
+      attestations: write # the build provenance of the archive and every binary
