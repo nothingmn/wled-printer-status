@@ -191,6 +191,17 @@ over the 10158 the module believed were green, `/status` reporting `progress`, a
 taken. `paint` builds both segments and `SetSegments` sends them in one body: one request, so the device is
 never asked to show half a frame, and half the traffic of writing them one after the other.
 
+**5.11 The log carries events, not ticks — one line per transition, silence otherwise.** `/status` is the
+present tense and the log is the history, so a line exists to answer *"what changed while nobody was
+looking"*. The driver writes one when the printer's state word moves (`the printer <name> went from X to
+Y`), one when the host loses or regains its session with it, and one when the reading goes stale or live
+again; the writer keeps its failure lines — the first failure, each widening retry, one on recovery.
+Everything else is deliberately silent: a progress tick, a frame that changed, a successful send, and the
+heartbeat repaint, which fires once a minute on a still picture and must cost no line at all — otherwise
+an idle night becomes a thousand lines that hide the one transition a person needed. A printer still
+saying `PRINTING` is one line at the start of the hour and none during it. Do not "improve" this into a
+line per tick: the route answers the present tense, and the tests count the lines.
+
 ## 6. The supervision you live inside
 
 The server that launches this process imposes limits. They are not advisory; they are how the process
