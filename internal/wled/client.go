@@ -565,6 +565,40 @@ func decodeMatrix(raw json.RawMessage) (int, int) {
 	return matrix.Width, matrix.Height
 }
 
+// wireNumber is a field WLED answers as a number on one firmware and as a boolean on another.
+//
+// The three check values "o1" to "o3" and the transpose code "tp" are documented as numbers and
+// WLED 16.0.1 on an ESP32 answers them as false and true — measured on the operator's own
+// controller, where the read of /json/state failed on "o1" and no segment could be borrowed at
+// all. Both shapes are read here, a true as 1 and a false as 0. Nothing in this package
+// interprets the two check values, and the write that gives a borrowed segment back names
+// neither of them, so the mapping is a way of reading a segment rather than a claim about what
+// a check means to an effect.
+type wireNumber int
+
+// UnmarshalJSON reads either the number or the boolean WLED may write.
+func (n *wireNumber) UnmarshalJSON(raw []byte) error {
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		*n = 1
+
+		return nil
+	case "false", "null":
+		*n = 0
+
+		return nil
+	}
+
+	var number int
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return err
+	}
+
+	*n = wireNumber(number)
+
+	return nil
+}
+
 // State reads what the strip is doing now.
 func (c *Client) State(ctx context.Context) (State, error) {
 	var answer struct {
@@ -586,12 +620,12 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			Custom1    int             `json:"c1"`
 			Custom2    int             `json:"c2"`
 			Custom3    int             `json:"c3"`
-			Check1     int             `json:"o1"`
-			Check2     int             `json:"o2"`
-			Check3     int             `json:"o3"`
+			Check1     wireNumber      `json:"o1"`
+			Check2     wireNumber      `json:"o2"`
+			Check3     wireNumber      `json:"o3"`
 			Palette    int             `json:"pal"`
 			Grouping   int             `json:"grp"`
-			Transpose  int             `json:"tp"`
+			Transpose  wireNumber      `json:"tp"`
 			Expand1D   int             `json:"m12"`
 			Brightness int             `json:"bri"`
 		} `json:"seg"`
@@ -632,12 +666,12 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			Custom1:    segment.Custom1,
 			Custom2:    segment.Custom2,
 			Custom3:    segment.Custom3,
-			Check1:     segment.Check1,
-			Check2:     segment.Check2,
-			Check3:     segment.Check3,
+			Check1:     int(segment.Check1),
+			Check2:     int(segment.Check2),
+			Check3:     int(segment.Check3),
 			Palette:    segment.Palette,
 			Grouping:   segment.Grouping,
-			Transpose:  segment.Transpose,
+			Transpose:  int(segment.Transpose),
 			Expand1D:   segment.Expand1D,
 			Brightness: segment.Brightness,
 		})

@@ -168,6 +168,109 @@ func TestStateReadsTheStripAndBothColourShapes(t *testing.T) {
 	}
 }
 
+// TestABooleanCheckValueReadsAsANumber is the shape WLED 16.0.1 answers a segment in: the three
+// check values and the transpose code are booleans, not the numbers the documentation writes.
+// The read failed on the operator's own desk light over "o1" before this existed, and a module
+// that cannot read a segment cannot borrow one either.
+func TestABooleanCheckValueReadsAsANumber(t *testing.T) {
+	const body = `{
+  "on": true, "bri": 255, "transition": 7, "mainseg": 1,
+  "seg": [
+    {"id": 1, "start": 4, "stop": 14, "len": 10, "grp": 1, "on": true, "bri": 255, "n": "Back 1",
+     "col": [[255,255,255],[0,0,0],[0,0,0]], "fx": 0, "sx": 128, "ix": 128, "pal": 0,
+     "c1": 128, "c2": 128, "c3": 16, "tp": false, "o1": false, "o2": true, "o3": false, "m12": 0}
+  ]
+}`
+
+	server := serve(t, http.StatusOK, body)
+
+	state, err := client(t, server.URL).State(context.Background())
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+
+	if len(state.Segments) != 1 {
+		t.Fatalf("State read %d segments, want 1", len(state.Segments))
+	}
+
+	segment := state.Segments[0]
+	if segment.ID != 1 || segment.Start != 4 || segment.Stop != 14 || segment.Name != "Back 1" {
+		t.Fatalf("the segment reads %+v, want id 1, 4-14, named Back 1", segment)
+	}
+
+	if segment.Check1 != 0 || segment.Check2 != 1 || segment.Check3 != 0 || segment.Transpose != 0 {
+		t.Fatalf("the checks read %d %d %d and the transpose %d, want 0 1 0 and 0",
+			segment.Check1, segment.Check2, segment.Check3, segment.Transpose)
+	}
+}
+
+// TestRestoreSegmentWritesTheSegmentsOwnStateBack is the exact body that gives a borrowed
+// segment back. Every field the module can overwrite is named — the run, whether it is drawn,
+// its colours, its effect, its name and its own brightness — and the effect's parameters are
+// deliberately absent, because this package never writes them.
+func TestRestoreSegmentWritesTheSegmentsOwnStateBack(t *testing.T) {
+	var (
+		method string
+		path   string
+		body   string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	was := Segment{
+		ID:         1,
+		Start:      4,
+		Stop:       14,
+		On:         true,
+		Colors:     []RGB{{R: 255, G: 255, B: 255}},
+		Effect:     0,
+		Name:       "Back 1",
+		Brightness: 255,
+	}
+
+	if err := client(t, server.URL).RestoreSegment(context.Background(), was); err != nil {
+		t.Fatalf("RestoreSegment: %v", err)
+	}
+
+	if method != http.MethodPost || path != "/json/state" {
+		t.Fatalf("RestoreSegment sent %s %s, want POST /json/state", method, path)
+	}
+
+	want := `{"seg":[{"id":1,"start":4,"stop":14,"on":true,"col":[[255,255,255]],"bri":255,"fx":0,"n":"Back 1"}]}`
+	if body != want {
+		t.Fatalf("RestoreSegment sent\n%s\nwant\n%s", body, want)
+	}
+}
+
+// TestRestoreSegmentLeavesABrightnessItNeverHad is the one field a restore must not invent. A
+// segment's own brightness of zero means it inherits the strip's; writing zero back as a value
+// would put the segment at no light at all.
+func TestRestoreSegmentLeavesABrightnessItNeverHad(t *testing.T) {
+	var body string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := client(t, server.URL).RestoreSegment(context.Background(), Segment{ID: 0, Start: 0, Stop: 4, On: true}); err != nil {
+		t.Fatalf("RestoreSegment: %v", err)
+	}
+
+	if strings.Contains(body, `"bri"`) {
+		t.Fatalf("RestoreSegment named a brightness the segment never had: %s", body)
+	}
+}
+
 // TestSetRangeWritesTheExactBody proves the primitive end to end: the method, the
 // path, and the body WLED documents, byte for byte. A range is the one call whose
 // numbers are the whole point, so an exact body is the assertion worth making.
