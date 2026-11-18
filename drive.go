@@ -631,6 +631,30 @@ type readings interface {
 	Snapshot() printer.Snapshot
 }
 
+// transitions is what the log has already been told about the printer.
+//
+// It exists so that each change is said once and a tick that finds nothing new says
+// nothing. A line per tick would be a minute of noise on a live print, and twenty lines
+// for a state word that moved once; /status already answers what the printer is doing
+// now, so the log is left to be the history — what changed while nobody was looking.
+type transitions struct {
+	// ever reports that a snapshot has been read. The first look is a baseline and not
+	// a change: nothing has moved yet, and a module restarted hourly must not announce
+	// the printer's state as though it had moved each time it started.
+	ever bool
+
+	connected bool
+
+	// state is the last state word this build understood, and hadState says whether it
+	// has held one. A word the build does not know is not a state a change can be
+	// reported from, and it leaves the last known word in place — which is what the
+	// host's own memory does, and what /status prints beside state_known.
+	state    string
+	hadState bool
+
+	stale bool
+}
+
 // driver is the goroutine that turns the printer's state into frames.
 type driver struct {
 	source readings
@@ -638,6 +662,10 @@ type driver struct {
 	light  strip
 	logf   func(format string, args ...any)
 	tick   time.Duration
+
+	// told is what the log has already been told, so that a tick which finds the
+	// printer as it left it writes no line.
+	told transitions
 
 	// leds is how many LEDs the controller drives, learned from the controller
 	// itself rather than assumed. Until it is known a frame carries the colour and no
@@ -667,15 +695,92 @@ func (d *driver) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case at := <-ticker.C:
-			d.learn(ctx, at)
-
-			snapshot := d.source.Snapshot()
-			frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
-
-			publish(snapshot, frame)
-			d.writer.submit(frame)
+			d.step(ctx, at)
 		}
 	}
+}
+
+// step is one turn of the watch: learn what the controller drives, read the printer,
+// say what changed, and hand the newest frame to the writer.
+//
+// It is a method rather than the body of run so that a test can drive one turn at a
+// time, at a moment it chooses, with no ticker and no clock of its own.
+func (d *driver) step(ctx context.Context, at time.Time) {
+	d.learn(ctx, at)
+
+	snapshot := d.source.Snapshot()
+
+	// What the printer did is said before the frame is decided, because the frame is
+	// only what the light is asked to show about it. The two are different questions
+	// and the log answers the first.
+	d.note(snapshot)
+
+	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
+
+	publish(snapshot, frame)
+	d.writer.submit(frame)
+}
+
+// note writes one line for each thing about the printer that has changed since the last
+// turn, and nothing at all for a turn that finds it as it was.
+//
+// Four things are worth a line: the state word moving, the host losing and regaining its
+// session with the printer, and the reading going stale or live again. Everything else is
+// either routine — a progress tick, a frame repainted, a write that succeeded — or the
+// present tense, which /status answers better than a log can. A printer that says
+// PRINTING for an hour is one line at the start of the hour and none during it, however
+// often the module looks.
+func (d *driver) note(snapshot printer.Snapshot) {
+	if !d.told.ever {
+		d.told = transitions{
+			ever:      true,
+			connected: snapshot.Connected,
+			state:     snapshot.State.Value,
+			hadState:  snapshot.State.Known,
+			stale:     snapshot.Stale,
+		}
+
+		return
+	}
+
+	if snapshot.Connected != d.told.connected {
+		d.told.connected = snapshot.Connected
+
+		if snapshot.Connected {
+			d.logf("%s: %s is connected again", name, printerPhrase(snapshot))
+		} else {
+			d.logf("%s: %s is no longer connected", name, printerPhrase(snapshot))
+		}
+	}
+
+	if snapshot.State.Known {
+		if d.told.hadState && snapshot.State.Value != d.told.state {
+			d.logf("%s: %s went from %s to %s", name, printerPhrase(snapshot),
+				d.told.state, snapshot.State.Value)
+		}
+
+		d.told.state, d.told.hadState = snapshot.State.Value, true
+	}
+
+	if snapshot.Stale != d.told.stale {
+		d.told.stale = snapshot.Stale
+
+		if snapshot.Stale {
+			d.logf("%s: the reading from %s is stale", name, printerPhrase(snapshot))
+		} else {
+			d.logf("%s: the reading from %s is live again", name, printerPhrase(snapshot))
+		}
+	}
+}
+
+// printerPhrase names the printer in a log line the way the person who named it would:
+// by its name, and by what it is when no name has been read yet.
+func printerPhrase(snapshot printer.Snapshot) string {
+	if snapshot.Name == "" {
+		return "the printer"
+	}
+
+	return "the printer " + snapshot.Name
 }
 
 // learn asks the controller how many LEDs it drives, once, and again only while it

@@ -1594,3 +1594,338 @@ func TestAStripControllerStillGetsTheFlatBody(t *testing.T) {
 		t.Fatalf("the strip body is\n%v\nwant one body\n%s", recorder.bodies, want)
 	}
 }
+
+// What the log carries, and what it deliberately does not.
+//
+// The operator's question was whether the log should have an item on each change or only
+// when the controller is unreachable. The answer these tests pin is: one line per event,
+// none per turn. /status is the present tense — what the printer is doing now — and the
+// log is the history, what moved while nobody was looking. So a state word that changes
+// is one line naming the printer and both words, a printer that keeps saying the same
+// thing is none however many times the module looks, and a frame that moved only because
+// the job progressed is none either.
+
+// changingReadings is a snapshot a test changes between the driver's turns.
+type changingReadings struct {
+	mu       sync.Mutex
+	snapshot printer.Snapshot
+}
+
+func (r *changingReadings) Snapshot() printer.Snapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.snapshot
+}
+
+// show makes the driver read snapshot on its next turn.
+func (r *changingReadings) show(snapshot printer.Snapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.snapshot = snapshot
+}
+
+// all is every line logged so far, as a copy.
+func (l *logs) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return append([]string(nil), l.lines...)
+}
+
+// want fails unless the log holds exactly these lines, in this order. A test about a log
+// is about which lines exist, so the count is asserted as a count and the words as words.
+func (l *logs) want(t *testing.T, want ...string) {
+	t.Helper()
+
+	got := l.all()
+	if len(got) != len(want) {
+		t.Fatalf("the log holds %d lines, want %d:\n got: %q\nwant: %q",
+			len(got), len(want), got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("log line %d is %q, want %q", i+1, got[i], want[i])
+		}
+	}
+}
+
+// waitForCount waits until count lines have been logged. A line about a failed write is
+// written after the attempt it reports, so a test that only waited for the attempt could
+// read the log before the line lands.
+func (l *logs) waitForCount(t *testing.T, count int) {
+	t.Helper()
+
+	deadline := time.Now().Add(howLong)
+
+	for l.count() < count {
+		if time.Now().After(deadline) {
+			t.Fatalf("the log holds %d lines after %s, want %d: %q",
+				l.count(), howLong, count, l.all())
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// snapshotOf is one reading off the host: this module's one printer, a state word, whether
+// the host holds a session with it, and whether its newest fact is older than StaleAfter.
+func snapshotOf(state string, connected, stale bool, at time.Time) printer.Snapshot {
+	return printer.Snapshot{
+		ID:         "01J8DEVICE",
+		Name:       "Morpheus",
+		Connected:  connected,
+		State:      printer.Reading[string]{Value: state, Known: state != ""},
+		LastChange: at,
+		ObservedAt: at,
+		Stale:      stale,
+	}
+}
+
+// newLogWatch is one driver a test turns by hand: a printer whose reading the test sets, a
+// controller that answers at once, and a log the test counts lines in. No ticker, no
+// network, and no wall clock in the assertions.
+func newLogWatch(t *testing.T) (*driver, *changingReadings, *logs) {
+	t.Helper()
+
+	source := &changingReadings{}
+	strip := newFakeStrip()
+
+	written := &logs{}
+	reader := newDriver(source, newWriter(strip, 128, quiet), strip, written.logf)
+
+	// The LED count is the controller's own fact and is logged once when it is learned.
+	// These tests are about the printer, so it is already known; the line about it would
+	// otherwise be counted as though it were a line about the printer.
+	reader.leds = 48
+
+	t.Cleanup(func() {
+		current.Store(nil)
+		sent.Store(nil)
+	})
+
+	return reader, source, written
+}
+
+// TestAStateChangeWritesOneLineAndRepeatsWriteNone is the core of the policy: the log is
+// the history, so a state word that moves is one line and a printer that keeps saying the
+// same word is none — and a progress tick, which moves the picture and not the state, is
+// none either.
+func TestAStateChangeWritesOneLineAndRepeatsWriteNone(t *testing.T) {
+	reader, source, written := newLogWatch(t)
+
+	at := time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	// The first look is a baseline, not a change: nothing has moved yet.
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at)
+
+	written.want(t)
+
+	// Twenty turns of a printer that is still printing are twenty looks at the same thing.
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(time.Duration(i)*tickEvery))
+	}
+
+	written.want(t)
+
+	// The job progresses, so the picture changes, and the printer still says PRINTING:
+	// the light is written and the log stays empty.
+	printing := snapshotOf(printer.StatePrinting, true, false, at)
+	printing.Job = printer.Job{
+		Live:     true,
+		Running:  printer.Reading[bool]{Value: true, Known: true},
+		Progress: printer.Reading[float64]{Value: 41, Known: true},
+	}
+	source.show(printing)
+	reader.step(ctx, at.Add(21*tickEvery))
+
+	written.want(t)
+
+	// The state word moves. That is one line, naming the printer and both words.
+	paused := snapshotOf(printer.StatePaused, true, false, at)
+	paused.Job = printing.Job
+	source.show(paused)
+	reader.step(ctx, at.Add(22*tickEvery))
+
+	written.want(t, "wled-printer-status: the printer Morpheus went from PRINTING to PAUSED")
+
+	// And a printer that stays paused for twenty turns is still one line.
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(23*tickEvery+time.Duration(i)*tickEvery))
+	}
+
+	written.want(t, "wled-printer-status: the printer Morpheus went from PRINTING to PAUSED")
+
+	source.show(snapshotOf(printer.StateFinished, true, false, at))
+	reader.step(ctx, at.Add(60*tickEvery))
+
+	written.want(t,
+		"wled-printer-status: the printer Morpheus went from PRINTING to PAUSED",
+		"wled-printer-status: the printer Morpheus went from PAUSED to FINISHED")
+}
+
+// TestAConnectionChangeWritesOneLineEach is the host's session with the printer: losing it
+// is one line, regaining it is one line, and the twenty turns in between are none.
+func TestAConnectionChangeWritesOneLineEach(t *testing.T) {
+	reader, source, written := newLogWatch(t)
+
+	at := time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at)
+
+	written.want(t)
+
+	source.show(snapshotOf(printer.StatePrinting, false, false, at))
+	reader.step(ctx, at.Add(tickEvery))
+
+	// The state word does not move — the host's memory still says PRINTING — so the only
+	// line is the connection going.
+	written.want(t, "wled-printer-status: the printer Morpheus is no longer connected")
+
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(2*tickEvery+time.Duration(i)*tickEvery))
+	}
+
+	written.want(t, "wled-printer-status: the printer Morpheus is no longer connected")
+
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at.Add(30*tickEvery))
+
+	written.want(t,
+		"wled-printer-status: the printer Morpheus is no longer connected",
+		"wled-printer-status: the printer Morpheus is connected again")
+
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(31*tickEvery+time.Duration(i)*tickEvery))
+	}
+
+	written.want(t,
+		"wled-printer-status: the printer Morpheus is no longer connected",
+		"wled-printer-status: the printer Morpheus is connected again")
+}
+
+// TestTheReadingGoingStaleWritesOneLineEach is the honesty rule of §5.3 seen from the log:
+// a reading that has aged past StaleAfter is one line when it happens, one when the printer
+// speaks again, and nothing in between — a stale printer is not a line a minute.
+func TestTheReadingGoingStaleWritesOneLineEach(t *testing.T) {
+	reader, source, written := newLogWatch(t)
+
+	at := time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at)
+
+	written.want(t)
+
+	source.show(snapshotOf(printer.StatePrinting, true, true, at))
+	reader.step(ctx, at.Add(tickEvery))
+
+	written.want(t, "wled-printer-status: the reading from the printer Morpheus is stale")
+
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(2*tickEvery+time.Duration(i)*tickEvery))
+	}
+
+	written.want(t, "wled-printer-status: the reading from the printer Morpheus is stale")
+
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at.Add(30*tickEvery))
+
+	written.want(t,
+		"wled-printer-status: the reading from the printer Morpheus is stale",
+		"wled-printer-status: the reading from the printer Morpheus is live again")
+
+	for i := 0; i < 20; i++ {
+		reader.step(ctx, at.Add(31*tickEvery+time.Duration(i)*tickEvery))
+	}
+
+	written.want(t,
+		"wled-printer-status: the reading from the printer Morpheus is stale",
+		"wled-printer-status: the reading from the printer Morpheus is live again")
+}
+
+// TestAHeartbeatRepaintWritesNoLine is the line a minute that must not exist. A still
+// picture is repainted every heartbeatEvery so that a controller which rebooted corrects
+// itself, and that repaint is routine: the log must hold nothing at all, however many
+// repaints a quiet hour costs.
+func TestAHeartbeatRepaintWritesNoLine(t *testing.T) {
+	strip := newFakeStrip()
+
+	clock := newFakeClock(time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC))
+
+	var written logs
+
+	pen := newWriter(strip, 128, written.logf)
+	clock.watch(pen)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pen.run(ctx)
+
+	pen.submit(frame(render.ColourIdle, render.ReasonNoLiveJob))
+	strip.waitForPaints(t, 1)
+	clock.waitArmed(t, 0)
+
+	// Three repaints of a frame nothing has changed: one a minute for three minutes.
+	clock.Advance(heartbeatEvery)
+	strip.waitForPaints(t, 2)
+	clock.Advance(heartbeatEvery)
+	strip.waitForPaints(t, 3)
+	clock.Advance(heartbeatEvery)
+	strip.waitForPaints(t, 4)
+
+	written.want(t)
+
+	// The same frame offered again, as the driver offers it on every turn, is still not an
+	// event: the writer has it already and the log says nothing.
+	pen.submit(frame(render.ColourIdle, render.ReasonNoLiveJob))
+	time.Sleep(50 * time.Millisecond)
+
+	if shown := strip.shown(); len(shown) != 4 {
+		t.Fatalf("an unchanged frame was written %d times, want the 4 repaints: %+v", len(shown), shown)
+	}
+
+	written.want(t)
+}
+
+// TestAFailedWriteStillWritesItsOneLine is the other half of the policy: a controller that
+// will not take a frame is loud, and it is loud once rather than once per attempt.
+func TestAFailedWriteStillWritesItsOneLine(t *testing.T) {
+	strip := newFakeStrip()
+	strip.stopAnswering()
+
+	var written logs
+
+	pen := newWriter(strip, 128, written.logf)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pen.run(ctx)
+
+	pen.submit(frame(render.ColourPrinting, render.ReasonProgress))
+	strip.waitForPaints(t, 1)
+
+	written.waitForCount(t, 1)
+
+	// The window a failed write opens is a second long, so nothing else is attempted and
+	// nothing else is said in this time.
+	time.Sleep(50 * time.Millisecond)
+
+	lines := written.all()
+	if len(lines) != 1 {
+		t.Fatalf("one failed write wrote %d lines, want 1: %q", len(lines), lines)
+	}
+
+	if !strings.Contains(lines[0], "not updated") {
+		t.Fatalf("the failed write was logged as %q, want a line saying the light was not updated", lines[0])
+	}
+}
