@@ -89,9 +89,9 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **57 tests**: 4 in the root package, 20 in
-`internal/printer`, 33 in `internal/wled`. That number is a fact about this commit, not a target — update
-it here when it changes, and never quote it without re-running.
+`gofmt -l .` printing any path is a failure. Today there are **96 tests**: 26 in the root package, 20 in
+`internal/printer`, 14 in `internal/render`, 36 in `internal/wled`. That number is a fact about this
+commit, not a target — update it here when it changes, and never quote it without re-running.
 
 The tests never touch a network and never touch a device. They are fakes and `httptest` servers. If a test
 you add needs a real controller or a live Connect instance to pass, it belongs in a manual note, not in
@@ -115,7 +115,10 @@ without a failure mode gets refactored away by the next agent who finds it incon
 **5.1 Every 2D segment write carries all four bounds.** `start`, `stop`, `startY`, `stopY` — always, not
 just the first two. A write with only `start`/`stop` is read by the firmware as a **flat LED index
 range**, so on a 256-wide panel a `stop` of 256 collapses to one row and the write paints a single line
-across the top and blacks the rest of the panel. If you write bounds, write four.
+across the top and blacks the rest of the panel. If you write bounds, write four. One shape is
+deliberately flat and still carries four: a progress bar's fill is a count of pixels in row-major order,
+so `SetSegments` sends both rows as zero, which the firmware turns into that flat run. Four bounds, zero
+rows, one meaning.
 
 **5.2 Telemetry is a patch stream, not a snapshot.** A path is published only when it moves. A state map
 built from the stream is therefore an **accumulation that starts empty** — a path that has not moved
@@ -154,6 +157,15 @@ and a 256×64 panel in ~28 ms, so the wire is not the limit — WLED's single sm
 16,384-pixel `Paint` is 19 requests at the 8 KiB default budget; that is a once-every-few-seconds floor,
 not an animation path.
 
+Two waits sit under that budget and neither is an addition to it. A still picture is repainted once a
+minute (`heartbeatEvery`), because a controller that reboots comes back in its own saved state and a
+printer that has nothing to say would never correct it; the interval is measured from the last write that
+landed, so a moving print resets it and pays nothing. A write that **fails** opens a wait that doubles
+from a second to half a minute (`backoffFloor`/`backoffCap`), and nothing bypasses it — a changed picture
+waits in the slot rather than knocking again. That is the difference between a retry and a storm: the
+installed module once POSTed once a second at a controller that answered a ping in 3 ms and took none of
+the writes.
+
 **5.8 A module's settings cannot express a composer.** The manifest's `options` has **nine closed
 types**, no enum, no repeated group, and `list`/`object` render as a one-line JSON box in the UI. There is
 no way to build a colour picker or a per-state mapping table out of settings. A rich editor needs the
@@ -164,6 +176,14 @@ module's **UI half** (a separate browser-side bundle the manifest declares), and
 is no forward-compatible "extra field". This is why `author:` is absent even though the marketplace asks
 for it: the key does not exist, so writing it produces a module that does not start. When you want a key
 that is not there, the answer is the SDK or the marketplace schema, never a hopeful line in the YAML.
+
+**5.10 A frame is one request carrying two segments.** Every write in `internal/wled` addresses segment
+0, so a fill written and then a remainder written are **one segment, not two**: the second body replaces
+the first one's bounds, the pixels the fill covered belong to no segment, and nothing draws them. A
+256×64 panel spent a night proving it — one black segment over pixels 10158 to 16384, no segment at all
+over the 10158 the module believed were green, `/status` reporting `progress`, and every send logged as
+taken. `paint` builds both segments and `SetSegments` sends them in one body: one request, so the device is
+never asked to show half a frame, and half the traffic of writing them one after the other.
 
 ## 6. The supervision you live inside
 
@@ -207,7 +227,10 @@ Nothing in this module has ever run against a live Prusa Connect host. Specifica
   and the 30 s staleness horizon are proven against **fakes only**. A module's bus does not exist until
   the module is installed and serving, which is why this has not been done yet.
 - **No live WLED write has been made from the module.** Reads have been made against real controllers;
-  every write is proven against `httptest` servers and nothing else.
+  every write is proven against `httptest` servers and nothing else. What the live panel did show is that
+  the writes it was given were the wrong shape: one segment, black, over the unfilled half. The two-segment
+  body that replaces it has been proven as bytes in a request body and **not** on the panel; the first
+  deploy is where that gets checked, by reading `/json/state` back and by looking at the light.
 - **The release workflow has never executed.** It is written from the builder's documented interface,
   not from a green run.
 

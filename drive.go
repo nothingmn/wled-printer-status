@@ -11,6 +11,13 @@
 // Between the two sits a slot that holds one frame. A frame that arrives while the
 // writer is busy replaces the one waiting, so a slow controller is never handed a
 // queue of stale pictures to work through: it gets the newest frame or nothing.
+//
+// The writer also keeps a floor under the picture: a frame it has not written for
+// heartbeatEvery is written again even though nothing about it changed. A controller
+// that rebooted came back in its own default state, and without that repaint a strip
+// whose printer has nothing to say — idle overnight, a finished job, a paused machine
+// — would stay wrong until something else moved. It is a floor and not an addition:
+// see heartbeatEvery for why it cannot raise the traffic of a moving picture.
 package main
 
 import (
@@ -46,6 +53,49 @@ const (
 	// must not be asked once a second for the life of the process, so the retry is
 	// slower than the tick and fast enough that nobody watching the light notices.
 	infoRetryEvery = 10 * time.Second
+
+	// heartbeatEvery is the longest the writer lets a frame stand unwritten before
+	// painting it again, unchanged.
+	//
+	// A controller that loses power, is unplugged, or reboots its own firmware comes
+	// back in whatever state it saved for itself — not in the frame this module was
+	// showing. The writer suppresses a frame whose colour, fill and length equal the
+	// last one the strip took, which is right for traffic and wrong here: if the
+	// printer's picture does not change, nothing is ever sent, and the light stays
+	// wrong until something else moves. Idle overnight, a finished job and a paused
+	// machine are all that case.
+	//
+	// This is a floor, not an addition, and that is the whole design: it is measured
+	// from the last write the strip took, of any kind, successfully. While a print is
+	// moving the ordinary writes land more often than this and reset the clock, so
+	// the heartbeat never fires and adds no traffic at all. It fires only when the
+	// picture has stopped moving, where it costs one repaint a minute — the low end of
+	// the write budget rather than a stream.
+	heartbeatEvery = 60 * time.Second
+
+	// backoffFloor is how long the writer waits before trying the light again after
+	// one failed write, and backoffCap is the longest it will ever wait between
+	// attempts. Each failure in a row doubles the wait, to the cap.
+	//
+	// These exist because of what the installed module did to a real controller: a
+	// write that failed was never recorded as sent, so the next second's frame retried
+	// it, and the next, against a 16,384-pixel panel that was already struggling. The
+	// log was one line per attempt, and the host answered a ping in 3 ms throughout.
+	// That is self-inflicted congestion, and a device in that state cannot recover
+	// while it is being hammered.
+	//
+	// The floor is a second because one failure is usually a blip. The cap is half a
+	// minute: long enough that an hour-long outage costs a hundred-odd attempts rather
+	// than three and a half thousand, short enough that a controller switched back on
+	// is found again in half a minute.
+	backoffFloor = time.Second
+	backoffCap   = 30 * time.Second
+
+	// firstSegment and remainderSegment are the two segments a frame is written as. The
+	// controller draws them in order, so the fill is 0 and the unfilled part is 1; both
+	// travel in one request, because one segment cannot hold two spans.
+	firstSegment     = 0
+	remainderSegment = 1
 )
 
 // logf is where this module's own words go. The host copies the process's
@@ -60,8 +110,7 @@ type strip interface {
 	Info(ctx context.Context) (wled.Info, error)
 	SetBrightness(ctx context.Context, brightness int) error
 	SetPower(ctx context.Context, on bool) error
-	SetSolid(ctx context.Context, colour wled.RGB, opts ...wled.SolidOption) error
-	SetRange(ctx context.Context, first, count int, colour wled.RGB, opts ...wled.RangeOption) error
+	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
 }
 
 // writer sends the newest frame it has been handed to one controller, and
@@ -77,6 +126,11 @@ type writer struct {
 	brightness int
 	logf       func(format string, args ...any)
 	now        func() time.Time
+
+	// after is how the writer waits. It is time.After in the process; a test hands
+	// it a clock it can move, because a test about a minute-long heartbeat cannot
+	// spend a minute waiting for one.
+	after func(time.Duration) <-chan time.Time
 
 	latest atomic.Pointer[render.Frame]
 	wake   chan struct{}
@@ -94,6 +148,7 @@ func newWriter(light strip, brightness int, logf func(format string, args ...any
 		brightness: brightness,
 		logf:       logf,
 		now:        time.Now,
+		after:      time.After,
 		wake:       make(chan struct{}, 1),
 	}
 }
@@ -102,7 +157,11 @@ func newWriter(light strip, brightness int, logf func(format string, args ...any
 // replaces whatever was waiting; the ring is dropped when one is already pending,
 // because a pending ring already means "look at the slot".
 func (w *writer) submit(frame render.Frame) {
-	w.latest.Store(&frame)
+	if w.latest.Swap(&frame) != nil {
+		// A frame was already waiting, and the ring that put it there is still pending: a
+		// second ring would buy nothing and would outlive the look it asked for.
+		return
+	}
 
 	select {
 	case w.wake <- struct{}{}:
@@ -115,45 +174,188 @@ func (w *writer) submit(frame render.Frame) {
 func (w *writer) run(ctx context.Context) {
 	w.settle(ctx)
 
-	// last is what this goroutine last delivered. It moves only after a write
-	// succeeded, so a write that failed is tried again on the next identical frame
-	// instead of being suppressed as "already shown".
-	var last *render.Frame
+	// last is what this goroutine last delivered, and lastOK is when the strip took
+	// it. Both move only after a write succeeded, so a write that failed is tried
+	// again on the next identical frame instead of being suppressed as "already
+	// shown" — and, for the same reason, a failed write leaves the heartbeat's clock
+	// where it was, because that clock is the last write that actually landed.
+	var (
+		last     *render.Frame
+		lastOK   time.Time
+		failures int
+		retryAt  time.Time
+	)
 
 	for {
+		// A failed write opens a window in which nothing is sent, however much the
+		// printer has to say. This is the difference between a retry and a storm: a
+		// controller that is answering slowly, or not at all, is tried once per window
+		// instead of once per tick, and a picture that changed while the window is open
+		// waits in the slot rather than being added to a pile of attempts.
+		//
+		// The window gates the heartbeat too. The heartbeat is why a rebooted controller
+		// heals, not a reason to keep knocking while the controller is down.
+		if wait := retryAt.Sub(w.now()); !retryAt.IsZero() && wait > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.after(wait):
+			}
+
+			continue
+		}
+
+		// Nothing is in the way, so anything the driver has decided goes out now, newest
+		// first: a frame that arrived during the window is held here, in the one slot,
+		// and never queued.
+		//
+		// The ring is taken with it. It is a hint that the slot may hold something, and
+		// this is the look it asked for; left behind it would ring for a frame already in
+		// hand, and the pass it woke would abandon the wait armed below and arm it again.
 		select {
-		case <-ctx.Done():
-			return
 		case <-w.wake:
+		default:
 		}
 
 		frame := w.latest.Swap(nil)
+
+		forced := false
+
 		if frame == nil {
+			if last == nil {
+				// Nothing has ever reached the strip and nothing is waiting: there is
+				// nothing to repaint, and a frame of this writer's own invention would be
+				// a picture nobody decided.
+				select {
+				case <-ctx.Done():
+					return
+				case <-w.wake:
+				}
+
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.wake:
+				continue
+			case <-w.after(w.beatIn(lastOK)):
+			}
+
+			// Nothing about this frame has changed and it is sent again anyway: a
+			// controller that rebooted is showing its own saved state, and a picture
+			// that never moves would otherwise never correct it. This is the same
+			// single writer sending the same frame — no second goroutine, no re-reading
+			// the printer, no power or brightness write.
+			frame, forced = last, true
+		}
+
+		if !forced && last != nil && samePicture(*last, *frame) {
 			continue
 		}
 
-		if last != nil && samePicture(*last, *frame) {
-			continue
-		}
-
-		if err := w.paint(ctx, *frame); err != nil {
+		if err := w.deliver(ctx, *frame); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 
-			// A write that failed is a light that is showing something older than
-			// the printer is. It is reported and survived: the host stops a process that
-			// misses three pings, and a module that exited over one unreachable controller
-			// would be a status display that needs a person to switch it back on.
-			w.logf("%s: the light was not updated: %v", name, err)
-			recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: false, Error: err.Error()})
+			failures++
+
+			// A write that failed is a light showing something older than the printer is,
+			// and it is survived rather than fatal: the host stops a process that misses
+			// three pings, and a module that exited over one unreachable controller would
+			// be a status display that needs a person to switch it back on.
+			wait := backoffFor(failures)
+			retryAt = w.now().Add(wait)
+
+			w.logFailure(failures, wait, err)
 
 			continue
 		}
 
-		last = frame
-		recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: true})
+		if failures > 0 {
+			w.logf("%s: the light is answering again after %d failed writes", name, failures)
+		}
+
+		failures, retryAt = 0, time.Time{}
+		last, lastOK = frame, w.now()
 	}
+}
+
+// beatIn is how long the writer may wait before the frame it is showing is due a
+// repaint: one interval from the last write that landed.
+//
+// It is measured from that write and not from "the last thing that happened", which is
+// the difference between a floor and an addition. Every write that succeeds — a new
+// picture, or an earlier heartbeat — pushes the deadline out, so a print whose picture
+// keeps moving keeps the heartbeat unarmed and costs nothing at all.
+func (w *writer) beatIn(lastOK time.Time) time.Duration {
+	if wait := lastOK.Add(heartbeatEvery).Sub(w.now()); wait > 0 {
+		return wait
+	}
+
+	return 0
+}
+
+// backoffFor is how long the writer waits before trying the light again after
+// failures failed writes in a row: the floor, then doubling, to the cap.
+//
+// The floor is a tick's length because one failed write is usually the controller
+// blinking, and the next frame is worth trying a second later. The cap is half a
+// minute because a controller switched off for an hour must not be knocked on three
+// hundred times, and must still be found within half a minute of being switched back
+// on. The cap is also what makes an outage's cost bounded: five minutes of it is a
+// dozen attempts, not three hundred.
+func backoffFor(failures int) time.Duration {
+	if failures < 1 {
+		return 0
+	}
+
+	wait := backoffFloor
+	for i := 1; i < failures && wait < backoffCap; i++ {
+		wait *= 2
+	}
+
+	if wait > backoffCap {
+		return backoffCap
+	}
+
+	return wait
+}
+
+// logFailure reports a failed write, and stops reporting it on every attempt.
+//
+// A controller that is down fails on every attempt, and one line per attempt is a log
+// nobody can read and a disk that fills: at a tick a second, a five-minute outage wrote
+// three hundred lines, and the operator found it by reading them. So the first failure
+// is reported, then only the ones that move the backoff to a longer wait — the failures
+// that change what the module is doing — and then once when the light answers again.
+// The same five-minute outage now writes six lines.
+func (w *writer) logFailure(failures int, wait time.Duration, err error) {
+	if failures > 1 && backoffFor(failures) == backoffFor(failures-1) {
+		return
+	}
+
+	w.logf("%s: the light was not updated (failure %d, next try in %s): %v", name, failures, wait, err)
+}
+
+// deliver paints one frame and reports what happened to the status route.
+//
+// It is the writer's only write of a frame, whether that frame is new or a heartbeat
+// repaint of the last one, so a repaint is recorded like any other write. A frame that
+// failed is recorded as failed and is never reported as taken: a person reading the
+// route must not be told the light is current when the light did not answer.
+func (w *writer) deliver(ctx context.Context, frame render.Frame) error {
+	if err := w.paint(ctx, frame); err != nil {
+		recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: false, Error: err.Error()})
+
+		return err
+	}
+
+	recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: true})
+
+	return nil
 }
 
 // settle writes the brightness this instance runs at, once, and makes sure the
@@ -180,26 +382,52 @@ func (w *writer) settle(ctx context.Context) {
 
 // paint draws one frame on the strip.
 //
-// A frame with nothing filled is the whole range in the state's colour: an idle
-// strip is yellow, not dark, and a printer that went quiet is dim red. A frame with
-// a fill is the fill first and then the remainder, so the segment ends up covering
-// the whole strip however narrow a previous write left it.
+// It is one request, whatever the frame, and it carries both segments. Not two requests,
+// for two reasons: two requests leave a window in which the panel is showing half a frame
+// — this frame's fill underneath the previous frame's remainder — and they double the
+// traffic to a device already known to be slow. It is also not optional. Every write this
+// module makes addresses one segment, so a fill written on its own and then a remainder
+// written on its own are one segment rather than two: the second takes the first one's
+// place, and the pixels the fill covered belong to no segment and are never drawn.
+//
+// That is not a theory. A 256x64 panel held one segment covering pixels 10158 to 16384 in
+// black — exactly the unfilled part — and the 10158 pixels the module had painted green
+// belonged to nothing, so the panel was dark while the module logged every send as taken.
 func (w *writer) paint(ctx context.Context, frame render.Frame) error {
-	if frame.Lit <= 0 {
-		return w.light.SetSolid(ctx, frame.Colour, wled.WithSolidLEDCount(frame.Total))
+	return w.light.SetSegments(ctx, segmentsFor(frame))
+}
+
+// segmentsFor is the body one frame becomes: segment 0 the part of the range the job has
+// completed, segment 1 the rest.
+//
+// Three shapes, and each one written for a reason:
+//
+//   - nothing filled: segment 0 covers the whole range in the frame's colour, and segment
+//     1 is switched off. A frame with no fill is the whole range in one colour, not a range
+//     with a black tail, and an idle strip must not keep a bar from the frame before it.
+//   - everything filled: the same, and for the same reason in the other direction — there
+//     is no remainder, and a stale remainder segment would be a black band across a
+//     finished job.
+//   - anything between: two segments, and both are written even when only the colour
+//     moved, because in that case the fill's colour is the thing that changed.
+func segmentsFor(frame render.Frame) []wled.SegmentWrite {
+	if frame.Lit <= 0 || frame.Lit >= frame.Total {
+		return []wled.SegmentWrite{
+			{ID: firstSegment, First: 0, Count: frame.Total, On: true, Colour: frame.Colour},
+			{ID: remainderSegment, On: false},
+		}
 	}
 
-	if err := w.light.SetRange(ctx, 0, frame.Lit, frame.Colour,
-		wled.WithRangeLEDCount(frame.Total)); err != nil {
-		return err
+	return []wled.SegmentWrite{
+		{ID: firstSegment, First: 0, Count: frame.Lit, On: true, Colour: frame.Colour},
+		{
+			ID:     remainderSegment,
+			First:  frame.Lit,
+			Count:  frame.Total - frame.Lit,
+			On:     true,
+			Colour: frame.Unfilled(),
+		},
 	}
-
-	if rest := frame.Total - frame.Lit; rest > 0 {
-		return w.light.SetRange(ctx, frame.Lit, rest, frame.Unfilled(),
-			wled.WithRangeLEDCount(frame.Total))
-	}
-
-	return nil
 }
 
 // samePicture reports whether two frames would show the same thing, which is what

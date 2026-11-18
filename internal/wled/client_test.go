@@ -1300,3 +1300,86 @@ func TestStateCarriesTheEffectParametersAndTheName(t *testing.T) {
 		t.Fatalf("segment colours read %v, want %v", segment.Colors, want.Colors)
 	}
 }
+
+// TestSetSegmentsWritesBothSegmentsInOneRequest is the body a live 256x64 panel was
+// missing. The frame it held was green for 10158 of 16384 pixels and the panel was black:
+// the fill and the remainder were two writes to the same segment, so the second took the
+// first's place and the fill was covered by nothing. One request, two segments, both
+// named, and every one of them carrying all four bounds.
+func TestSetSegmentsWritesBothSegmentsInOneRequest(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	err := client(t, server.URL).SetSegments(context.Background(), []SegmentWrite{
+		{ID: 0, First: 0, Count: 10158, On: true, Colour: RGB{R: 0, G: 170, B: 0}},
+		{ID: 1, First: 10158, Count: 6226, On: true, Colour: RGB{}},
+	})
+	if err != nil {
+		t.Fatalf("SetSegments: %v", err)
+	}
+
+	if len(recorder.methods) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
+		t.Fatalf("SetSegments sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":10158,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0},` +
+		`{"id":1,"start":10158,"stop":16384,"startY":0,"stopY":0,"on":true,"col":[[0,0,0]],"fx":0}]}`
+
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetSegments sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestSetSegmentsSwitchesASegmentOffWithoutAColour proves the other shape: a segment that
+// is not drawn says so and names no colour, in the same request. It is how a frame with no
+// remainder clears the segment a previous frame's remainder was in — an off segment draws
+// nothing, so it cannot paint over the frame it is part of.
+func TestSetSegmentsSwitchesASegmentOffWithoutAColour(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	err := client(t, server.URL).SetSegments(context.Background(), []SegmentWrite{
+		{ID: 0, First: 0, Count: 48, On: true, Colour: RGB{R: 210, G: 165, B: 0}},
+		{ID: 1, On: false},
+	})
+	if err != nil {
+		t.Fatalf("SetSegments: %v", err)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":48,"startY":0,"stopY":0,"on":true,"col":[[210,165,0]],"fx":0},` +
+		`{"id":1,"on":false}]}`
+
+	if len(recorder.bodies) != 1 || recorder.bodies[0] != want {
+		t.Fatalf("SetSegments sent %v, want one body\n%s", recorder.bodies, want)
+	}
+}
+
+// TestSetSegmentsRefusesABodyAControllerCannotTake proves the two caller mistakes are
+// caught here rather than at the device: the same segment named twice, which a controller
+// would resolve silently by applying the second, and a span with nothing in it, which a
+// controller reads as a segment to delete.
+func TestSetSegmentsRefusesABodyAControllerCannotTake(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+
+	for _, body := range [][]SegmentWrite{
+		nil,
+		{
+			{ID: 0, Count: 5, On: true},
+			{ID: 0, First: 5, Count: 5, On: true},
+		},
+		{{ID: 0, First: -1, Count: 5, On: true}},
+		{{ID: 0, First: 0, Count: -5, On: true}},
+		{{ID: -1, First: 0, Count: 5, On: true}},
+	} {
+		if err := clientUnderTest.SetSegments(context.Background(), body); err == nil {
+			t.Fatalf("SetSegments accepted %+v", body)
+		}
+	}
+
+	if len(recorder.methods) != 0 {
+		t.Fatalf("a refused body was still sent: %v", recorder.methods)
+	}
+}

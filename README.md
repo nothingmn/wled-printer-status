@@ -56,6 +56,26 @@ rather than to the nearest LED, and the LEDs past the fill are off. `main.go` ca
 `drive.go` writes the frame it returns to the controller — so this is the rule the light is showing, not
 a rule waiting for a caller.
 
+A frame goes to the controller as **one request carrying two segments**: the lit part in the state's
+colour, the rest in the off colour. That is not a style choice. A controller draws one segment per run
+and every write here addresses the same one, so a fill written and then a remainder written are one
+segment rather than two — the second takes the first one's place, the fill belongs to no segment, and
+nothing draws it. A 256×64 panel spent a night doing exactly that: it held one black segment over the
+unfilled pixels, the module logged every send as taken, and the panel was dark.
+
+**A frame is re-sent at most once a minute.** A controller that reboots comes back in its own saved
+state, not in the frame the module was showing, and a printer that has nothing to say — idle overnight,
+a finished job, a paused machine — would otherwise never correct it. So a frame that has stood unwritten
+for a minute is written again, unchanged. This is a **floor and not an addition**: the clock runs from
+the last write the controller took, so while a print is moving the ordinary writes keep resetting it and
+the repaint never fires. It costs traffic only when the picture has stopped moving, where it is one
+write a minute.
+
+A write that fails is not retried on the next tick. The module waits — a second after the first failure,
+then doubling to half a minute — and a picture that changes during that wait is held and sent when the
+controller answers again rather than added to a pile of attempts. The log says so once per change of
+wait, not once per attempt.
+
 ## What you need
 
 - **A Prusa Connect instance you run yourself**, because that server is what launches a service module.
@@ -103,11 +123,12 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **85 tests** — 18 in
-the root package, 20 in `internal/printer`, 14 in `internal/render`, 33 in `internal/wled` — and they pass
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **96 tests** — 26 in
+the root package, 20 in `internal/printer`, 14 in `internal/render`, 36 in `internal/wled` — and they pass
 without touching a network or a real controller: the light and the printer are both faked in the tests
-that need one. There is no `go.sum`: the only dependency is the SDK, replaced by a directory, so nothing
-is fetched and there is no hash to record.
+that need one, and the ones about a minute-long heartbeat or a five-minute outage move a fake clock
+instead of waiting. There is no `go.sum`: the only dependency is the SDK, replaced by a directory, so
+nothing is fetched and there is no hash to record.
 
 ## Installing
 

@@ -18,8 +18,17 @@ refusal. Name the route and the setting key, never a function or a file.
 - The setting `printer` picks the printer to watch, by device id or by name. Left empty it takes the only
   printer the instance holds, and refuses to choose between several.
 - The setting `brightness` sets what the module writes to the controller once at start, 0-255.
-- The module drives the light. It writes the decided colour and progress to the controller and writes
+- The module drives the light. It writes the decided colour and progress to the controller as one request
+  carrying two segments — the lit part in the state's colour and the rest in the off colour — and writes
   nothing when the picture has not changed, so a state that is merely being re-read does not flicker.
+- A frame that has stood unchanged for a minute is written again, so a controller that rebooted comes back
+  to the printer's picture instead of staying in its own saved state. While the picture is moving the
+  ordinary writes reset that minute and the repaint never fires, so it costs nothing on a print in
+  progress.
+- A controller that does not take a write is retried on a wait that doubles from a second to half a
+  minute, rather than once a second, and a picture that changes during that wait is sent when the
+  controller answers rather than attempted immediately. The log reports the first failure, each longer
+  wait, and the recovery: five minutes of an unreachable light is six lines instead of three hundred.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
 - The install asks for `observe`, because the module now reads one printer as itself, and declares one
