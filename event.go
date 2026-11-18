@@ -302,16 +302,26 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 // # The sequence, and why it is this one
 //
 //  1. **Establish the panel.** One SetSegments body gives segment 0 the whole panel, switched on,
-//     in finishedWordBackground, with the word as the segment's own name. It writes no
-//     brightness and no power: both are controller-wide, the operator set them, and a picture
-//     does not get to move them. What it does write is what makes the request below land — a
-//     Paint body carries nothing but the segment's per-LED array, it is not persisted across a
-//     reboot, it freezes the segment's effect, and it needs the segment already on and covering
-//     the pixels it addresses. Without this body the device either refuses the pixels or paints
-//     them into whatever span segment 0 happened to have, which on a controller this module has
-//     not driven yet is one row of a panel. So: this first, always. The name travels with it
-//     because /json/state then says which picture the panel is holding, and a body written
-//     without one clears the name that was there.
+//     in finishedWordBackground, with the word as the segment's own name — and switches segment
+//     1, the frame's remainder, off. It writes no brightness and no power: both are
+//     controller-wide, the operator set them, and a picture does not get to move them. What it
+//     does write is what makes the request below land — a Paint body carries nothing but the
+//     segment's per-LED array, it is not persisted across a reboot, it freezes the segment's
+//     effect, and it needs the segment already on and covering the pixels it addresses. Without
+//     this body the device either refuses the pixels or paints them into whatever span segment 0
+//     happened to have, which on a controller this module has not driven yet is one row of a
+//     panel.
+//
+//     Segment 1 is not tidiness. It is the frame's remainder, the black part of a progress bar,
+//     and the panel draws segments in order — so a remainder left on from the frame before the
+//     event is drawn **over** the word. Measured on the live panel the first time this event ran:
+//     segment 1 held columns 28..256 in black and the word was a fragment on the left, which is
+//     the same fragment this whole change exists to stop showing. A body that puts the whole
+//     panel on segment 0 therefore has to put the segment in front of it out of the way.
+//
+//     The name travels with it because /json/state then says which picture the panel is holding,
+//     and a body written without one clears the name that was there.
+//
 //  2. **Paint the word.** One Paint call over the rows the word occupies — the band from its
 //     first row to its last, the panel's full width — in the event's colour where the
 //     rasteriser lit a pixel and in finishedWordBackground everywhere else in those rows. One
@@ -354,6 +364,12 @@ func (w *writer) paintEvent(ctx context.Context, ev event) error {
 		On:       true,
 		Colour:   finishedWordBackground,
 		Name:     ev.word,
+	}, {
+		// The frame's remainder, switched off rather than coloured: an off segment draws nothing,
+		// so the word underneath it is not covered, and a body that left it on would put a black
+		// band over the right-hand end of the word.
+		ID: remainderSegment,
+		On: false,
 	}}); err != nil {
 		return err
 	}

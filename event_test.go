@@ -177,8 +177,14 @@ func TestTheFinishedWordIsDrawnInPixelsOnThePanel(t *testing.T) {
 		t.Fatalf("paint the finished event: %v", err)
 	}
 
-	// The panel, established: whole, on, in the background colour, with the word as its name.
-	const established = `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0,"n":"FINISHED"}]}`
+	// The panel, established: segment 0 whole, on, in the background colour, with the word as its
+	// name — and segment 1, the frame's remainder, switched off.
+	//
+	// Segment 1 is in this body because a panel draws its segments in order. The first time this
+	// event ran on the live panel, the remainder from the frame before it was still on over
+	// columns 28..256, in black, drawn over the word: the word was a fragment on the left, which
+	// is the failure the pixel word exists to end. The establishing body is what puts it away.
+	const established = `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0,"n":"FINISHED"},{"id":1,"on":false}]}`
 
 	if len(recorder.bodies) < 2 {
 		t.Fatalf("the event was painted in %d requests, want the panel and then its pixels: %v",
