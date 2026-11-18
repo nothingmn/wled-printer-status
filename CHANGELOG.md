@@ -13,3 +13,6 @@ refusal. Name the route and the setting key, never a function or a file.
 
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
+- The install asks for `observe`, so this module may read one printer and follow its event
+  stream with no person behind the request. Nothing uses it yet: the code that will is not
+  part of anything the module serves.

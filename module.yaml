@@ -62,14 +62,17 @@ options:
 
 # The actions this module may take as itself are a request rather than a grant.
 # Add them here and the operator reads them before `module add -approve` writes
-# them into the declaration and grants this module what they name. There is no
-# entry below, because this module acts
-# only for the person the host authorized and does nothing of its own: no poll,
-# no sync loop, no background work. Write one line per permission saying what it
-# lets this module do.
+# them into the declaration and grants this module what they name. Write one line
+# per permission saying what it lets this module do.
 #
-# permissions:
-#   # read the fleet and the event stream, so the page can list devices
-#   - observe
+# One is asked for below. A module reading its own printer does so with nobody
+# behind it, and the host holds that work to this list before the authorization
+# graph is asked: without `observe` a device read answers an empty page and the
+# subscription is refused. internal/printer is the code that needs it. It is not
+# wired into main.go yet, so nothing here exercises the grant today; delete the
+# line if you would rather install the module without it.
+permissions:
+  # read one device and follow its event stream
+  - observe
 # events:
 #   changed: wled-printer-status.changed

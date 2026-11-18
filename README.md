@@ -19,6 +19,7 @@ answers on is built from it.
 | `main_test.go` | the route answering, the refusal carrying its code, and the manifest's default |
 | `openapi.json` | the fragment describing that route, with every path relative to the mount |
 | `internal/wled` | the HTTP client for the light: it reads the controller and writes power, brightness and colour. Not wired in yet |
+| `internal/printer` | the printer-facing half: one printer's state, how old it is, and whether the host still has it. Not wired in yet |
 
 ## Installation
 
@@ -107,11 +108,50 @@ has ever been sent to a real controller**, and the client has not been run as pa
 module at all. Every write it can make is proven against a local test server and nothing
 else.
 
+## Printer state
+
+`internal/printer` is the printer-facing half: one printer, tracked honestly, with nothing
+about presentation in it. `package printer` gives you a `Source` for one device — you hand
+it the module's session and the fleet client, and it owns the `bus.subscribe` window and
+the periodic `device.get` read — and a pure reducer, `printer.Apply`, which folds a batch
+of telemetry paths and one device record into a new state and needs no network to test.
+
+The point of it is the offline case, because the host has no word for "gone". A printer
+that is switched off keeps the state tree it last reported and nothing in the host dates
+it, and `/state` carries ten values with no OFFLINE among them. A module that reads that
+tree and nothing else will say `PRINTING, 94%, six minutes left` about a printer that went
+away at 14:02, forever. So every snapshot carries the two facts that tell the difference —
+whether the host still holds a session for the printer, and when anything about it
+actually last changed — and it does not present the rest as present tense:
+`snapshot.Connected` is false, `snapshot.Job.Live` is false, and `LiveProgress()` and
+`LiveRemaining()` answer `ok=false`. The last readings are still there, with
+`snapshot.LastChange` and `snapshot.Age` beside them, so "last reported 94% at 14:02" is
+sayable and "printing, 94%, six minutes left" is not. A printer that stays connected but
+stops reporting gets the same treatment after thirty seconds.
+
+Three more rules it keeps. A path it has never seen is kept as it came, because the state
+tree is open and a newer firmware's node is still a fact. A path the printer never wrote,
+or wrote `null` to, is unknown and not zero — no invented IDLE, no invented `0%`. And a
+value it cannot read is reported as a typed refusal while the last value it could read
+stays.
+
+It is **not wired into the module**: `main.go` imports nothing from it, the route still
+answers with the configured message alone, and none of the display decisions have been
+made. **It has never run against a live host** — a module's bus does not exist until the
+module is installed and serving, so the subscription and the read are proven against fakes
+only, and no window has ever carried a real printer's patches.
+
 ## Permissions
 
-This module declares no `permissions:`, because it acts only for the person the
-host authorized and does nothing of its own: no poll, no sync loop, no
-background work. The host takes `view_resource` on the instance before a read
+This module asks for one: `observe`, in `module.yaml`. It is the action that reads devices
+and subscribes to the event stream, and it is what `internal/printer` takes — a module
+reading its own printer does so with nobody behind it, so the host holds it to the
+instance's own list before the authorization graph is asked. Nothing consumes the grant
+yet: `main.go` imports nothing from that package, so the module still acts only for the
+person the host authorized. Delete the line if you would rather not grant a capability
+nothing uses.
+
+The host takes `view_resource` on the instance before a read
 and `operate_resource` before a write, and `openapi.json` states that on each
 operation.
 
