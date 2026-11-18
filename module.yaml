@@ -80,8 +80,22 @@ egress:
     sends: The current status colour and progress, as a WLED state write to /json/state. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
 
 # The memory in MiB the server may budget for the process, children included.
-# needs:
-#   memory_mib: 256
+# 32 is a measurement, not a guess.
+#
+# On 2026-11-18, with a real print running, this module's process — a child of the
+# prusa_connect container's init — held 15,784 kB resident, and its high-water mark
+# was the same 15,784 kB, so it had never gone higher. Minutes later it read
+# 15,840 kB: a slow creep, not a spike. The peak is therefore about 15.5 MiB, and 32
+# is a little over twice that, leaving headroom for a spike while asking for a
+# quarter of the 128 MiB the server hands a module that recommends nothing.
+#
+# Do not lower this to 16. Sixteen is the smallest figure a manifest may ask for and
+# it is not safe here: the host sets GOMEMLIMIT to 85% of the budget, so a 16 MiB
+# budget buys a 13.6 MiB limit against the 15.5 MiB this process already holds, and
+# the watchdog stops and restarts a module that goes over its budget. The light would
+# stop answering because a manifest was tidier than the measurement.
+needs:
+  memory_mib: 32
 
 # The actions this module may take as itself are a request rather than a grant.
 # Add them here and the operator reads them before `module add -approve` writes
