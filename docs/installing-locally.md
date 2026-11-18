@@ -115,6 +115,23 @@ $ docker exec prusa_connect ls -l /config/config.d/wled-release-0.1.0
 -rwxr-xr-x. 1 prusa prusa 9803264 Nov 18 19:49 wled-printer-status_windows_amd64.exe
 ```
 
+The untar lands as `prusa` without being told to, because `docker exec` runs as the image's own user —
+`uid=10001(prusa) gid=10001(prusa)` — and `tar` creates what it extracts as whoever runs it. Prove the core
+can read the release before you install it, as the core's uid rather than as your own account:
+
+```console
+$ docker exec -u 10001 prusa_connect sh -c \
+    "cd /config/config.d/wled-release-0.1.0 && sha256sum -c checksums.txt"
+module.yaml: OK
+wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK
+wled-printer-status_darwin_arm64: OK
+wled-printer-status_windows_amd64.exe: OK
+```
+
+A `permission denied` here is the same failure the install would hit a minute later, caught while nothing
+is half-installed.
+
 ## 4. The settings the install writes into the declaration
 
 `-settings` takes a JSON file whose keys are the options `module.yaml` declares. Nothing else is accepted:
@@ -178,6 +195,41 @@ after the restart in the next section.
 
 The install copies what it needs itself: the binary goes to `config/config.d/modules/wled-printer-status/bin/`
 and the declaration to `config/config.d/resources.json`. There is no bundle, so no `bundle/` directory.
+
+## 5a. Installing over an install that is already there
+
+**`module add` updates in place. `module remove` is not needed to replace a running module**, so nothing
+here has to be uninstalled first. Proved on 2026-11-18 by replacing a live, enabled
+`sink:wled-printer-status` built from an older commit with the release from `d0be1a6` — the same four
+flags as a first install, pointed at the new release directory:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-d0be1a6 \
+    -settings /config/config.d/wled-settings.json \
+    -approve; echo "MODULE_ADD_EXIT=$?"
+… same lines as §5 …
+  memory      32 MiB, set by the author (memory_mib)
+  new         memory 32 MiB, which the release it replaced did not ask for
+  enabled     yes
+MODULE_ADD_EXIT=0
+```
+
+Three things that output tells you:
+
+- **`new`** names what changed against the release it replaced. On this run it was the budget alone; the
+  declared version did not move, so the same `0.1.0` in the command is right.
+- **One restart is still owed.** The command says so itself, and the instance came back `healthy` eight
+  seconds after `docker restart prusa_connect`.
+- **A reinstall is also how the manifest's catalogue fields reach the settings pane.** An older declaration
+  carried `"summary": "One sentence saying what wled-printer-status does."` because that is what its
+  manifest said; the same instance after this install carries the real one, a `title`, the `codeowner` as
+  `author`, and `asked.memory_mib: 32`. Nothing rewrites those in place — they arrive with the release.
+
+Leave the release directory alone until you are satisfied: the declaration names it as the module's
+`source`, and it is the only copy of what was installed. Remove the *previous* one, though — a release
+directory left behind is what a later install silently picks up.
 
 ## 6. Restart the core once, and prove it is well
 
@@ -259,6 +311,28 @@ exactly:
 
 So the fill the panel is holding is the printer's progress, decided by the module a second after the
 printer last reported, and it moves as the print moves: 9,666 → 9,830 pixels in ninety seconds.
+
+**That arithmetic belonged to the build installed that day.** It wrote a flat pixel index, and a flat index
+is not a rectangle: on a 256-wide panel it paints down columns and wraps, which is the block that was on the
+panel. The build from `d0be1a6` writes column geometry instead — segment 0 is `start 0 … stop N`,
+`startY 0`, `stopY 64` in the state colour, segment 1 the black remainder from `N` to 256 — so the `stop` on
+segment 0 *is* the fill, and it equals the frame's fraction of 256:
+
+```console
+--- 20:25:49Z  printer  {"progress":87,"state":"PRINTING",…}
+--- 20:25:49Z  module   "frame":{"colour":{"r":0,"g":170,"b":0},"lit":14254,"total":16384,"reason":"progress"},"last_send":{…"ok":true}
+--- 20:25:49Z  panel    "seg":[{"id":0,"start":0,"stop":223,"startY":0,"stopY":64,…,"col":[[0,170,0],…]},
+                            {"id":1,"start":223,"stop":256,"startY":0,"stopY":64,…,"col":[[0,0,0],…]}]
+
+--- 20:28:45Z  printer  {"progress":90,"state":"PRINTING",…}
+--- 20:28:45Z  module   "frame":{"colour":{"r":0,"g":170,"b":0},"lit":14745,"total":16384,"reason":"progress"},"last_send":{…"ok":true}
+--- 20:28:45Z  panel    "seg":[{"id":0,"start":0,"stop":230,"startY":0,"stopY":64,…,"col":[[0,170,0],…]},
+                            {"id":1,"start":230,"stop":256,"startY":0,"stopY":64,…,"col":[[0,0,0],…]}]
+```
+
+14,254/16,384 × 256 = 222.7, so 223 columns; 14,745/16,384 × 256 = 230.4, so 230. The fill's `stop` moved
+with the printer's 87 % → 90 % over those three minutes, and the black remainder shrank from 33 columns to
+26. Green is `[0,170,0]`, the state colour for printing.
 
 Two things to know when you read this yourself:
 
