@@ -16,7 +16,8 @@ host says is calling. It does not light anything up.
 
 So: do not install this expecting a lit lamp. Install it if you want to watch the plumbing work, or if
 you intend to help finish it. Nothing here is a workaround for that — the code that decides what the
-light should show does not exist yet, because nobody has decided what it should show.
+light should show now exists for a 1D strip (`internal/render`), but nothing calls it yet, so nothing is
+lit.
 
 ## What it is meant to do
 
@@ -36,10 +37,21 @@ Both halves of that are built:
   so that a light which cannot animate can still show a colour and a light which cannot draw a rectangle
   can still be given individual pixels.
 
-What is missing is the decision layer: which tier to use on a given controller, what colour a paused
-print is, how often to look, and what to do when two things want the light at once. That is a product
-decision, not a coding one, and it is written down as open questions in
-[`docs/product-requirements.md`](docs/product-requirements.md).
+What is missing is the rest of the decision layer: which tier to use on a given controller, what
+animations play at the events the operator named, how often to look, and what to do when two things want
+the light at once. Those are product decisions, not coding ones, and the ones still open are written down
+as open questions in [`docs/product-requirements.md`](docs/product-requirements.md).
+
+## Rendering
+
+`internal/render` holds the decision itself: `Decide` takes a printer snapshot, the moment to judge it at
+and the strip's LED count, and returns a `Frame` — one colour, how many LEDs carry the completed part of
+the job, and a short reason naming the rule that fired. It is a pure function: no socket, no clock, no
+state kept between calls. It gives each of the ten reported states the operator's colour, and it gives a
+disconnected or stale printer a dim red strip with nothing filled, whatever percentage the server still
+remembers. Two sub-decisions are **provisional** and marked as such in the source: the fill rounds down
+rather than to the nearest LED, and the LEDs past the fill are off. **Nothing calls it yet** — the module
+still lights nothing.
 
 ## What you need
 
@@ -88,10 +100,10 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **57 tests** — 4 in
-the root package, 20 in `internal/printer`, 33 in `internal/wled` — and they pass without touching a
-network or a real controller. There is no `go.sum`: the only dependency is the SDK, replaced by a
-directory, so nothing is fetched and there is no hash to record.
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **71 tests** — 4 in
+the root package, 20 in `internal/printer`, 14 in `internal/render`, 33 in `internal/wled` — and they pass
+without touching a network or a real controller. There is no `go.sum`: the only dependency is the SDK,
+replaced by a directory, so nothing is fetched and there is no hash to record.
 
 ## Installing
 
