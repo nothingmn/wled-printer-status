@@ -6,7 +6,7 @@
 #
 # The namespace is absent on purpose. The host derives it from the repository
 # address the operator installed, so no module can name another module's
-# address. For this module that is com.github.aux.robchartier.wled-printer-status.
+# address. For this module that is com.github.aux.nothingmn.wled-printer-status.
 
 name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,

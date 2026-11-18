@@ -4,8 +4,8 @@ A Prusa Connect module that is one Go process serving one route. It
 draws nothing in the app.
 `make new-module` wrote this skeleton.
 
-Its namespace is `com.github.aux.robchartier.wled-printer-status`, derived by the host from the repository
-address `github.com/robchartier/wled-printer-status`. You never write the namespace: every address the module
+Its namespace is `com.github.aux.nothingmn.wled-printer-status`, derived by the host from the repository
+address `github.com/nothingmn/wled-printer-status`. You never write the namespace: every address the module
 answers on is built from it.
 
 | path | purpose |
@@ -226,7 +226,7 @@ grant it wrote, and `module remove` takes them back.
 
 When the module cannot do what a request asks, it answers with an error. The
 error has a `code` and a `title` in English. Every code of this module starts
-with `com.github.aux.robchartier.wled-printer-status`.
+with `com.github.aux.nothingmn.wled-printer-status`.
 
 A program that calls the module should check the `code`. The title is for
 people. You can change the wording of a title without breaking a caller.
@@ -242,9 +242,9 @@ reads. A `checksums.txt` is optional and verified when it is there; a release
 you just built has nothing to prove against.
 
 ```bash
-prusa-connect module add github.com/robchartier/wled-printer-status@0.1.0 -from dist
+prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from dist
 prusa-connect module list
-prusa-connect module remove github.com/robchartier/wled-printer-status
+prusa-connect module remove github.com/nothingmn/wled-printer-status
 ```
 
 Without `-approve` the declaration is written switched off, and the command

@@ -26,7 +26,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 CHECKOUT=/work/prusa-connect
 
 NAME=wled-printer-status
-MODULE=github.com/robchartier/wled-printer-status
+MODULE=github.com/nothingmn/wled-printer-status
 VERSION=0.1.0
 
 # Everything this writes goes under the checkout's bin/, which is ignored, and

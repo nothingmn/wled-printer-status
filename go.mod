@@ -1,4 +1,4 @@
-module github.com/robchartier/wled-printer-status
+module github.com/nothingmn/wled-printer-status
 
 go 1.26.11
 

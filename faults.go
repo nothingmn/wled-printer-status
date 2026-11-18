@@ -19,12 +19,12 @@ import (
 )
 
 // faultDomain is the first half of every code below. It is this module's
-// namespace, which the host derived from the Go module path github.com/robchartier/wled-printer-status, so no
+// namespace, which the host derived from the Go module path github.com/nothingmn/wled-printer-status, so no
 // other author can register a code under it. The sdk refuses the core
 // namespace, which is what keeps this module's codes apart from the server's.
 //
 //nolint:gochecknoglobals // a domain built once at start-up; a const cannot hold one.
-var faultDomain = mustDomain("com.github.aux.robchartier.wled-printer-status")
+var faultDomain = mustDomain("com.github.aux.nothingmn.wled-printer-status")
 
 // The codes this module raises. Add a code here, and nowhere else, so the list
 // a client branches on is one file.

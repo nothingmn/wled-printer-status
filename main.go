@@ -6,7 +6,7 @@
 //	GET /wled-printer-status   the line this module answers with, and who the host says is asking
 //
 // The path is relative to the mount, so a caller reaches it at
-// /api/v1/modules/com.github.aux.robchartier.wled-printer-status/wled-printer-status. The host decides who may call it
+// /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/wled-printer-status. The host decides who may call it
 // and then makes the call: view_resource on the instance for a read,
 // operate_resource for a write. This process checks no permission and holds no
 // grant.
@@ -181,7 +181,7 @@ func methods() wirerpc.Methods {
 
 // routes is the surface this module serves, written as any Go program writes
 // one. The paths carry no prefix: /wled-printer-status here is
-// /api/v1/modules/com.github.aux.robchartier.wled-printer-status/wled-printer-status to a caller.
+// /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/wled-printer-status to a caller.
 func routes() http.Handler {
 	mux := http.NewServeMux()
 
