@@ -448,6 +448,81 @@ Neither of the two earlier release directories (`c649b90`, `3dd9ce7`) was remove
 declared source of an install until this one is signed off, and a directory removed mid-run leaves the
 declaration pointing at nothing.
 
+**Eighth run, 2026-11-18 23:41Z, from `16aaf8b`.** The change from *a word written as a JSON per-LED array*
+to *a word pushed as pixels over DDP*, because this firmware accepts the array and draws none of it —
+`AGENTS.md` §5.4 has the four measurements, and the operator looked twice at a blank panel. Built from
+`git archive HEAD` for the reason run six gives, release `/config/config.d/wled-release-16aaf8b`, whose
+`linux_amd64` digest is `737651e6b3c167c8ea6dbf9799889bc07864e7d3d7bded30146080e95a782b3b` and is what the
+installed binary reads back.
+
+The install answered `5 files verified against checksums.txt`, `memory 32 MiB, set by the author`,
+`enabled yes`, and — new — **two egress lines**, because the module now declares the second connection it
+makes to the same box:
+
+```console
+  connects to the host in the setting controller_address port 80 from the process: … the body that gives
+  the panel its geometry and the word as the segment's name. …
+  connects to the host in the setting controller_address port 4048 from the process: The word a finished
+  print shows is pixels this module draws, and a WLED controller takes pixels over DDP — raw UDP datagrams
+  to port 4048 … Raw colour bytes only — no printer data, no credentials, no document.
+```
+
+`docker restart prusa_connect` at **23:41:41Z** was `healthy` at **23:41:48Z** (seven seconds), readiness
+answered `serving 4 declared 4 blocked []`, the process was `pid=32 ppid=1`, and the log said what it
+always says plus nothing new: `the controller drives 16384 LEDs`, `the controller is a 256x64 panel`.
+
+**What was measured before the preview, from inside the module's own container.** A single datagram with a
+ten-byte DDP header, written from `docker exec prusa_connect bash` to `/dev/udp/10.0.0.136/4048`, turned
+`/json/info`'s `live` from `false` to `true`.
+
+```console
+$ curl -s http://10.0.0.136/json/info | jq -c '{live}'                      # 23:36Z
+{"live":false}
+$ docker exec prusa_connect bash -c 'printf "@      ÿ ÿ"     > /dev/udp/10.0.0.136/4048'
+$ curl -s http://10.0.0.136/json/info | jq -c '{live}'
+{"live":true}
+```
+
+From the host, with a full 35-datagram frame: `live=true` 0.3 s after the frame and `live=false` 3.3 s
+after it with nothing sent. And **a JSON state write does not end live mode** — a write sent while live
+left `live` true, and it went false on the timeout ~2.5 s later. That is why the module writes the steady
+frame first and reads the controller afterwards.
+
+**The preview, fired twice.** First at **23:42:01Z**, and the read-back half a second later:
+
+```console
+$ curl -s -X POST …/preview-finished        # 23:42:01Z
+ HTTP=202 {"colour":{"r":0,"g":170,"b":0},"controller":"http://10.0.0.136","event":"FINISHED","holds_seconds":60,"scale":5}
+$ curl -s http://10.0.0.136/json/info       # 23:42:02Z   live=True
+$ curl -s http://10.0.0.136/json/state      # 23:42:02Z
+seg0 0..256 rows 0..64 on=True fx=0 n='FINISHED' col=[[0,0,0]…]
+seg1 84..256 rows 0..64 on=False
+```
+
+Second at **23:43:34Z**, sampled every two seconds for the whole hold, which pins both ends:
+
+```console
+fired   23:43:34Z  202     last_send=23:43:34.688   (the establishing body and the frame's first push)
+23:43:36Z … 23:44:34Z  live=True  seg0 0..256 n='FINISHED'   (thirty consecutive samples)
+23:44:34Z  live=True   last_send=23:44:34.689              (the frame that ends the hold)
+23:44:36Z  live=False  seg0 0..92 on=True n=''             (the light is back on its own segments)
+23:44:37.499Z  the module's log:
+  the "FINISHED" word is off the panel and http://10.0.0.136 reports live=false: the light is back on
+  its own segments
+```
+
+**60.001 s** from the event's own write to the frame that took the light back, `live` true for every sample
+in between and false at the first sample after, and one line in the log rather than one a second. Across
+both previews: no `not updated` line, no failed write, and the steady frame took the light back both
+times — `seg0 start 0 stop 92` at 23:44:36Z and, a minute later, `seg0 0..95` against the module's own
+`"frame":{"lit":6062,"total":16384,"reason":"progress"}`, which is 6062/16384 × 256 = 94.7, so 95
+columns. The progress bar is exactly what it was before this change.
+
+What this does **not** prove is the letters. `live=true` says the controller took the pixels into the
+buffer it draws; nothing on this firmware reports individual colours, so whether the word appears, is the
+right size, sits in the right place, and whether this panel's wiring maps row-major the way the frame
+assumes, are all questions for a person looking at the light. **Nobody has looked yet.**
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
