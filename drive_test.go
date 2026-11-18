@@ -67,6 +67,12 @@ type fakeStrip struct {
 	// restores is every segment written back to the controller, in the order it was
 	// written: the give-back a writer makes when it stops.
 	restores []wled.Segment
+
+	// effects and names are the writes that are not frames: an event's effect and the word it
+	// draws. They are kept apart from paints because a frame and a word are different things,
+	// and a test that counted both as "one write" could not say which had happened.
+	effects []wled.Effect
+	names   []string
 }
 
 func newFakeStrip() *fakeStrip {
@@ -186,6 +192,85 @@ func (f *fakeStrip) settleWrites() int {
 	defer f.mu.Unlock()
 
 	return f.settled
+}
+
+// SetEffect records one effect write: the effect and its parameters, as a test watches a word
+// being put on the panel.
+//
+// It takes the same failure and blocking a frame write takes, because a controller that will not
+// take a frame will not take the text either, and an event that quietly half-succeeded would be
+// a light showing a colour and no word.
+func (f *fakeStrip) SetEffect(ctx context.Context, effect wled.Effect, _ ...wled.EffectOption) error {
+	return f.eventWrite(ctx, &effect, "")
+}
+
+// SetSegmentName records one name write, which is the word the text effect draws.
+func (f *fakeStrip) SetSegmentName(ctx context.Context, name string) error {
+	return f.eventWrite(ctx, nil, name)
+}
+
+// eventWrite is one write that is not a frame.
+func (f *fakeStrip) eventWrite(ctx context.Context, effect *wled.Effect, name string) error {
+	f.mu.Lock()
+
+	failed := f.broken
+	if !failed && f.failNext > 0 {
+		f.failNext--
+		failed = true
+	}
+
+	if effect != nil {
+		f.effects = append(f.effects, *effect)
+	} else {
+		f.names = append(f.names, name)
+	}
+
+	hold := f.hold
+
+	f.mu.Unlock()
+
+	select {
+	case f.painted <- struct{}{}:
+	default:
+	}
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return fmt.Errorf("waiting on the controller: %w", ctx.Err())
+		}
+	}
+
+	if failed {
+		return errors.New("the controller did not answer in time")
+	}
+
+	return nil
+}
+
+// words is every name the controller was given, as a copy.
+func (f *fakeStrip) words() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.names...)
+}
+
+// ran is every effect the controller was put onto, as a copy.
+func (f *fakeStrip) ran() []wled.Effect {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]wled.Effect(nil), f.effects...)
+}
+
+// wrote is how many requests of any kind reached the controller: a frame, an effect or a name.
+func (f *fakeStrip) wrote() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return len(f.paints) + len(f.effects) + len(f.names)
 }
 
 // State is the controller's segments, which is what a writer borrows from.

@@ -1159,7 +1159,8 @@ func (b Bounds) validate() error {
 
 // effectRequest is what the options to SetEffect fill in.
 type effectRequest struct {
-	bounds *Bounds
+	bounds   *Bounds
+	grouping int
 }
 
 // EffectOption adjusts one SetEffect call.
@@ -1170,6 +1171,16 @@ type EffectOption func(*effectRequest)
 // see Bounds for why they cannot be sent in part.
 func WithEffectBounds(bounds Bounds) EffectOption {
 	return func(e *effectRequest) { e.bounds = &bounds }
+}
+
+// WithEffectGrouping sets the segment's grouping, "grp": how many pixels of the range
+// each step of the effect covers. It is the effect's scale rather than one of its
+// sliders, which is why it is not in Effect — on a panel the text effect multiplies its
+// glyphs by this, so a word written with a grouping of one is a few pixels tall and one
+// written with four covers most of a 64-row panel's height. A grouping of zero is not
+// sent, which leaves the controller's own value alone.
+func WithEffectGrouping(pixels int) EffectOption {
+	return func(e *effectRequest) { e.grouping = pixels }
 }
 
 // Effect is one effect and the parameters it runs with: the id the controller lists
@@ -1242,9 +1253,10 @@ func (e Effect) validate() error {
 
 // SetEffect puts a segment onto one effect with the parameters given. The write
 // names the effect, every parameter of it, and — when WithEffectBounds is passed — all
-// four bounds of the rectangle it covers. It names no colour, because an effect takes
-// its colours from its palette, and it names no strip brightness, so the strip's
-// power and brightness are the caller's to set with SetPower and SetBrightness.
+// four bounds of the rectangle it covers, and when WithEffectGrouping is passed the
+// effect's scale. It names no colour, because an effect takes its colours from its
+// palette, and it names no strip brightness, so the strip's power and brightness are the
+// caller's to set with SetPower and SetBrightness.
 //
 // The segment itself is switched on, because an effect written to a segment that is
 // not drawn is not shown. For text on a panel the order of SetSegmentName and this
@@ -1291,6 +1303,11 @@ func (c *Client) SetEffect(ctx context.Context, effect Effect, opts ...EffectOpt
 		segment.Stop = &settings.bounds.Stop
 		segment.StartY = &settings.bounds.StartY
 		segment.StopY = &settings.bounds.StopY
+	}
+
+	if settings.grouping > 0 {
+		grouping := settings.grouping
+		segment.Grouping = &grouping
 	}
 
 	return c.do(ctx, http.MethodPost, pathState, writeState{

@@ -846,6 +846,39 @@ func TestSetEffectWritesEveryParameterAndBothAxes(t *testing.T) {
 	}
 }
 
+// TestSetEffectCarriesTheGroupingThatScalesTheWord is the one part of an effect that is
+// not a slider: "grp", which on a panel multiplies the text effect's glyphs. It travels
+// with the effect because it is the effect's scale, and it is left out when it is zero so
+// that a caller which does not care keeps whatever the controller holds.
+func TestSetEffectCarriesTheGroupingThatScalesTheWord(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	word := Effect{ID: 122, Speed: 128, Intensity: 24, Custom2: 0}
+
+	err := client(t, server.URL).SetEffect(context.Background(), word,
+		WithEffectBounds(Bounds{Start: 0, Stop: 256, StartY: 0, StopY: 64}),
+		WithEffectGrouping(4))
+	if err != nil {
+		t.Fatalf("SetEffect: %v", err)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,` +
+		`"fx":122,"sx":128,"ix":24,"c1":0,"c2":0,"c3":0,"o1":0,"o2":0,"o3":0,"pal":0,"grp":4}]}`
+
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetEffect sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+
+	if err := client(t, server.URL).SetEffect(context.Background(), word); err != nil {
+		t.Fatalf("SetEffect without a grouping: %v", err)
+	}
+
+	if strings.Contains(recorder.bodies[1], "grp") {
+		t.Fatalf("a grouping of zero was written anyway: %s", recorder.bodies[1])
+	}
+}
+
 // TestSetEffectRefusesAParameterOutsideAByte proves an effect parameter outside 0-255
 // is refused before anything is sent: a controller stores these in one byte and would
 // cut the number down without saying so.

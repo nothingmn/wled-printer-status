@@ -144,12 +144,18 @@ func logf(format string, args ...any) {
 // State and RestoreSegment are here for the borrow: a module that drives one segment of a
 // controller somebody else also uses has to read what that segment was and put it back
 // afterwards. Both are unused when this module drives the whole strip.
+//
+// SetEffect and SetSegmentName are here for the event layer, and they are the only two calls
+// that can put a word on a panel: the string an effect draws is the segment's own name, and
+// nothing else in this module writes either.
 type strip interface {
 	Info(ctx context.Context) (wled.Info, error)
 	State(ctx context.Context) (wled.State, error)
 	SetBrightness(ctx context.Context, brightness int) error
 	SetPower(ctx context.Context, on bool) error
 	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
+	SetEffect(ctx context.Context, effect wled.Effect, opts ...wled.EffectOption) error
+	SetSegmentName(ctx context.Context, name string) error
 	RestoreSegment(ctx context.Context, segment wled.Segment) error
 }
 
@@ -204,7 +210,17 @@ type writer struct {
 	geometry atomic.Pointer[panel]
 
 	latest atomic.Pointer[render.Frame]
-	wake   chan struct{}
+
+	// fired is the newest event the driver has offered and the writer has not taken. It is an
+	// atomic pointer for the same reason latest is one: the driver stores, the writer swaps,
+	// and there is exactly one of each. See event.go for what an event is.
+	fired atomic.Pointer[event]
+
+	// held is the event the light is showing, with the moment its hold ends. It is written and
+	// read only by the writer's own goroutine, which is why it needs no lock.
+	held *heldEvent
+
+	wake chan struct{}
 }
 
 // newWriter prepares a writer for one controller's whole strip. It sends nothing until run
@@ -302,18 +318,83 @@ func (w *writer) run(ctx context.Context) {
 			continue
 		}
 
-		// Nothing is in the way, so anything the driver has decided goes out now, newest
-		// first: a frame that arrived during the window is held here, in the one slot,
-		// and never queued.
+		// The ring is taken here, before either slot is looked at, and both slots are read
+		// afterwards. That order is what makes the ring safe as a hint: a producer stores its
+		// data and then rings, so a pass that has taken the ring and then looked will see
+		// everything that was stored before the ring it took. Draining after looking would
+		// let an event store itself and ring in the window between the look and the wait, and
+		// the wait would then begin with a pending ring already spent — an event nobody takes
+		// until the next frame arrives.
 		//
-		// The ring is taken with it. It is a hint that the slot may hold something, and
-		// this is the look it asked for; left behind it would ring for a frame already in
-		// hand, and the pass it woke would abandon the wait armed below and arm it again.
+		// The ring is a hint that a slot may hold something, and this is the look it asked for;
+		// left behind it would ring for a frame already in hand, and the pass it woke would
+		// abandon the wait armed below and arm it again.
 		select {
 		case <-w.wake:
 		default:
 		}
 
+		// An event takes the light for its own duration. Its deadline is stamped from the clock
+		// the writer reads, and it is taken here — before the steady frame, after the backoff
+		// window — because it is not a frame: it holds the light against the frames the driver
+		// keeps deciding. An event that arrives while the controller is down waits for the
+		// window like everything else, and its hold starts when it lands, not when it was fired.
+		w.takeEvent()
+
+		if w.held != nil {
+			if wait := w.held.until.Sub(w.now()); wait > 0 {
+				if !w.held.painted {
+					if err := w.deliverEvent(ctx, w.held.event); err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+
+						failures++
+
+						hold := backoffFor(failures)
+						retryAt = w.now().Add(hold)
+
+						w.logFailure(failures, hold, err)
+
+						continue
+					}
+
+					if failures > 0 {
+						w.logf("%s: the light is answering again after %d failed writes", name, failures)
+					}
+
+					failures, retryAt = 0, time.Time{}
+
+					// The word is on the light and no steady frame is, and saying so is what
+					// makes the frame after the event paint rather than be suppressed as
+					// "already shown": the picture the light holds changed underneath the
+					// writer, so the frame it last delivered is no longer evidence of anything.
+					last, lastOK = nil, w.now()
+
+					w.held.painted = true
+				}
+
+				// The steady frame waits in the slot, newest first, for the event's own
+				// remaining time and no longer: an event delays a frame by its duration, not
+				// by its duration plus a heartbeat. The wait is re-armed on every pass, so a
+				// frame that arrives during the hold shortens what is left of it rather than
+				// extending it, and the frame painted at the end is the newest one decided.
+				select {
+				case <-ctx.Done():
+					return
+				case <-w.wake:
+				case <-w.after(wait):
+				}
+
+				continue
+			}
+
+			w.held = nil
+		}
+
+		// Nothing is in the way, so anything the driver has decided goes out now, newest
+		// first: a frame that arrived during the window is held here, in the one slot,
+		// and never queued.
 		frame := w.latest.Swap(nil)
 
 		forced := false
@@ -444,13 +525,22 @@ func (w *writer) logFailure(failures int, wait time.Duration, err error) {
 // failed is recorded as failed and is never reported as taken: a person reading the
 // route must not be told the light is current when the light did not answer.
 func (w *writer) deliver(ctx context.Context, frame render.Frame) error {
-	if err := w.paint(ctx, frame); err != nil {
-		recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: false, Error: err.Error()})
+	return w.report(func() error { return w.paint(ctx, frame) })
+}
+
+// report runs one write to the light and records what it did, which is what makes /status
+// worth reading when the light and the module disagree. It is one place for a frame and for an
+// event, so that neither can reach the controller without the route knowing.
+func (w *writer) report(write func() error) error {
+	at := w.now().UTC().Format(time.RFC3339Nano)
+
+	if err := write(); err != nil {
+		recordSend(sendView{At: at, OK: false, Error: err.Error()})
 
 		return err
 	}
 
-	recordSend(sendView{At: w.now().UTC().Format(time.RFC3339Nano), OK: true})
+	recordSend(sendView{At: at, OK: true})
 
 	return nil
 }
@@ -1052,6 +1142,10 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 // note writes one line for each thing about the printer that has changed since the last
 // turn, and nothing at all for a turn that finds it as it was.
 //
+// It also fires the event a change of state word stands for, when the pair is one the event
+// list holds — the log is what changed and the light is what a person walking past sees, and
+// both come from the same comparison, which is why they are decided in one place.
+//
 // Four things are worth a line: the state word moving, the host losing and regaining its
 // session with the printer, and the reading going stale or live again. Everything else is
 // either routine — a progress tick, a frame repainted, a write that succeeded — or the
@@ -1085,6 +1179,13 @@ func (d *driver) note(snapshot printer.Snapshot) {
 		if d.told.hadState && snapshot.State.Value != d.told.state {
 			d.logf("%s: %s went from %s to %s", name, printerPhrase(snapshot),
 				d.told.state, snapshot.State.Value)
+
+			// The word moved, so the light is told what happened as well as what is: the log
+			// line above is for a person reading the history, and the event is for a person
+			// walking past the panel. The frame the driver hands the writer a moment later is
+			// still the steady picture, and the writer goes back to it when the event's own
+			// duration is up.
+			d.fire(d.told.state, snapshot.State.Value)
 		}
 
 		d.told.state, d.told.hadState = snapshot.State.Value, true
@@ -1099,6 +1200,26 @@ func (d *driver) note(snapshot printer.Snapshot) {
 			d.logf("%s: the reading from %s is live again", name, printerPhrase(snapshot))
 		}
 	}
+}
+
+// fire offers the light an event for a change of state word, when the change is one the light
+// shows as an event rather than as a colour.
+//
+// The decision is pure — eventFor takes the two words and the controller's geometry and returns
+// a picture and a duration — so nothing here reads a clock or a panel: a test calls eventFor
+// directly, and this method exists only so the one place that notices a transition is also the
+// one place that fires what follows from it.
+//
+// Only a transition reaches it, which is what makes a restart quiet: the driver's first look
+// fills in what the printer was without reporting a change, so a module that comes back up
+// beside a printer that has already finished shows the steady finished frame and no word.
+func (d *driver) fire(from, to string) {
+	ev, ok := eventFor(from, to, d.writer.panelOf())
+	if !ok {
+		return
+	}
+
+	d.writer.fire(ev)
 }
 
 // printerPhrase names the printer in a log line the way the person who named it would:
