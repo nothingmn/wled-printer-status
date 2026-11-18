@@ -43,9 +43,10 @@ What those runs proved, on the hardware rather than in a test:
   moving inside that zone, left the other five byte-identical, wrote no brightness and no power on a strip
   running at its own 255, and gave the segment back on each of three graceful stops.
 
-What that has not shown, and these are gaps rather than formalities: the **starting** state, before a
-print begins to move, has never been seen on a panel, and neither have **idle** or a printer that has gone
-quiet mid-job. **Nobody has looked at the `FINISHED` word.** It is on the panel — the device reads back the
+What that has not shown, and these are gaps rather than formalities: **idle** and a printer that has gone
+quiet mid-job have never been seen on a panel. The **starting** state — a print the machine has taken and
+has not yet started to move — has, in the waiting yellow at 0 %; it appeared for the first time on the
+evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word.** It is on the panel — the device reads back the
 name, the effect, the grouping and the finished green, and the install record quotes that read-back — but
 those are the fields a word is drawn from, not the word: whether the letters are the size and in the place
 the parameters intend is a question for eyes, and WLED's websocket pixel read returned nothing on this

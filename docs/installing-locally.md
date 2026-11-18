@@ -355,6 +355,11 @@ drawn from; whether the letters are 48 pixels tall and where `ix` 24 puts them i
 WLED's websocket pixel read returned all-zero frames the one time it was tried on this panel. `grp` 4 and
 `ix` 24 are this build's guess at the operator's *"big green letters"*.
 
+A third transition arrived two minutes later — `FINISHED` to `PRINTING` at 23:00:15Z, a second job — and it
+fired nothing: a print beginning is an event the operator wants and one nobody has designed, so the table
+has no entry for it and the panel was given the steady waiting yellow of a job at 0 % instead. By 23:02Z
+the frame read `"reason":"starting"`, which is the first time that state has been seen on a panel.
+
 The two release directories from `bd85035` and `d141884` were removed after this install proved healthy.
 
 ## 6. Restart the core once, and prove it is well
