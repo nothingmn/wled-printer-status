@@ -53,7 +53,9 @@ Everything odd about this repository follows from that one sentence:
 | path | what it is, and what you may assume |
 | --- | --- |
 | `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status` and `GET /status`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
-| `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. Package `main`. |
+| `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
+| `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
+| `watch.go` | **The watch.** One `printer.Source`, one `writer` and one `driver` per binding; one `wled.Client` and one write `gate` per controller, so the bindings on one box take turns at its single small web server. `start` builds everything before any goroutine starts, so a set it cannot run leaves the light as it was. Package `main`. |
 | `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
 | `internal/ddp/` | A second transport: frames of pixels over DDP/UDP to port 4048. **Not the shipping path** — JSON over HTTP is what drives the light, because only it reads back and carries names and effects. DDP exists for the day the module draws its own pictures, and is proved to draw the same frame as the JSON body. |
 | `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
@@ -94,8 +96,8 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **133 tests**: 39 in the root package, 20 in
-`internal/printer`, 17 in `internal/render`, 37 in `internal/wled`, 14 in `internal/ddp` and 6 in
+`gofmt -l .` printing any path is a failure. Today there are **163 tests**: 65 in the root package, 20 in
+`internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp` and 6 in
 `internal/matrix`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
 
@@ -207,6 +209,19 @@ heartbeat repaint, which fires once a minute on a still picture and must cost no
 an idle night becomes a thousand lines that hide the one transition a person needed. A printer still
 saying `PRINTING` is one line at the start of the hour and none during it. Do not "improve" this into a
 line per tick: the route answers the present tense, and the tests count the lines.
+
+**5.12 One segment, one binding — and the refusal happens before a client is built.**
+A binding is (printer, controller, segment). One printer appears in at most one binding; one
+segment is driven by at most one binding; a controller may carry several; and a controller that
+holds no named segments carries exactly one, because the whole light is then one display.
+`bindings.check` enforces that, and `watch.start` calls it before it builds a client, so a mistake
+is a sentence the operator reads on the instance rather than two writers overwriting each other on
+a controller at the rate of a tick. Two costs ride with the rule and neither is avoidable from here:
+**WLED has no ownership**, so exclusivity holds only inside this module and another tool can still
+write those pixels; and every borrowed binding owes its own capture and its own restore, which
+multiplies as bindings grow. A whole-controller binding (-1) claims every segment on its box and
+therefore collides with anything else there — the check refuses that pairing rather than letting a
+two-rectangle panel body take the segments somebody else's zone lives in.
 
 ## 6. The supervision you live inside
 

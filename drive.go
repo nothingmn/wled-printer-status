@@ -4,7 +4,8 @@
 // from it; one goroutine writes frames to the controller. They are separate on
 // purpose. WLED asks that calls to a controller be serialised — it has one small web
 // server, and two writes in flight interleave in ways nothing on the wire promises —
-// so there is exactly one writer. And that writer must not be whatever noticed the
+// so there is one writer per binding and one door per controller, and the writers on
+// one box take turns at it. And that writer must not be whatever noticed the
 // printer change: a write can block for the client's two-second timeout, and blocking
 // there would stall the reader for as long as the light took to answer.
 //
@@ -202,6 +203,17 @@ type writer struct {
 	// spend a minute waiting for one.
 	after func(time.Duration) <-chan time.Time
 
+	// gate is the door every write to this writer's controller passes through, shared with the
+	// other bindings on that controller and nil when this writer has the controller to itself.
+	// A controller is one small web server, and a module that now holds several bindings on one
+	// box takes turns at it rather than knocking twice at once. See gate.
+	gate *gate
+
+	// record is where one attempt to write is published for the status route to read. It is
+	// recordSend for a watch with one binding, and a per-binding record when a watch holds
+	// several, because a route with one body cannot say which binding it is describing.
+	record func(report sendView)
+
 	// geometry is the matrix the controller reported, and the zero panel for a strip. The
 	// driver's goroutine stores it the moment Info answers and the writer's reads it on
 	// every frame, so it is an atomic pointer rather than a field two goroutines would
@@ -254,11 +266,12 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 	}
 
 	return &writer{
-		light: light,
-		logf:  logf,
-		now:   time.Now,
-		after: time.After,
-		wake:  make(chan struct{}, 1),
+		light:  light,
+		logf:   logf,
+		now:    time.Now,
+		after:  time.After,
+		wake:   make(chan struct{}, 1),
+		record: recordSend,
 	}
 }
 
@@ -534,13 +547,13 @@ func (w *writer) deliver(ctx context.Context, frame render.Frame) error {
 func (w *writer) report(write func() error) error {
 	at := w.now().UTC().Format(time.RFC3339Nano)
 
-	if err := write(); err != nil {
-		recordSend(sendView{At: at, OK: false, Error: err.Error()})
+	if err := w.gate.do(write); err != nil {
+		w.record(sendView{At: at, OK: false, Error: err.Error()})
 
 		return err
 	}
 
-	recordSend(sendView{At: at, OK: true})
+	w.record(sendView{At: at, OK: true})
 
 	return nil
 }
@@ -587,11 +600,11 @@ func (w *writer) begin(ctx context.Context) {
 // frames follow anyway, because colour writes do not depend on either and a module
 // that stopped here would show nothing at all.
 func (w *writer) settle(ctx context.Context) {
-	if err := w.light.SetBrightness(ctx, w.brightness); err != nil {
+	if err := w.gate.do(func() error { return w.light.SetBrightness(ctx, w.brightness) }); err != nil {
 		w.logf("%s: the light's brightness was not set: %v", name, err)
 	}
 
-	if err := w.light.SetPower(ctx, true); err != nil {
+	if err := w.gate.do(func() error { return w.light.SetPower(ctx, true) }); err != nil {
 		w.logf("%s: the light was not switched on: %v", name, err)
 	}
 }
@@ -803,7 +816,7 @@ func (w *writer) release() {
 
 	held := *w.borrowed
 
-	if err := w.light.RestoreSegment(ctx, held.Segment); err != nil {
+	if err := w.gate.do(func() error { return w.light.RestoreSegment(ctx, held.Segment) }); err != nil {
 		w.logf("%s: the borrowed segment %d on %s was not given back: %v", name, held.ID, w.where, err)
 
 		return
@@ -1081,6 +1094,11 @@ type driver struct {
 	logf   func(format string, args ...any)
 	tick   time.Duration
 
+	// pub is where the frame decided this tick is published for the status route. It is the
+	// process-wide publish when a watch holds one binding; a watch holding several gives each
+	// driver its own, because a route with one body cannot describe two bindings.
+	pub func(snapshot printer.Snapshot, frame render.Frame)
+
 	// told is what the log has already been told, so that a tick which finds the
 	// printer as it left it writes no line.
 	told transitions
@@ -1100,7 +1118,7 @@ func newDriver(source readings, pen *writer, light strip, logf func(format strin
 		logf = func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	}
 
-	return &driver{source: source, writer: pen, light: light, logf: logf, tick: tickEvery}
+	return &driver{source: source, writer: pen, light: light, logf: logf, tick: tickEvery, pub: publish}
 }
 
 // run decides a frame on every tick until ctx ends and hands it to the writer.
@@ -1135,7 +1153,7 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 
 	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
 
-	publish(snapshot, frame)
+	d.pub(snapshot, frame)
 	d.writer.submit(frame)
 }
 
@@ -1383,7 +1401,17 @@ var (
 
 // publish replaces what the module says it thinks, in one store.
 func publish(snapshot printer.Snapshot, frame render.Frame) {
-	current.Store(&view{
+	seen := viewOf(snapshot, frame)
+	current.Store(&seen)
+}
+
+// viewOf is one reading and one frame as the route reads them.
+//
+// It is a function rather than the body of publish because a watch may hold more than one
+// binding, and the per-binding store in watch.go needs the same answer under a name. Two copies
+// of this mapping would be two answers to what /status means.
+func viewOf(snapshot printer.Snapshot, frame render.Frame) view {
+	return view{
 		Printer: printerView{
 			ID:         snapshot.ID,
 			Name:       snapshot.Name,
@@ -1404,7 +1432,7 @@ func publish(snapshot printer.Snapshot, frame render.Frame) {
 			Total:  frame.Total,
 			Reason: string(frame.Reason),
 		},
-	})
+	}
 }
 
 // recordSend publishes what one write to the light did.

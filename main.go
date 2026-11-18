@@ -360,8 +360,7 @@ func configure(ctx context.Context, sent Settings) error {
 
 	// The client is built now and contacts nothing until the writer asks it to.
 	// wled.New refuses a bad address here rather than at the first call.
-	light, err := wled.New(sent.ControllerAddress)
-	if err != nil {
+	if _, err := wled.New(sent.ControllerAddress); err != nil {
 		return err
 	}
 
@@ -373,12 +372,28 @@ func configure(ctx context.Context, sent Settings) error {
 		return err
 	}
 
-	source, err := printer.NewSource(printer.Config{DeviceID: deviceID}, session, fleet)
-	if err != nil {
-		return err
-	}
-
 	held.Store(&sent)
+
+	// The set this build can express from its settings: one printer, on one controller, on one
+	// segment. The core underneath runs a set rather than a pair (bindings.go, watch.go) because
+	// the operator's decision of 2026-11-18 made the segment — not the controller — the unit, and
+	// the surface that writes more than one binding is the UI half rather than a settings block
+	// that cannot express a list. Nothing here decides what a binding is: it hands the core the
+	// one the operator configured and lets the core's own rules judge it.
+	wanted := bindings{{
+		DeviceID:   deviceID,
+		Address:    sent.ControllerAddress,
+		Segment:    sent.Segment,
+		Brightness: sent.Brightness,
+	}}
+
+	// A borrowed binding carries no brightness, whatever the setting says: its default is 128
+	// and a brightness is controller-wide. The writer for this mode has no brightness to write
+	// (see newSegmentWriter), and the set says so rather than carrying a number nothing reads —
+	// bindings.check refuses one here.
+	if sent.Segment >= 0 {
+		wanted[0].Brightness = 0
+	}
 
 	// One watch at a time, and the one being replaced is waited for rather than only
 	// cancelled: a writer gives its segment back on the way out, and a second writer that
@@ -386,57 +401,30 @@ func configure(ctx context.Context, sent Settings) error {
 	// the segment's original state — and then give that bar back as though it were his.
 	stopWatching()
 
-	watchCtx, stopWatch := context.WithCancel(sessionCtx)
+	// Nothing has been started yet that a refusal here would have to undo: a set that cannot be
+	// run leaves the light as it was and the operator holding the reason, which is the answer
+	// for a configuration mistake.
+	stopWatch, done, err := watchConfig{
+		bindings: wanted,
+		newSource: func(b binding) (watchSource, error) {
+			source, err := printer.NewSource(printer.Config{DeviceID: b.DeviceID}, session, fleet)
+			if err != nil {
+				return nil, err
+			}
 
-	pen := newWriter(light, sent.Brightness, logf)
+			return source, nil
+		},
+		newLight: func(address string) (strip, error) { return wled.New(address) },
+		logf:     logf,
+	}.start(sessionCtx)
 
-	if sent.Segment >= 0 {
-		// A writer that drives one borrowed segment. It is built without the brightness,
-		// because in this mode this module writes none: see writer.begin.
-		pen = newSegmentWriter(light, sent.Segment, sent.ControllerAddress, logf)
+	if err != nil {
+		return err
 	}
-
-	done := make(chan struct{})
 
 	watchMu.Lock()
 	watch, watchDone = stopWatch, done
 	watchMu.Unlock()
-
-	go func() {
-		defer close(done)
-
-		pen.run(watchCtx)
-	}()
-
-	go newDriver(source, pen, light, logf).run(watchCtx)
-
-	go func() {
-		// The printer package reports what it refused to believe and never changes
-		// the snapshot because of it. Draining that channel is the only way a person
-		// learns that a read failed or that the subscription ended.
-		for {
-			select {
-			case <-watchCtx.Done():
-				return
-			case problem := <-source.Problems():
-				logf("%s: %v", name, problem)
-			}
-		}
-	}()
-
-	go func() {
-		if runErr := source.Run(watchCtx); runErr != nil {
-			logf("%s: stopped watching: %v", name, runErr)
-		}
-	}()
-
-	if sent.Segment >= 0 {
-		logf("%s: watching printer %s and driving segment %d of %s, leaving its other segments and its brightness and power alone",
-			name, deviceID, sent.Segment, sent.ControllerAddress)
-	} else {
-		logf("%s: watching printer %s and driving %s at brightness %d",
-			name, deviceID, sent.ControllerAddress, sent.Brightness)
-	}
 
 	return nil
 }
@@ -561,6 +549,16 @@ func routes() http.Handler {
 	// this module has not made, so a request that arrives before the first frame is
 	// decided is refused by code instead.
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
+		// A watch holding more than one binding publishes each binding under its own
+		// controller and segment, because one body cannot say whose frame it describes. That
+		// store is empty for a single-binding install — the shape every install built from
+		// settings has — so this branch costs one lock and the body below is unchanged.
+		if held := bindingsSeen(); len(held) > 0 {
+			answer(w, http.StatusOK, map[string]any{"bindings": held})
+
+			return
+		}
+
 		seen := current.Load()
 		if seen == nil {
 			refuse(w, r, NoReadingYet.New(

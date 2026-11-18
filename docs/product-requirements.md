@@ -90,20 +90,31 @@ recorded in §3 as an option with its costs, not as a fix.
 
 ## 3. Binding and discovery
 
-### R-01 · One printer, one controller, never more · `operator`
+### R-01 · One segment, one printer: the binding is the unit · `operator`, amended 2026-11-18
 
-**Requirement.** A printer is bound to at most one WLED controller. There is no second
-controller for the same printer and no shared controller arbitrated between printers.
+**Requirement.** A **binding** is a (printer, controller, segment) triple. A printer appears in at
+most one binding; a segment is driven by at most one binding; a controller may carry as many
+bindings as it has segments it is willing to give up; and a controller that holds **no named
+segments** carries exactly one, because the whole light is then one display.
 
-**Operator's words.**
+**Operator's words.** The rule this replaces, and the one that replaced it, both his, the same day:
+
 > "1 printer to 1 wled controller at most"
 
-**Proved by.** The module's configuration names exactly one controller address for its one
-printer, and no setting or screen offers a second. Adding a second printer is done by
-installing a second module instance, not by widening this one.
+> "i agree. lets not limit this. i suspect many would have one strip, 1 wled, and they can partition
+> it accordingly into segments. nice addtion"
 
-**Refuted by.** Any configuration, screen or route in which one printer's status reaches two
-controllers, or two printers' statuses are merged onto one.
+**Proved by.** The module refuses a set in which one printer is named twice, in which one segment of
+one controller is named twice, or in which the whole of a controller is named beside any other
+binding on that controller — and it refuses before a client is built, so the mistake is a sentence
+on the instance rather than two writers undoing each other at the rate of a tick. However many
+bindings a controller carries, it is spoken to through one client and one write door.
+
+**Refuted by.** Any configuration in which two bindings name one printer, two bindings name one
+segment, or a whole-controller binding shares a box with another binding.
+
+**Still ruled out by it.** Installing a second module instance to serve a second printer: the
+platform mounts one namespace once, so a second printer is a second binding inside this module.
 
 ### R-02 · The operator types the controller's address · `operator`
 
@@ -759,13 +770,14 @@ they appear.
 
 ## 13. Out of scope
 
-These follow from the one-to-one rule and from M-1, and they are out of scope because they are
-removed rather than deferred.
+These follow from R-01 and from M-1, and they are out of scope because they are removed rather
+than deferred.
 
 - **Fleets.** No many-printer view, no summary across printers, no view that answers which printer needs
   attention.
-- **Arbitration.** No rule for two printers sharing one controller, because two printers never
-  share one controller here.
+- **Arbitration.** No priority rule for two bindings on one controller, because two bindings never
+  name one segment: the set is refused at configuration (R-01) rather than arbitrated at the wire.
+  What no module can enforce is another tool writing the same pixels — WLED has no ownership.
 - **A light as a control.** The product shows state; it does not pause, cancel or start a print.
 - **A dashboard.** Numbers, charts, history and remaining-time graphs are the app's work. The
   light shows what a person glancing at it needs.
@@ -779,7 +791,8 @@ removed rather than deferred.
   look; a theme engine is a different product.
 - **Reading or writing the printer's own hardware, cameras, enclosures or sensors.** This module
   reads one printer's reported state and writes one light. Nothing else.
-- **Multiple lights per printer, chained or mirrored.** R-01 removes it.
+- **Multiple lights per printer, chained or mirrored.** R-01 still removes it: a printer appears in
+  one binding, so its status reaches one segment.
 
 ---
 
