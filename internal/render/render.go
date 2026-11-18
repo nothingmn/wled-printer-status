@@ -139,7 +139,13 @@ type Frame struct {
 	Reason Reason
 }
 
-// Unfilled is the colour of the LEDs past Lit, when there is a bar at all.
+// Unfilled is the colour of the LEDs past Lit, when there is a bar to draw.
+//
+// It is not the colour of an empty range. With Lit at zero there is no completed
+// part to mark a fill against, and the whole range is Colour (see Frame.Lit): a
+// caller that painted Lit LEDs in Colour and nothing else would show a dark strip
+// for an idle printer and for a printer that had gone quiet, which is the opposite
+// of what those two are meant to say.
 //
 // PROVISIONAL. Q-15 is open: whether the remainder is off or a dim wash of the
 // state colour was never decided by the operator, and this build takes off
