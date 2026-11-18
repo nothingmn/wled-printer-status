@@ -4,13 +4,14 @@ go 1.26.11
 
 require github.com/prusa3d/prusa-connect/sdk v0.0.0
 
-// The sdk is built from the checkout this module was written beside, so a
-// change there is seen here without a release.
+// The sdk is not published yet, so a build takes it from a checkout of Prusa
+// Connect. The marketplace builder makes that checkout itself, at .core/ in
+// this tree, and the path below is the path it makes. A sibling path such as
+// ../prusa-connect/sdk is a path that exists on the machine the module was
+// written on and nowhere a reviewer or CI runs, so the build there finds
+// nothing to replace.
 //
-// The path is relative on purpose. A container-absolute path such as
-// /work/prusa-connect/sdk resolves only under the mount a build happens to
-// use, so the tree does not build for a reader who opens it on the host or in
-// an editor. ../prusa-connect/sdk is the same directory from either place: the
-// checkout sits beside this module, and both sit under /work when a container
-// mounts their parent.
-replace github.com/prusa3d/prusa-connect/sdk => ../prusa-connect/sdk
+// A local build makes .core a relative symlink to ../prusa-connect, which
+// resolves on the host and under the container mount alike. .core is not
+// committed. README.md has the one command that creates it.
+replace github.com/prusa3d/prusa-connect/sdk => ./.core/sdk

@@ -21,6 +21,40 @@ answers on is built from it.
 | `internal/wled` | the HTTP client for the light: it reads the controller and writes power, brightness and colour. Not wired in yet |
 | `internal/printer` | the printer-facing half: one printer's state, how old it is, and whether the host still has it. Not wired in yet |
 
+## Building
+
+The sdk is not published yet, so a build takes it from a checkout of Prusa
+Connect. `go.mod` names that checkout at `.core/` in this tree, which is where
+the marketplace builder puts it: the builder checks Prusa Connect out there
+itself and builds. A sibling path such as `../prusa-connect/sdk` would work
+only on the machine this module was written on.
+
+Locally, make the checkout once:
+
+```bash
+ln -s ../prusa-connect .core
+```
+
+The link is relative, so the same `.core` resolves on this machine and under a
+container mount of the parent directory. `.core` is not committed: it is
+another repository's tree, and `.gitignore` excludes it.
+
+Go is not installed here, so the build runs in a container. It mounts the
+parent directory, which is what makes `../prusa-connect` resolve inside:
+
+```bash
+docker run --rm --user $(id -u):$(id -g) \
+  -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath -e CGO_ENABLED=0 \
+  -v ~/prusa:/work -w /work/wled-printer-status \
+  golang:1.26.11 go build ./...
+```
+
+`go vet ./...`, `go test ./...` and `gofmt -l .` run the same way. There is no
+`go.sum` and none is needed: the only requirement is the sdk, replaced by a
+directory, so nothing is fetched and there is no hash to record. A build with
+the marketplace's `-mod=readonly` passes for that reason. Add one with
+`go mod tidy` the day a published module is imported.
+
 ## Installation
 
 ```bash

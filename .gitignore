@@ -1,3 +1,9 @@
 # What a build writes. It is made again from the files beside it, so it is
 # never committed.
 /dist/
+
+# The checkout of Prusa Connect a build takes the unpublished sdk from. The
+# marketplace builder writes it here itself; locally it is a relative symlink
+# to ../prusa-connect. Either way it is someone else's tree, not this one, so
+# it is never committed.
+/.core
