@@ -1,15 +1,17 @@
 # Product requirements — wled-printer-status
 
-**Status: draft, written for the operator's correction.** Nothing in this document is
-locked. The operator has not read it yet, and every line marked `open` is a decision he
-has not made. It is written so that he can read it once and say what is wrong.
+**Status: draft, with the state table locked.** The operator approved this seat's colour and
+behaviour proposal on 2026-11-18, so every row of §12 is closed and the colours it names are the ones
+`internal/render` holds. Every other line remains a draft for his correction, and every line still
+marked `open` is a decision he has not made.
 
 **What this document is for.** The two halves of this module are built — a WLED client that
 can reach effects, text, geometry and per-LED painting, and a printer-state reducer that
-refuses to present stale data as live — and the marketplace plumbing is done. Nothing yet
-decides *what the light shows*. This document is that decision surface. It records what the
-operator has already said, marks the consequences this seat has drawn from it, and leaves
-every choice he has not made visibly unmade.
+refuses to present stale data as live — the marketplace plumbing is done, and `internal/render`
+now decides what the light shows for each printer state. This document is the decision surface
+behind that code and the record of what it may not decide. It records what the operator has
+said, marks the consequences this seat has drawn from it, and leaves every choice he has not
+made visibly unmade.
 
 **How to read it.** Every requirement carries one of two marks:
 
@@ -690,10 +692,11 @@ the strip is not showing live-looking progress. `LiveProgress` answers `ok=false
 **Refuted by.** A display still showing a rising bar, or the plain green of a healthy print, for a
 printer that has been gone for ten minutes.
 
-**What the strip does when the printer is gone is open.** His words say nothing about it, and
-choosing a colour for it would be inventing a decision. Two of his constraints do hold: it is not
-green (R-11), and it is not the same as a live print (R-37). Everything else is **Q-2**, which is
-why there is no requirement here rather than a vague one.
+**What the strip does when the printer is gone is now decided.** On 2026-11-18 the operator approved
+the proposal: dim red, breathing, and never the last-known progress bar. So the strip's answer is a
+colour of its own rather than an absence, and R-37 can be proved on a strip as well as in text. The
+dim red and the cleared bar are built and tested in `internal/render`; the breathing is approved and
+still unbuilt.
 
 ---
 
@@ -707,9 +710,10 @@ what it declares about itself — its permissions and the addresses it talks to 
 actually does.
 
 **Where this comes from.** M-13, and the operator's intent to publish. The second half is the part
-that bites: the manifest asks for `observe` today and nothing consumes it, because the printer half
-is not wired in. A declared permission that nothing uses is a false statement in the one place an
-operator is invited to read before granting.
+that bites: a declared permission that nothing uses is a false statement in the one place an
+operator is invited to read before granting. `observe` was withheld for exactly that reason while
+`internal/printer` existed and nothing called it, and put back on 2026-11-18 when the module began
+listing a device to resolve the `printer` setting, reading it, and following its event stream.
 
 **Proved by.** A fresh install on a machine that has never seen the source; and a permission list in
 which every entry is used by the shipped behaviour, with the outbound reach to the WLED address
@@ -722,29 +726,34 @@ permission granted for work the module does not do.
 
 ## 12. State-to-display mapping
 
-The ten states the host reports, plus the two conditions the host has no word for. **Where the
-operator has not chosen a colour, the cell says `open` and this document does not fill it in.**
+The ten states the host reports, plus the two conditions the host has no word for. **Every row is
+now closed.** Three or four by the operator's own words, the rest by his assent on 2026-11-18 to the
+set this seat proposed: *"love your set of defaults for the colors/animations. yes to that"*. The
+colours below are the ones `internal/render` implements, so this table and the code are the same
+statement and a disagreement between them is a defect in one of the two.
 
-| State | What it means | Colour intent | Where it comes from |
+| State | What it means | Display | Where it comes from |
 | --- | --- | --- | --- |
-| `IDLE` | Nothing in progress; the machine is available | **Yellow** | Operator: "one that is either idle, or waiting for a color change, should be yellow" |
-| `BUSY` | Heating or calibrating for a print it has already taken | **open** | He did not name it. His words give green to "printing and happy" and yellow to "idle, or waiting" — and this is preparing to print while nothing is wrong. **Q-1** |
-| `READY` | Ready, with nothing running | **open** | He named "idle", not this. Reads as idle, but that is this seat's reading. **Q-1** |
-| `PRINTING` | A job is running | **Green** | Operator: "A printer in a good state, its printing and happy, should map to green states" |
-| `PAUSED` | A job is on the bed and paused | **open** | He did not name it. A paused print is usually waiting on a person, and his one yellow example is a machine waiting — but he did not say so. **Q-1** |
-| `FINISHED` | A job completed | **open** | A finished print is a good outcome, which points at green, but he did not say it. **Q-1** |
-| `STOPPED` | A job was stopped | **open** | Neither success nor error, and not named. **Q-1** |
-| `ATTENTION` | Waiting on a person; the filament change lives here | **Yellow** | Operator: "waiting for a color change, should be yellow". This seat maps "waiting for a color change" onto `ATTENTION`, which is where a filament change is reported — the mapping is a reading, the colour is his |
-| `ERROR` | The printer is in error | **Red, in hues** | Operator: "Red = bad" and "error codes would map to hues of red" |
-| `UNKNOWN` | The printer has reported no state | **open, and not green** | He did not name it. Red or yellow would each assert something; not-green is R-11. **Q-1** |
-| **Disconnected** | The host holds no session; the state tree is the last one it reported | **open, and not green** | M-6. The host has no value for this, so no state maps to it and the operator has not spoken. **Q-2** |
-| **Stale** | Connected, but nothing has changed for 30 s | **open, and not green** | M-7. Same gap. **Q-2** |
+| `IDLE` | Nothing in progress; the machine is available | **Yellow** | Operator's own words: "one that is either idle, or waiting for a color change, should be yellow" |
+| `BUSY` | Heating or calibrating for a print it has already taken | **Yellow** | Proposed as waiting rather than working, and approved 2026-11-18. His words give green to "printing and happy" and yellow to "idle, or waiting" — this is preparing to print while nothing is wrong, so it sits with waiting |
+| `READY` | Ready, with nothing running | **Dim green** | Proposed as a quieter version of the printing green, and approved. Dim is a third of the bright channel values, computed rather than picked, so it is provably the same green |
+| `PRINTING` | A job is running | **Green**, with the filled bar in the same green | Operator's own words: "A printer in a good state, its printing and happy, should map to green states" |
+| `PAUSED` | A job is on the bed and paused | **Yellow, breathing, bar frozen where it stopped** | Proposed and approved. The frozen bar is built; the breathing is approved behaviour this build does not yet animate |
+| `FINISHED` | A job completed | **Steady green, held until the next job** | Proposed and approved. It is the printing green rather than a hue of its own: the print succeeded |
+| `STOPPED` | A job was stopped | **Grey**, or off | Proposed and approved as one of those two, with the choice left open inside the approval. This build shows a mid grey (`80,80,80`) — neither success nor failure, so neither green nor red |
+| `ATTENTION` | Waiting on a person; the filament change lives here | **Yellow** | Operator's own words: "waiting for a color change, should be yellow". This seat maps "waiting for a color change" onto `ATTENTION`, which is where a filament change is reported — the mapping is a reading, the colour is his |
+| `ERROR` | The printer is in error | **Red, in hues** | Operator's own words: "Red = bad" and "error codes would map to hues of red". No table of codes and hues exists yet, so every error shows one red (`200,0,0`) |
+| `UNKNOWN` | The printer has reported no state | **Dim blue** | Proposed and approved. A printer that has said nothing must not look like a verdict, so neither green, red nor yellow |
+| **Disconnected** | The host holds no session; the state tree is the last one it reported | **Dim red, breathing, and never the last-known progress bar** | M-6, proposed and approved. It is the error red at a third brightness, deliberately: the reading is a memory, not an observation |
+| **Stale** | Connected, but nothing has changed for 30 s | **Dim red, breathing, and never the last-known progress bar** | M-7, proposed and approved, and the same dim red as disconnected on purpose — either way there is nothing current to show |
 
-**What closes the open cells.** One sentence from the operator per row, naming the colour or
-naming the behaviour (idle's colour, off, whatever was showing). The three he has already
-closed — yellow for idle and waiting, green for printing, red in hues for error — need nothing.
-No other row can be closed by this seat without putting words in his mouth, which is why none has
-been.
+**What this settles, and what it does not.** The colour of every state is decided, and the two rules
+that matter most are decided with it: a disconnected or stale printer never keeps its progress bar,
+and a finished job holds its green until the next job rather than expiring on a timer. **The breathing
+on `PAUSED`, disconnected and stale is approved but not built** — there is no animation layer yet, so
+those three currently show a steady colour. `STOPPED`'s grey-versus-off choice, `ERROR`'s code-to-hue
+table, and the fill's rounding remain the open questions they were (Q-17), and are marked so where
+they appear.
 
 ---
 
@@ -776,16 +785,22 @@ removed rather than deferred.
 
 ## 14. Open questions
 
-Every decision the operator has not made, and what each one blocks. None of these has been
-answered by this document.
+Every decision the operator has not made, and what each one blocks. Questions he has since answered
+stay in the list with his words beside them, so a later reader can see what was asked and what closed
+it rather than finding a question silently gone. **Fourteen remain open; three are answered.**
 
 1. **Q-1 · The colours he did not name.** `READY`, `BUSY`, `PAUSED`, `FINISHED`, `STOPPED`,
    `UNKNOWN`. Blocks: the mapping table being complete, and therefore R-10's "every state maps to
    a colour".
+   **ANSWERED 2026-11-18.** He approved this seat's proposed set in full: *"love your set of defaults
+   for the colors/animations. yes to that"*. Dim green, yellow, yellow, steady green, grey, dim blue —
+   the values and their reasoning are in §12, and `internal/render` implements them.
 2. **Q-2 · How a disconnected or stale printer looks on a 1D strip.** Off, a single dim LED, a slow
    pulse, the last colour at half brightness — all are available and none is his. Blocks: R-37, and
    the strip half of R-37. It also decides whether R-36's text form is the only way this is ever
    said, which would leave a strip unable to say it.
+   **ANSWERED 2026-11-18** by the same assent. Both show the dim red, breathing, with no progress
+   bar. The dim red and the absent bar are built and tested; the breathing is approved and unbuilt.
 3. **Q-3 · The full event list.** He named three and said "any other event". Does the list also
    carry: connecting, disconnecting, going stale, an error appearing, a print resuming, layer
    changes, a first-layer milestone? Blocks: R-20's first version and the settings surface in R-19.
@@ -794,6 +809,10 @@ answered by this document.
    The first is richer and never matches across devices; the second is identical everywhere and is
    painted per LED. Blocks: the contents of the dropdown in R-19, and whether two of his controllers
    can be configured the same way.
+   **Partly answered 2026-11-18:** he approved the animation defaults this seat proposed, alongside
+   the colours. But that proposal was made in conversation and is **not written down in this
+   repository**, so the list itself has to be recovered and recorded before the dropdown is built.
+   This document does not reconstruct it from memory.
 5. **Q-5 · What happens when an animation ends.** Return to the state colour, play once and hold the
    last frame, or run for a fixed duration? Blocks: how R-18 and R-12 coexist — an animation that
    never returns is a display that has stopped showing state.
@@ -825,6 +844,8 @@ answered by this document.
 14. **Q-14 · What the light does after a print finishes and nothing else starts.** Hold the finished
     colour until the next job, return to idle after a time, or turn off. Blocks: R-18's end animation
     having somewhere to land, and R-37 if the answer is "off".
+    **ANSWERED 2026-11-18** by the same assent: hold the finished green until the next job. It does
+    not expire on a timer and it does not fall back to idle.
 15. **Q-15 · The unfilled remainder on a strip.** Off, or a dim version of the state colour? Blocks:
     R-16's observation being sharp, and the look of the product at low percentages.
 16. **Q-16 · Whether brightness belongs to this module or to somebody else.** WLED reports whether
@@ -839,7 +860,8 @@ answered by this document.
 
 ## 15. What this document deliberately does not decide
 
-- **No colour** for any state the operator did not name. The eight open rows in §12 stay open.
+- **No colour** for any state the operator had not named at the time this was written. That list is
+  no longer a gap: on 2026-11-18 he approved the whole set, and §12 records it.
 - **No threshold** for a dense panel, and therefore no list of which devices get the rich
   display.
 - **No animation** — not one name, not one effect, not one duration.
