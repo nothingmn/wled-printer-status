@@ -1,0 +1,245 @@
+# AGENTS.md — wled-printer-status
+
+Read this before you touch anything in this repository. It is the file that tells you what the code is
+for, which facts about the platform are load-bearing, and which mistakes have already been paid for. It
+is specific to this module; a rule that would be the same in any Go project does not belong here.
+
+It is written for the agent who arrives knowing nothing and has to change one thing without breaking
+three.
+
+---
+
+## 1. What this is, and why it exists
+
+`wled-printer-status` is a **Prusa Connect service module**, published (or publishing) to the **Prusa
+Plugin Marketplace**.
+
+A service module is an out-of-process binary. The Prusa Connect server launches it as a child process,
+speaks `wirerpc` to it over the child's stdio, and proxies HTTP requests into the routes the module
+declares. The module is not a plugin compiled into the server and not a browser-side app: it has its own
+process, its own memory budget, and its own lifecycle that the server can end at any time.
+
+This one watches **one** printer through the Connect instance it runs under, and renders that printer's
+state onto **one** WLED controller — a 1D LED strip, or a 2D matrix panel. The point of it is a light
+somebody walks past, not a screen somebody opens.
+
+The marketplace context is not decoration. It means:
+
+- a stranger must be able to install it, so the README has to be true and the declared network access has
+  to be honest — an over-declared or under-declared permission is a review finding, and a module that
+  claims a capability nothing uses is a module a reviewer distrusts;
+- the release is built by somebody else's builder from a tag, so anything that only builds on your
+  machine is broken even though it compiles.
+
+## 2. Where the process runs — the fact that explains most of the code
+
+**The module process runs inside the `prusa_connect` Docker container**, a Debian 13 (glibc) image, as a
+child of that container's PID 1. It does **not** run on the host.
+
+Everything odd about this repository follows from that one sentence:
+
+- **Binaries must be static.** Build with `CGO_ENABLED=0`. A dynamically linked build can fail to start
+  inside the container and there is no useful error when it does — the process simply is not there.
+- **There is no Go on the host, and none may be installed.** A host toolchain would be a second, drifting
+  compiler and a dependency the marketplace builder does not have. Every build and every test runs in a
+  container.
+- **"Networking" means the container's networking**, not the host's. Anything you conclude from running a
+  command on the host is a statement about the host, and may be false one namespace over. See §6.
+- **The host's log is the only place a person sees this process.** Its stderr goes there; nothing on the
+  wire carries a log line.
+
+## 3. Layout, file by file
+
+| path | what it is, and what you may assume |
+| --- | --- |
+| `main.go` | **The generator's program.** It does the handshake, answers the lifecycle set, takes the `message` setting and serves `GET /wled-printer-status`. It imports **nothing** from `internal/`. This is the entire installed behaviour today. |
+| `internal/printer/` | The printer half: a pure reducer (`printer.Apply`, `State.Snapshot`) and a `Source` that owns the bus subscription and the periodic device read. It holds no presentation and no policy. The offline-honesty rule lives here — see §5.3. |
+| `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`, `Paint`). Per-client mutex, 2 s default timeout. |
+| `faults.go` | The fault domain literal and every refusal code. The domain is **hardcoded** and must match the repository owner — see §7. |
+| `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `permissions`, `openapi`. **Its key set is closed** — see §5.9. |
+| `openapi.json` | The route fragment, every path relative to the mount. Held to `routesapi.ParseFragment` at launch. |
+| `install.sh` | **The generator's script, and stale.** It expects a Go toolchain on the machine and a Prusa Connect checkout at a fixed `/work/prusa-connect`. Do not trust it, do not "fix" it as a side errand, and do not cite it as documentation. |
+| `.github/workflows/release.yml` | Publishes to the marketplace on a released tag. Pins `core-ref: sdk/v0.1.0-beta.1`. |
+| `docs/product-requirements.md` | The product requirements. A **draft**; nothing in it is locked. |
+
+The split matters: the two `internal/` packages are the finished, tested halves, and `main.go` is the
+unfinished join. A change that makes the packages better is a change to working code. A change that wires
+them is a product decision — see §10.
+
+## 4. Build and test
+
+Wrap the container command once and use it for everything:
+
+```bash
+build() {
+  docker run --rm --user $(id -u):$(id -g) \
+    -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath -e CGO_ENABLED=0 \
+    -v ~/prusa:/work -w /work/wled-printer-status \
+    golang:1.26.11 "$@"
+}
+```
+
+The four gates. All four must be clean before you commit; a commit that leaves one dirty is a commit that
+hides a problem behind the others:
+
+```bash
+build go build ./...
+build go vet ./...
+build go test ./... -count=1
+build gofmt -l .
+```
+
+`gofmt -l .` printing any path is a failure. Today there are **57 tests**: 4 in the root package, 20 in
+`internal/printer`, 33 in `internal/wled`. That number is a fact about this commit, not a target — update
+it here when it changes, and never quote it without re-running.
+
+The tests never touch a network and never touch a device. They are fakes and `httptest` servers. If a test
+you add needs a real controller or a live Connect instance to pass, it belongs in a manual note, not in
+the suite.
+
+**`.core` is a gitignored relative symlink** to the Prusa Connect checkout (`ln -s ../prusa-connect
+.core`). `go.mod` replaces the SDK with `./.core/sdk` because that is the path **the marketplace builder
+creates for itself** when it checks the core out and builds. A sibling path such as `../prusa-connect/sdk`
+resolves on one machine and nowhere CI runs — it builds locally and fails in the builder, which is the
+worst failure shape available: green here, refused at review.
+
+The workflow pins `core-ref: sdk/v0.1.0-beta.1`. **Pin it, and raise it deliberately.** That pin decides
+which SDK the published binary is built against, so raising it is a change to the shipping artefact's
+dependency and needs the tests re-run against the new tag — not a tidy-up.
+
+## 5. The invariants that cost blood
+
+Each of these was learned by breaking it. Each one says what happens if you ignore it, because a rule
+without a failure mode gets refactored away by the next agent who finds it inconvenient.
+
+**5.1 Every 2D segment write carries all four bounds.** `start`, `stop`, `startY`, `stopY` — always, not
+just the first two. A write with only `start`/`stop` is read by the firmware as a **flat LED index
+range**, so on a 256-wide panel a `stop` of 256 collapses to one row and the write paints a single line
+across the top and blacks the rest of the panel. If you write bounds, write four.
+
+**5.2 Telemetry is a patch stream, not a snapshot.** A path is published only when it moves. A state map
+built from the stream is therefore an **accumulation that starts empty** — a path that has not moved
+since the module started is not in the window, and treating a window as a complete picture loses
+everything that was already true at startup. This is why `Source` also polls `device.get`: `Connected`,
+the issues and the rest of the record do not arrive on the telemetry lane at all.
+
+**5.3 A printer that dies keeps its last state forever.** The server's state tree is documented as what
+the device *last* reported and nothing in the host dates it; `/state` has ten values and `OFFLINE` is not
+among them. A printer switched off at 14:02 still says `PRINTING` at 15:30, and the server takes about
+**60 seconds** to notice anything at all. So the display must be able to say *"was printing at 94 % when
+last heard, six minutes ago"* and must never present that as live. `internal/printer` enforces this:
+`Snapshot.Connected`, `Snapshot.Job.Live`, and `LiveProgress()`/`LiveRemaining()` returning `ok=false`
+unless the printer is connected **and** fresh (`StaleAfter` is 30 s). **Do not weaken that pair to make a
+renderer simpler.** It is the reason the package exists, and a display that lies about a dead printer is
+worse than no display.
+
+**5.4 Text on a panel is one field, on one effect.** It is the segment's `n` field with **effect 122**
+("Scrolling Text"), 48 characters maximum, written with `SetSegmentName`. It is **impossible on a 1D
+strip** — the firmware falls back to a solid colour and the text simply does not appear. So any 2D
+feature needs a 1D fallback that is designed, not an afterthought: if your status is text-only, a strip
+owner gets nothing.
+
+**5.5 On a 2D build, `start`/`stop` are columns and `startY`/`stopY` are rows.** `len` is a count of
+**columns**, not of pixels. A width-times-height count in a `len` field is twelve times too large on a
+32-row panel and the firmware will either refuse or wrap.
+
+**5.6 Effect parameters are per-effect.** WLED publishes `/json/fxdata`, one flag string per effect,
+saying which of the sliders are live for that effect. Read it rather than assuming. The concrete trap:
+`Percent` fills from `ix` and **ignores** `sx`, so a progress bar built as an effect parameter must be
+written to `ix`; written to `sx` it looks like it is being set and never moves.
+
+**5.7 Write budget: 1–5 writes a second.** Never stream. Use the `transition` field to fade, so the
+controller interpolates instead of the module sending frames. Measured: a 48-LED strip answers in ~53 ms
+and a 256×64 panel in ~28 ms, so the wire is not the limit — WLED's single small web server is. A full
+16,384-pixel `Paint` is 19 requests at the 8 KiB default budget; that is a once-every-few-seconds floor,
+not an animation path.
+
+**5.8 A module's settings cannot express a composer.** The manifest's `options` has **nine closed
+types**, no enum, no repeated group, and `list`/`object` render as a one-line JSON box in the UI. There is
+no way to build a colour picker or a per-state mapping table out of settings. A rich editor needs the
+module's **UI half** (a separate browser-side bundle the manifest declares), and — whatever you build —
+**every settings save restarts the module**, so nothing may depend on in-memory state surviving a save.
+
+**5.9 The manifest key set is closed.** An unknown key is **refused and the module will not load**. There
+is no forward-compatible "extra field". This is why `author:` is absent even though the marketplace asks
+for it: the key does not exist, so writing it produces a module that does not start. When you want a key
+that is not there, the answer is the SDK or the marketplace schema, never a hopeful line in the YAML.
+
+## 6. The supervision you live inside
+
+The server that launches this process imposes limits. They are not advisory; they are how the process
+dies.
+
+- **Inbound call timeout: 10 s.** A request into a route must answer inside 10 s or the caller gets
+  nothing. This is why the WLED client's default timeout is 2 s and the device read is bounded at 5 s.
+- **Liveness ping every 15 s, 5 s to answer, three misses and the process is killed.** A missed ping is
+  not a warning.
+- **128 MiB RSS watched every 2 s.** Stay under it; a per-pixel frame buffer for a 16,384-pixel panel is
+  small, but a naive retained history of them is not.
+- **Three failures in an hour switches the module off until a human acts.** It does not restart itself.
+  So a crash loop that looks like "it will come back" is a module that is off, and somebody has to be
+  told.
+
+One asymmetry worth knowing: a **slow handler does not cost the ping**, because requests are served in
+their own goroutine. A **slow bus callback stalls the subscription** — the frames stop arriving and the
+module's picture of the printer silently freezes, which looks exactly like a healthy module.
+
+## 7. Marketplace mechanics
+
+- **The extension id is `com.github.aux.<owner>.<repository>`**, here
+  `com.github.aux.nothingmn.wled-printer-status`. It is also **the namespace every route mounts under**,
+  so `go.mod`'s module path, `faults.go`'s `faultDomain` and the repository name must all agree. Change
+  one and the fault codes stop matching the mount, and clients that branch on a code never see it.
+- **The release tag must end with the version in `module.yaml`.** A tag that does not is a release that
+  publishes nothing, after the run has already started.
+- **The signing key lives in a GitHub environment named `release`**, and the secret is
+  `PRUSA_CONNECT_EXTENSION_SIGNING_KEY` — **not** the Slicer-plugin secret name, which is a different
+  key for a different product. The builder runs the publish job inside that environment.
+- **The signing key file is on the build host, outside every repository.** Never print it, never commit
+  it, and never leave it anywhere that gets bind-mounted into a container — a mount of `~` for a build is
+  a mount of the key.
+
+## 8. What is unverified — say so, do not imply otherwise
+
+Nothing in this module has ever run against a live Prusa Connect host. Specifically:
+
+- **The bus subscription has never carried a real printer's frames.** Its cadence, the origin narrowing
+  and the 30 s staleness horizon are proven against **fakes only**. A module's bus does not exist until
+  the module is installed and serving, which is why this has not been done yet.
+- **No live WLED write has been made from the module.** Reads have been made against real controllers;
+  every write is proven against `httptest` servers and nothing else.
+- **The release workflow has never executed.** It is written from the builder's documented interface,
+  not from a green run.
+
+An agent that describes any of these as working has produced a false statement about the product, in a
+repository that will be read by a marketplace reviewer. Write "unverified" beside the claim instead.
+
+## 9. Forking
+
+A fork must change **three things together**:
+
+1. `go.mod`'s module path,
+2. `faults.go`'s `faultDomain` literal,
+3. `module.yaml`'s `name`.
+
+They move as one because the extension id is derived from the repository, becomes the mount point, and
+becomes the fault namespace. A fork that changes two of three loads on one machine and fails to serve
+under its own namespace. The fork must also **register its own repository and its own signing key** —
+the existing one signs `nothingmn`'s releases and will not sign yours. None of this is expensive today
+and all of it is expensive after anybody has installed the module, because an installed declaration
+points at an id that no longer exists.
+
+## 10. If you are asked to wire the halves together
+
+You will be. Read `docs/product-requirements.md` first, and treat the items marked **open** as decisions
+that are not yours. Wiring is not the hard part; the hard parts are:
+
+- **choosing a tier per controller** — from `Info` and `Capabilities`, not from a hardcoded guess, with a
+  designed fallback for a 1D strip when the feature is 2D-only (§5.4);
+- **mapping state to colour, geometry and animation**, which is the product decision;
+- **the settings**, which cannot express a colour table (§5.8) and restart the module on every save;
+- **the write budget**, which rules out a per-frame render loop (§5.7);
+- **the dead printer**, which must be visible as dead rather than frozen at 94 % (§5.3).
+
+If the request is "make it light up" and the mapping is unspecified, the honest move is to say which
+decisions are unspecified and ask, rather than to invent a palette and ship it as the answer.
