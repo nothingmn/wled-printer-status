@@ -56,7 +56,7 @@ Everything odd about this repository follows from that one sentence:
 | `internal/printer/` | The printer half: a pure reducer (`printer.Apply`, `State.Snapshot`) and a `Source` that owns the bus subscription and the periodic device read. It holds no presentation and no policy. The offline-honesty rule lives here — see §5.3. |
 | `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`, `Paint`). Per-client mutex, 2 s default timeout. |
 | `faults.go` | The fault domain literal and every refusal code. The domain is **hardcoded** and must match the repository owner — see §7. |
-| `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `permissions`, `openapi`. **Its key set is closed** — see §5.9. |
+| `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `openapi`. It requests no `permissions` today — the reader that will need `observe` runs nowhere yet. **Its key set is closed** — see §5.9. |
 | `openapi.json` | The route fragment, every path relative to the mount. Held to `routesapi.ParseFragment` at launch. |
 | `install.sh` | **The generator's script, and stale.** It expects a Go toolchain on the machine and a Prusa Connect checkout at a fixed `/work/prusa-connect`. Do not trust it, do not "fix" it as a side errand, and do not cite it as documentation. |
 | `.github/workflows/release.yml` | Publishes to the marketplace on a released tag. Pins `core-ref: sdk/v0.1.0-beta.1`. |

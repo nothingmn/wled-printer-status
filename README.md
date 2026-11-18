@@ -108,9 +108,9 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 ```
 
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
-for so you can read it first. The permissions it asks for are listed in `module.yaml` — today that is
-`observe`, so the module may read one printer and follow its event stream. Nothing consumes that grant
-yet.
+for so you can read it first. This module asks for no permission today. Reading one printer and following
+its event stream will need `observe`, but the code that does that is not wired into the program yet, so
+`module.yaml` withholds the grant rather than ask for one nothing uses.
 
 ## Binding a printer to a light
 

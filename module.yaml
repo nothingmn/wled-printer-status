@@ -65,14 +65,15 @@ options:
 # them into the declaration and grants this module what they name. Write one line
 # per permission saying what it lets this module do.
 #
-# One is asked for below. A module reading its own printer does so with nobody
-# behind it, and the host holds that work to this list before the authorization
-# graph is asked: without `observe` a device read answers an empty page and the
-# subscription is refused. internal/printer is the code that needs it. It is not
-# wired into main.go yet, so nothing here exercises the grant today; delete the
-# line if you would rather install the module without it.
-permissions:
-  # read one device and follow its event stream
-  - observe
+# No permission is requested as of 2026-11-18. Watching a printer will need
+# `observe`: without it a device read answers an empty page and the subscription
+# is refused. That reader — subscribing to the device event stream and reading
+# one device — lives in internal/printer and is not wired into main.go, so
+# nothing here uses the grant, and asking for it would be a false statement to
+# the operator installing this module. Restore it with the reader:
+#
+#   permissions:
+#     # read one device and follow its event stream
+#     - observe
 # events:
 #   changed: wled-printer-status.changed
