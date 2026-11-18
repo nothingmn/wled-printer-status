@@ -7,7 +7,14 @@ Write the entry in the same change as the code. One bullet per behaviour a
 person outside this repository can observe: a route, a setting, a screen, a
 refusal. Name the route and the setting key, never a function or a file.
 
-## 0.1.0 - unreleased
+## 0.1.0 - 2026-11-18
+
+The first release, published as a beta: the marketplace lists it on its beta channel, and it will change.
+
+One printer is read through the Connect instance the module runs beside, and one WLED controller is
+painted — a colour for the printer's state and a fill for the job's progress. On a controller that carries
+several segments the module borrows one, draws inside it, and gives it back when it stops. A finished job
+holds the whole light, and keeps holding it.
 
 ### Added
 
@@ -49,3 +56,10 @@ refusal. Name the route and the setting key, never a function or a file.
   finished job shows, and a print that had not started was being read as one. From the first lit pixel
   upwards the frame is unchanged: the fill is the printing green and its length is the progress.
 
+### Not in this build
+
+- **No text.** Nothing on the light spells anything out, on any controller, whatever its firmware can do.
+- **No animations.** No pulse, no fade, no effect: a state is one colour and a fill.
+- **No layout composer.** The picture is the module's; the operator does not arrange it.
+- **No multi-binding.** One printer per installed module and one controller per instance. A printer this
+  instance does not watch is a printer on no light at all.

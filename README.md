@@ -15,7 +15,10 @@ controller named in its settings, with nobody standing at the panel. `GET /statu
 currently thinks — the printer, how old its reading is, the frame it has decided, and what the last write
 to the light did — so a person can read the decision without walking over to the light.
 
-What that run proved, on the panel rather than in a test:
+This is the first release and an early beta: what follows is what has been proved on hardware, and what
+has not been. Expect it to change.
+
+What those runs proved, on the hardware rather than in a test:
 
 - **The fill tracks the job.** At 87, 90, 91, 96 and 98 % the lit columns were counted against the panel's
   own geometry, and each one was the printer's percentage of 256 — the fill is decided in the controller's
@@ -27,16 +30,20 @@ What that run proved, on the panel rather than in a test:
 - **A picture that has stopped moving is written again once a minute**, which is how a controller that
   rebooted into its own saved state comes back to the printer's picture while the printer has nothing new
   to say.
+- **A borrowed segment works on a strip somebody else also uses.** On a six-zone desk light — 48 LEDs,
+  WLED 16.0.1, six named zones — the module drove one of the six for the length of a print with the fill
+  moving inside that zone, left the other five byte-identical, wrote no brightness and no power on a strip
+  running at its own 255, and gave the segment back on each of three graceful stops.
 
 What that has not shown, and these are gaps rather than formalities: the **starting** state, before a
 print begins to move, has never been seen on a panel, and neither have **idle** or a printer that has gone
-quiet mid-job. The **1D strip path has never run against a strip** — the panel is the only geometry it has
-met. And **it has not been through the marketplace**: no release exists, so nobody has installed it the way
-a stranger would.
+quiet mid-job. And **it has not been through the marketplace**: this beta is the first release, so nobody
+has yet installed it the way a stranger would.
 
-So: a working module on one printer and one panel, and not a finished product. Animations, the panel's
-richer display, a brightness schedule and the composer are still open, and none of them is here; the open
-ones are written down in [`docs/product-requirements.md`](docs/product-requirements.md).
+So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
+product. Animations, the panel's richer display, a brightness schedule and the composer are still open, and
+none of them is here; the open ones are written down in
+[`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## What it is meant to do
 
@@ -141,21 +148,27 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **96 tests** — 26 in
-the root package, 20 in `internal/printer`, 14 in `internal/render`, 36 in `internal/wled` — and they pass
-without touching a network or a real controller: the light and the printer are both faked in the tests
-that need one, and the ones about a minute-long heartbeat or a five-minute outage move a fake clock
-instead of waiting. There is no `go.sum`: the only dependency is the SDK, replaced by a directory, so
-nothing is fetched and there is no hash to record.
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **148 tests** — 51 in
+the root package, 20 in `internal/printer`, 17 in `internal/render`, 40 in `internal/wled`, 14 in
+`internal/ddp` and 6 in `internal/matrix` — and they pass without touching a network or a real controller:
+the light and the printer are both faked in the tests that need one, and the ones about a minute-long
+heartbeat or a five-minute outage move a fake clock instead of waiting. There is no `go.sum`: the only
+dependency is the SDK, replaced by a directory, so nothing is fetched and there is no hash to record.
 
 ## Installing
 
-There is no install path worth following today. `install.sh` in this tree is the project generator's
-script and is stale: it wants a Go toolchain on your machine and a Prusa Connect checkout at a fixed
-path. Do not read it as documentation of how this module installs.
+There is an install path, and it has been walked. [`docs/installing-locally.md`](docs/installing-locally.md)
+is the record of one install on a running Prusa Connect, with the commands as they were run and the output
+they gave: the release directory and the checksums a release has to carry, the ownership the core needs
+before it can read the files, the settings file, the `module add` that writes the declaration, and the
+restart the install owes afterwards. Start there rather than here.
 
-When there is a release, a module is installed through the server's own command, which verifies the
-release, records its digest, and writes the declaration:
+`install.sh` in this tree is the project generator's script and is stale: it wants a Go toolchain on your
+machine and a Prusa Connect checkout at a fixed path. Do not read it as documentation of how this module
+installs.
+
+A module is installed through the server's own command, which verifies the release, records its digest,
+and writes the declaration:
 
 ```bash
 prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from dist
