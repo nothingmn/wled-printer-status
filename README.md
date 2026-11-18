@@ -18,6 +18,7 @@ answers on is built from it.
 | `faults.go` | every code this module refuses with, each documented once |
 | `main_test.go` | the route answering, the refusal carrying its code, and the manifest's default |
 | `openapi.json` | the fragment describing that route, with every path relative to the mount |
+| `internal/wled` | the HTTP client for the light: it reads the controller and writes power, brightness and colour. Not wired in yet |
 
 ## Installation
 
@@ -69,6 +70,42 @@ resources:
       config:
         message: Ready.
 ```
+
+## WLED client
+
+`internal/wled` is the only code in here that talks to a light. `package wled` gives you
+a `Client` for one controller — its base URL and its own `*http.Client` — and it uses
+three of WLED's own endpoints.
+
+| call | endpoint | what it does |
+| --- | --- | --- |
+| `Info` | `GET /json/info` | the controller's facts: firmware version, LED count, segment limit, matrix width and height, name, UDP port, whether something is streaming into it |
+| `State` | `GET /json/state` | power, brightness, and each segment's LED bounds, row bounds, colours, effect and brightness |
+| `SetPower`, `SetBrightness`, `SetSolid`, `SetRange` | `POST /json/state` | one small body carrying only the keys that change |
+
+Every request is bounded at two seconds, because the host pings this module every
+fifteen seconds and waits five for the answer: a call that blocked longer would cost the
+process three missed pings. Calls to one controller are queued behind a mutex, which is
+what WLED asks for. Failures are typed — `ErrUnreachable`, `ErrTimeout`, `ErrStatus` for a
+failing HTTP status, `ErrDevice` for WLED's own `{"error":n}` — and a brightness outside
+0-255 or a run of LEDs with nothing in it is refused before anything is sent.
+
+A panel and a strip are the same client. `Info` reports the matrix geometry when the
+controller publishes it and zero when it does not, and a segment carries its row bounds
+beside its LED bounds; nothing here draws a rectangle, and `SetRange` is a
+one-dimensional run of LEDs.
+
+It is **not wired into the module**: `main.go` imports nothing from it, and `module.yaml`
+and `openapi.json` are untouched, so the route still answers with the configured message
+alone. There is no product behaviour in it either — no printer state, no colour for a
+paused print, no progress bar, no polling loop. Those are the module's decisions and they
+have not been made.
+
+Read paths only have been run against hardware: `Info` and `State` were called once
+against the WLED panel at `http://10.0.0.136/` and answered in 16 ms and 15 ms. **No write
+has ever been sent to a real controller**, and the client has not been run as part of the
+module at all. Every write it can make is proven against a local test server and nothing
+else.
 
 ## Permissions
 
