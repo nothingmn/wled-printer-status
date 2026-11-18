@@ -231,6 +231,21 @@ Leave the release directory alone until you are satisfied: the declaration names
 `source`, and it is the only copy of what was installed. Remove the *previous* one, though — a release
 directory left behind is what a later install silently picks up.
 
+**Third run, 2026-11-18 21:14Z, from `bd85035`.** The same four flags and the same settings file
+(`controller_address` `http://10.0.0.136`, `printer` `07e893bb-b922-4ff0-9ad3-061b957400c3`, `brightness`
+128), pointed at `/config/config.d/wled-release-bd85035`. The command answered `5 files verified against
+checksums.txt`, `memory 32 MiB, set by the author` and `enabled yes`, with no `new` lines: the declaration
+it replaced already carried every field this release declares. `docker restart prusa_connect` came back
+`healthy` ten seconds later, readiness answered `serving 4 declared 4 blocked []`, and the installed
+binary's `sha256` (`bc4ca32f37b0a1f817a7e252234e644e75a44e775f9a26ddc2127da4cd821389`) is the release's own
+`linux_amd64` line. The release directory from `d0be1a6` was removed afterwards.
+
+That binary carries two things the instance had never run before: the state-transition logging
+(`16709f1`, `ef50466`) and the unwired `ddp` and `matrix` packages (`f220e81`). The log shows the
+transition strings are in the installed binary — `grep -a "went from %s to %s"` on it finds the format —
+but a transition line only appears when the printer's state word moves, so a print that is already
+`PRINTING` when the core restarts produces the start lines and no transition until it ends.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
