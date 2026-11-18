@@ -2,24 +2,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
+	"github.com/nothingmn/wled-printer-status/internal/text"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
 
-// The event layer, tested where it can be: the decision is a pure function, and the hold is a
-// deadline on a clock the test moves. Nothing here waits a minute, and nothing here knows a
-// controller's address.
-
-// finishedEvent is the event a completed print stands for, as the tests name it.
-func finishedEvent() event {
-	return event{word: finishedWord, colour: render.ColourFinished, holds: finishedEventHolds}
-}
+// The event layer, tested where it can be: the decision is a pure function, the word is pixels
+// this repository owns, and the hold is a deadline on a clock the test moves. Nothing here waits
+// a minute, and nothing here knows a controller's address.
 
 // counted is the part of a fake controller a test counts requests on, so that both the flat
 // fakeStrip and the panelStrip built on it can be handed to the wait below.
@@ -27,9 +25,9 @@ type counted interface {
 	wrote() int
 }
 
-// waitForWrites waits until the controller has taken count requests of any kind — a frame, an
-// effect or a name — and fails the test if it never does. A test about a word cannot count only
-// frames: the word is two requests that are not frames.
+// waitForWrites waits until the controller has taken count requests of any kind — a frame, the
+// body that establishes the panel, or a chunk of the word's pixels — and fails the test if it
+// never does.
 func waitForWrites(t *testing.T, strip counted, count int) {
 	t.Helper()
 
@@ -53,10 +51,31 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-// steadyPaints is every write that carried a frame rather than a word. An event's first request
-// lays a rectangle down too — it is the whole panel in the event's colour — and it is written with
-// the word as its name, which is how a test tells it from the steady picture it is standing in
-// front of.
+// paintings is how many times the word was laid on the panel: the body that establishes the
+// panel carries the word as the segment's own name, and it goes out once per painting however
+// many requests the pixels then take. A test about "one event, not twenty" counts this rather
+// than requests, because how many requests a picture costs is the client's chunk arithmetic.
+func paintings(strip *panelStrip) int {
+	count := 0
+
+	for _, call := range strip.shown() {
+		if len(call.segments) > 0 && call.segments[0].Name != "" {
+			count++
+		}
+	}
+
+	return count
+}
+
+// wordPixels is every pixel the controller was left showing in the finished green, which for
+// this event is the word and nothing else.
+func wordPixels(strip *panelStrip) []int {
+	return strip.pixelsIn(render.ColourFinished)
+}
+
+// steadyPaints is every write that carried a frame rather than the word. The word's own first
+// request lays a rectangle down too — the whole panel in the background colour — and it names
+// the segment, which is how a test tells it from the steady picture it is standing in front of.
 func steadyPaints(strip *panelStrip) []paintCall {
 	frames := make([]paintCall, 0, len(strip.shown()))
 
@@ -75,9 +94,10 @@ func steadyPaints(strip *panelStrip) []paintCall {
 // (from, to, geometry) to (word, colour, duration), or nothing.
 //
 // The cases that return nothing are the ones that would be wrong in a way nobody would notice
-// on the light: a strip, which cannot draw a word at all; a pair that is not a transition, which
-// includes a restart's baseline and a state that stood still; and a pause that ends in a finish,
-// which is a pair nobody has decided about.
+// on the light: a strip, which cannot draw a word at all; a panel too small to hold the word at
+// the scale this build draws it; a pair that is not a transition, which includes a restart's
+// baseline and a state that stood still; and a pause that ends in a finish, which is a pair
+// nobody has decided about.
 func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testing.T) {
 	if finishedEventHolds != time.Minute {
 		t.Fatalf("the finished event holds for %s, and this build says a minute", finishedEventHolds)
@@ -107,6 +127,14 @@ func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testi
 		geometry panel
 	}{
 		{name: "a strip", from: printer.StatePrinting, to: printer.StateFinished},
+		{
+			name: "a panel 32 rows tall, which cannot hold a 35-pixel word",
+			from: printer.StatePrinting, to: printer.StateFinished, geometry: panel{width: 256, height: 32},
+		},
+		{
+			name: "a panel 234 columns wide, which is one column short",
+			from: printer.StatePrinting, to: printer.StateFinished, geometry: panel{width: 234, height: 64},
+		},
 		{name: "a pause", from: printer.StatePrinting, to: printer.StatePaused, geometry: livePanel},
 		{name: "a pause that ends in a finish", from: printer.StatePaused, to: printer.StateFinished, geometry: livePanel},
 		{name: "a state that stood still", from: printer.StateFinished, to: printer.StateFinished, geometry: livePanel},
@@ -116,18 +144,24 @@ func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testi
 	} {
 		t.Run(shape.name, func(t *testing.T) {
 			if _, ok := eventFor(shape.from, shape.to, shape.geometry); ok {
-				t.Fatalf("%s to %s produced an event, want none", shape.from, shape.to)
+				t.Fatalf("%s to %s produced an event on a %dx%d light, want none",
+					shape.from, shape.to, shape.geometry.width, shape.geometry.height)
 			}
 		})
 	}
 }
 
-// TestTheFinishedEventBodyIsTheWordOnThePanel is the three requests a panel receives, quoted as
-// bytes: the whole panel in the finished green with the word as the segment's name, then the
-// effect with every one of its parameters, then the word again — last, because the request
-// before it is a body that writes the segment without a name, and a controller clears a name
-// that way. The order is the measurement, so the test pins the order.
-func TestTheFinishedEventBodyIsTheWordOnThePanel(t *testing.T) {
+// TestTheFinishedWordIsDrawnInPixelsOnThePanel is what the panel is actually sent, quoted as
+// bytes where a body is fixed and decoded where it is arithmetic.
+//
+// Two things are asserted and they are different questions. The first body is quoted exactly:
+// the whole panel, switched on, in the colour the steady frame gives an unfilled range, with the
+// word as the segment's own name — the request that makes the pixels below land. The bodies
+// after it are the pixels: one Paint call split by the client's 8 KiB budget, each naming the
+// LED its first colour belongs to, and the union of them is exactly the pixel list the
+// rasteriser returns for the word. So the panel is not asked to draw anything; it is told which
+// of its 16,384 pixels are green.
+func TestTheFinishedWordIsDrawnInPixelsOnThePanel(t *testing.T) {
 	recorder := &wireCapture{}
 	server := recorder.server(t)
 
@@ -139,28 +173,105 @@ func TestTheFinishedEventBodyIsTheWordOnThePanel(t *testing.T) {
 	pen := newWriter(light, 128, quiet)
 	pen.setPanel(wled.Info{LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64})
 
-	if err := pen.paintEvent(context.Background(), finishedEvent()); err != nil {
+	if err = pen.paintEvent(context.Background(), finishedWordEvent()); err != nil {
 		t.Fatalf("paint the finished event: %v", err)
 	}
 
-	want := []string{
-		// The panel, the finished green, and the word as the segment's own name.
-		`{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0,"n":"FINISHED"}]}`,
-		// Scrolling Text with every parameter named, zeros included, over the same rectangle,
-		// with a grouping that multiplies the glyphs four times.
-		`{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,` +
-			`"fx":122,"sx":128,"ix":24,"c1":0,"c2":0,"c3":0,"o1":0,"o2":0,"o3":0,"pal":0,"grp":4}]}`,
-		// The word again, last: the request above carries no "n" and would have cleared it.
-		`{"seg":[{"id":0,"n":"FINISHED"}]}`,
+	// The panel, established: whole, on, in the background colour, with the word as its name.
+	const established = `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0,"n":"FINISHED"}]}`
+
+	if len(recorder.bodies) < 2 {
+		t.Fatalf("the event was painted in %d requests, want the panel and then its pixels: %v",
+			len(recorder.bodies), recorder.bodies)
 	}
 
-	if len(recorder.bodies) != len(want) {
-		t.Fatalf("the event was painted in %d requests, want %d: %v", len(recorder.bodies), len(want), recorder.bodies)
+	if recorder.bodies[0] != established {
+		t.Fatalf("the first request is\n%s\nwant\n%s", recorder.bodies[0], established)
 	}
 
-	for i := range want {
-		if recorder.bodies[i] != want[i] {
-			t.Fatalf("request %d is\n%s\nwant\n%s", i+1, recorder.bodies[i], want[i])
+	// The band the word sits in starts at row 14 of a 256-wide panel, so its first LED is
+	// 14*256 = 3,584, and it covers 35 rows of 256 = 8,960 pixels — the word's 235-column
+	// picture, with the background either side of it and between the letters.
+	//
+	// The split is the client's: 907 colours while the LED index has four digits, 906 once it
+	// has five, and the last request carries what is left.
+	wantStarts := []int{3584, 4491, 5398, 6305, 7212, 8119, 9026, 9933, 10840, 11746}
+	wantCounts := []int{907, 907, 907, 907, 907, 907, 907, 907, 906, 798}
+
+	pixelBodies := recorder.bodies[1:]
+	if len(pixelBodies) != len(wantStarts) {
+		t.Fatalf("the word was sent in %d requests, want %d: the band is 8,960 pixels and a body carries about 906",
+			len(pixelBodies), len(wantStarts))
+	}
+
+	lit := make([]int, 0, 16384)
+
+	for index, body := range pixelBodies {
+		var painted struct {
+			Seg []struct {
+				ID     int               `json:"id"`
+				Pixels []json.RawMessage `json:"i"`
+			} `json:"seg"`
+		}
+
+		if err := json.Unmarshal([]byte(body), &painted); err != nil {
+			t.Fatalf("request %d is not a state body: %v: %s", index+2, err, body)
+		}
+
+		if len(painted.Seg) != 1 || painted.Seg[0].ID != firstSegment {
+			t.Fatalf("request %d addresses %+v, want one segment, id %d", index+2, painted.Seg, firstSegment)
+		}
+
+		pixels := painted.Seg[0].Pixels
+		if len(pixels) < 2 {
+			t.Fatalf("request %d carries %d entries in \"i\", want an index and colours", index+2, len(pixels))
+		}
+
+		var first int
+		if err := json.Unmarshal(pixels[0], &first); err != nil {
+			t.Fatalf("request %d does not start with an LED index: %v: %s", index+2, err, body)
+		}
+
+		if first != wantStarts[index] {
+			t.Fatalf("request %d starts at LED %d, want %d", index+2, first, wantStarts[index])
+		}
+
+		if got := len(pixels) - 1; got != wantCounts[index] {
+			t.Fatalf("request %d carries %d colours, want %d", index+2, got, wantCounts[index])
+		}
+
+		// A colour is six hex digits. The finished green is 00AA00, and everything else in the
+		// band is the background the panel was established with.
+		for offset, raw := range pixels[1:] {
+			var colour string
+			if err := json.Unmarshal([]byte(raw), &colour); err != nil {
+				t.Fatalf("request %d carries %s where a colour belongs: %v", index+2, raw, err)
+			}
+
+			if colour == "00AA00" {
+				lit = append(lit, first+offset)
+			}
+		}
+	}
+
+	slices.Sort(lit)
+
+	want, err := text.Raster(finishedWord, finishedWordScale, text.Geometry{Width: 256, Height: 64})
+	if err != nil {
+		t.Fatalf("rasterise %q: %v", finishedWord, err)
+	}
+
+	if !slices.Equal(lit, want) {
+		t.Fatalf("the panel is given %d pixels in the finished green and the word is %d pixels: the two lists differ",
+			len(lit), len(want))
+	}
+
+	// And no request of the event asks a controller to draw anything, which is the whole
+	// correction: the word is this module's pixels, not a firmware feature it has to talk into
+	// working.
+	for _, body := range recorder.bodies {
+		if strings.Contains(body, `"fx":122`) || strings.Contains(body, `"grp":`) {
+			t.Fatalf("a request of the finished event carries the text effect: %s", body)
 		}
 	}
 }
@@ -169,9 +280,9 @@ func TestTheFinishedEventBodyIsTheWordOnThePanel(t *testing.T) {
 // test, either side of the boundary.
 //
 // Before the duration is up, the steady frame the driver keeps deciding waits in the slot and is
-// not written: the light is holding the word. At the duration the frame goes out, and the word
-// is not written again — the panel is back to the picture it would have shown if the event had
-// never existed.
+// not written: the light is holding the word. At the duration the frame goes out, and the word is
+// not painted again — the panel is back to the picture it would have shown if the event had never
+// existed.
 func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 	strip := newPanelStrip()
 
@@ -192,22 +303,26 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 	strip.waitForPaints(t, 1)
 	clock.waitArmed(t, 0)
 
-	// The printer finished. One frame, one effect and one name reach the controller.
+	// The printer finished. The panel is established and then given the word, in as many requests
+	// as the pixels take.
 	mark := clock.mark()
-	pen.fire(finishedEvent())
-	waitForWrites(t, strip, 4)
+	pen.fire(finishedWordEvent())
+
+	waitFor(t, "the word's pixels to reach the panel", func() bool { return len(wordPixels(strip)) > 0 })
+
+	want, err := text.Raster(finishedWord, finishedWordScale, text.Geometry{Width: 256, Height: 64})
+	if err != nil {
+		t.Fatalf("rasterise %q: %v", finishedWord, err)
+	}
+
+	if got := wordPixels(strip); !slices.Equal(got, want) {
+		t.Fatalf("the panel was given %d green pixels, want the word's %d", len(got), len(want))
+	}
+
 	clock.waitArmed(t, mark)
 
-	if ran := strip.ran(); len(ran) != 1 || ran[0].ID != scrollingTextEffect {
-		t.Fatalf("the panel was put onto %+v, want one effect, id %d", ran, scrollingTextEffect)
-	}
-
-	if words := strip.words(); len(words) != 1 || words[0] != "FINISHED" {
-		t.Fatalf("the panel was given the words %q, want one FINISHED", words)
-	}
-
-	// The driver's next tick decides the same steady frame, and it must not be written: the
-	// word is holding the light.
+	// The driver's next tick decides the same steady frame, and it must not be written: the word
+	// is holding the light.
 	mark = clock.mark()
 	pen.submit(steady)
 	clock.waitArmed(t, mark)
@@ -224,11 +339,10 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 		t.Fatalf("the steady frame was written %d times one second before the hold ended, want 1: %+v", len(shown), shown)
 	}
 
-	// The hold ends. The frame in the slot goes out, and it is the steady finished picture.
+	// The hold ends. The frame the writer is holding goes out, which is a moment the test moves to
+	// rather than a moment it waits for.
 	clock.Advance(time.Second)
 
-	// The frame the writer is holding goes out at the end of the hold, which is a moment the test
-	// moves to rather than a moment it waits for.
 	waitFor(t, "the steady frame to come back at the end of the hold", func() bool {
 		return len(steadyPaints(strip)) == 2
 	})
@@ -247,8 +361,8 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 		t.Fatalf("the frame after the event is %+v, want the finished colour and no remainder", back)
 	}
 
-	if words := strip.words(); len(words) != 1 {
-		t.Fatalf("the word was written again after the event: %q", words)
+	if got := paintings(strip); got != 1 {
+		t.Fatalf("the word was laid down %d times, want once", got)
 	}
 }
 
@@ -256,9 +370,9 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 // rather than through the decision: a 48-LED strip that finishes a print is written the solid
 // green it was already being written, and nothing else.
 //
-// The reason is the firmware's: the text effect needs a matrix, and on a strip it falls back to
-// a solid colour — so the three requests would cost a controller three writes and put no word
-// anywhere. The operator asked for the strip to keep its green, and that is what it does.
+// The reason is the light's: a word is drawn in two dimensions and a strip has one. The operator
+// asked for the strip to keep its green, and that is what it does — no establishment, no pixels,
+// no request a strip cannot answer.
 func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
 	source := &changingReadings{}
 	strip := newFakeStrip()
@@ -282,18 +396,14 @@ func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
 	source.show(snapshotOf(printer.StateFinished, true, false, at.Add(tickEvery)))
 	reader.step(ctx, at.Add(tickEvery))
 
-	// Nothing was even offered to the writer: the decision refused it, so the writer has no
-	// event in its hand and no request to make.
+	// Nothing was even offered to the writer: the decision refused it, so the writer has no event
+	// in its hand and no request to make.
 	if fired := pen.fired.Load(); fired != nil {
 		t.Fatalf("a strip was offered the %q event, want none", fired.word)
 	}
 
-	if ran := strip.ran(); len(ran) != 0 {
-		t.Fatalf("a strip was put onto the effects %+v, want none", ran)
-	}
-
-	if words := strip.words(); len(words) != 0 {
-		t.Fatalf("a strip was given the words %q, want none", words)
+	if writes := strip.pixelWrites(); len(writes) != 0 {
+		t.Fatalf("a strip was given %d per-LED writes, want none", len(writes))
 	}
 
 	waitFor(t, "the finished frame to reach the strip", func() bool {
@@ -350,15 +460,11 @@ func TestABorrowedSegmentIsNeverGivenTheEvent(t *testing.T) {
 	// The borrow is one line, and it is the whole of what the writer has said so far.
 	written.waitForCount(t, 1)
 
-	pen.fire(finishedEvent())
+	pen.fire(finishedWordEvent())
 	written.waitForCount(t, 2)
 
-	if ran := strip.ran(); len(ran) != 0 {
-		t.Fatalf("a borrowed segment was put onto the effects %+v, want none", ran)
-	}
-
-	if words := strip.words(); len(words) != 0 {
-		t.Fatalf("a borrowed segment was given the words %q, want none", words)
+	if writes := strip.pixelWrites(); len(writes) != 0 {
+		t.Fatalf("a borrowed segment was given %d per-LED writes, want none", len(writes))
 	}
 
 	if writes := strip.wrote(); writes != 0 {
@@ -382,9 +488,9 @@ func TestABorrowedSegmentIsNeverGivenTheEvent(t *testing.T) {
 }
 
 // TestARestartIsNotATransition is the invariant a process that restarts hourly would break: the
-// first snapshot is a baseline, so a module that comes back up beside a printer which has
-// already finished shows the steady finished panel and never the word. A restart is not
-// something the printer did.
+// first snapshot is a baseline, so a module that comes back up beside a printer which has already
+// finished shows the steady finished panel and never the word. A restart is not something the
+// printer did.
 func TestARestartIsNotATransition(t *testing.T) {
 	at := time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC)
 	ctx := context.Background()
@@ -408,15 +514,15 @@ func TestARestartIsNotATransition(t *testing.T) {
 		t.Fatalf("a restart beside a finished print fired the %q event", fired.word)
 	}
 
-	if ran := strip.ran(); len(ran) != 0 || len(strip.words()) != 0 {
-		t.Fatalf("a restart fired an event: %+v %q", strip.ran(), strip.words())
+	if writes := strip.pixelWrites(); len(writes) != 0 || paintings(strip) != 0 {
+		t.Fatalf("a restart fired an event: %d per-LED writes, %d paintings", len(writes), paintings(strip))
 	}
 
 	written.want(t)
 
 	// The same thing with a process that saw the print running and then restarted: the new
-	// driver's first reading is FINISHED, which is a reading and not a transition. A second
-	// writer and a second driver on the same controller are what a restart is.
+	// driver's first reading is FINISHED, which is a reading and not a transition. A second writer
+	// and a second driver on the same controller are what a restart is.
 	restartedPen := newWriter(strip, 128, quiet)
 	restartedPen.setPanel(strip.info)
 
@@ -430,15 +536,15 @@ func TestARestartIsNotATransition(t *testing.T) {
 		t.Fatalf("a restart fired the %q event, want none", fired.word)
 	}
 
-	if ran := strip.ran(); len(ran) != 0 {
-		t.Fatalf("a restart after a print fired an event: %+v", ran)
+	if writes := strip.pixelWrites(); len(writes) != 0 {
+		t.Fatalf("a restart after a print fired an event: %d per-LED writes", len(writes))
 	}
 }
 
 // TestTwentyIdenticalStatesFireOneEventAndOnlyOnTheTransition is the count both ways round: a
-// printer that says PRINTING for twenty turns fires nothing, the turn it says FINISHED fires
-// one event, and the twenty turns after that fire none. The event is a function of the
-// transition, so it can happen once per transition — not once per look.
+// printer that says PRINTING for twenty turns fires nothing, the turn it says FINISHED fires one
+// event, and the twenty turns after that fire none. The event is a function of the transition, so
+// it can happen once per transition — not once per look.
 func TestTwentyIdenticalStatesFireOneEventAndOnlyOnTheTransition(t *testing.T) {
 	source := &changingReadings{}
 	strip := newPanelStrip()
@@ -465,32 +571,30 @@ func TestTwentyIdenticalStatesFireOneEventAndOnlyOnTheTransition(t *testing.T) {
 		reader.step(ctx, at.Add(time.Duration(i)*tickEvery))
 	}
 
-	if ran := strip.ran(); len(ran) != 0 {
-		t.Fatalf("twenty turns of PRINTING put the panel onto %+v, want no event", ran)
+	if got := paintings(strip); got != 0 {
+		t.Fatalf("twenty turns of PRINTING laid the word down %d times, want no event", got)
 	}
 
 	source.show(snapshotOf(printer.StateFinished, true, false, at))
 	reader.step(ctx, at.Add(21*tickEvery))
 
-	waitFor(t, "the finished word to reach the panel", func() bool {
-		return len(strip.ran()) == 1 && len(strip.words()) == 1
-	})
+	waitFor(t, "the finished word to reach the panel", func() bool { return paintings(strip) == 1 })
 
-	if ran := strip.ran(); len(ran) != 1 {
-		t.Fatalf("the transition fired %d events, want 1: %+v", len(ran), ran)
+	if got := paintings(strip); got != 1 {
+		t.Fatalf("the transition fired %d events, want 1", got)
 	}
 
 	for i := 22; i <= 42; i++ {
 		reader.step(ctx, at.Add(time.Duration(i)*tickEvery))
 	}
 
-	if ran := strip.ran(); len(ran) != 1 || len(strip.words()) != 1 {
-		t.Fatalf("twenty turns of FINISHED fired more events: %d effects, %q", len(ran), strip.words())
+	if got := paintings(strip); got != 1 {
+		t.Fatalf("twenty turns of FINISHED fired the event %d times, want once", got)
 	}
 }
 
-// TestAFailedEventWriteIsLoggedOncePerWideningRetry is the failure half, and it is the same rule
-// a failed frame follows: an event that did not reach the controller is reported, retried inside
+// TestAFailedEventWriteIsLoggedOncePerWideningRetry is the failure half, and it is the same rule a
+// failed frame follows: an event that did not reach the controller is reported, retried inside
 // the backoff window, survived, and never turned into a line per tick.
 //
 // The count is the assertion. A controller that is off for twenty seconds costs five attempts —
@@ -520,7 +624,7 @@ func TestAFailedEventWriteIsLoggedOncePerWideningRetry(t *testing.T) {
 
 	strip.stopAnswering()
 
-	pen.fire(finishedEvent())
+	pen.fire(finishedWordEvent())
 	waitForWrites(t, strip, 2)
 
 	// Twenty seconds of a controller that will not answer.
@@ -543,19 +647,28 @@ func TestAFailedEventWriteIsLoggedOncePerWideningRetry(t *testing.T) {
 		t.Fatal("the writer stopped on a failed event, and a module that exits is a module that needs a person")
 	}
 
-	// The controller answers again, the window elapses, and the word goes out — once.
+	// The controller answers again, the window elapses, and the word goes out — the whole word,
+	// not the part of it that was in flight when the light went quiet. Every attempt that failed
+	// failed on its first request, so no pixel of the word had reached the panel before this.
+	want, err := text.Raster(finishedWord, finishedWordScale, text.Geometry{Width: 256, Height: 64})
+	if err != nil {
+		t.Fatalf("rasterise %q: %v", finishedWord, err)
+	}
+
+	if lit := wordPixels(strip); len(lit) != 0 {
+		t.Fatalf("%d pixels of the word reached a controller that was not answering", len(lit))
+	}
+
 	strip.answerAgain()
 
 	time.Sleep(5 * time.Millisecond)
 	clock.Advance(backoffCap)
 
-	waitFor(t, "the recovered event to reach the panel", func() bool { return len(strip.ran()) == 1 })
+	waitFor(t, "the recovered event to lay the word on the panel", func() bool {
+		return len(wordPixels(strip)) == len(want)
+	})
 
-	if ran := strip.ran(); ran[0].ID != scrollingTextEffect {
-		t.Fatalf("the recovered event wrote the effect %+v, want id %d", ran[0], scrollingTextEffect)
-	}
-
-	if words := strip.words(); len(words) != 1 || words[0] != "FINISHED" {
-		t.Fatalf("the recovered event wrote the words %q, want one FINISHED", words)
+	if got := wordPixels(strip); !slices.Equal(got, want) {
+		t.Fatalf("the recovered event left %d green pixels, want the word's %d", len(got), len(want))
 	}
 }

@@ -112,7 +112,7 @@ egress:
     ports: [80]
     from: process
     why: The module drives the WLED controller the operator names, and a WLED controller answers HTTP on its own port 80.
-    sends: The current status colour and progress, as a WLED state write to /json/state. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
+    sends: The current status colour and progress, as a WLED state write to /json/state, and — when a print finishes — the word FINISHED as one write per chunk of pixels to the same endpoint. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
 
 # The memory in MiB the server may budget for the process, children included.
 # 32 is a measurement, not a guess.

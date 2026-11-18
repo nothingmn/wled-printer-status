@@ -43,6 +43,14 @@ holds the whole light, and keeps holding it.
   minute, rather than once a second, and a picture that changes during that wait is sent when the
   controller answers rather than attempted immediately. The log reports the first failure, each longer
   wait, and the recovery: five minutes of an unreachable light is six lines instead of three hundred.
+- A finished job spells `FINISHED` across a matrix panel, in the finished green, for a minute, and then
+  hands the light back to the steady picture. The letters are the module's own: a 5x7 font it carries,
+  drawn one LED at a time. No controller effect is asked to draw anything. A strip is unchanged and keeps
+  its solid green.
+- `POST /preview-finished` shows that word now, for the same minute, so a person can look at what the
+  light will do without waiting for a print to end. It answers `202` with the word, the controller and how
+  long it holds, and refuses — with a registered code — when the light is a borrowed segment of somebody
+  else's controller, a strip, or a panel too small for the word.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
 - The install asks for `observe`, because the module now reads one printer as itself, and declares one
@@ -58,8 +66,10 @@ holds the whole light, and keeps holding it.
 
 ### Not in this build
 
-- **No text.** Nothing on the light spells anything out, on any controller, whatever its firmware can do.
-- **No animations.** No pulse, no fade, no effect: a state is one colour and a fill.
+- **No text but the one word.** `FINISHED` is the only thing the module spells, and only on a matrix
+  panel wide enough for it: there is no message setting, no clock, and nothing on a strip.
+- **No animations.** No pulse, no fade, no movement: a state is one colour and a fill, and the one word
+  that is drawn sits still.
 - **No layout composer.** The picture is the module's; the operator does not arrange it.
 - **No multi-binding.** One printer per installed module and one controller per instance. A printer this
   instance does not watch is a printer on no light at all.

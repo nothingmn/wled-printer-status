@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -68,11 +69,17 @@ type fakeStrip struct {
 	// written: the give-back a writer makes when it stops.
 	restores []wled.Segment
 
-	// effects and names are the writes that are not frames: an event's effect and the word it
-	// draws. They are kept apart from paints because a frame and a word are different things,
-	// and a test that counted both as "one write" could not say which had happened.
-	effects []wled.Effect
-	names   []string
+	// pixels is every per-LED write: the LED it started at and the colours it carried. It is
+	// kept apart from paints because a frame is a rectangle and a word is a picture, and a test
+	// that counted both as "one write" could not say which had happened.
+	pixels []pixelCall
+}
+
+// pixelCall is one Paint request as a test reads it: the LED its first colour belongs to, and
+// the colours in the order the body carried them.
+type pixelCall struct {
+	first   int
+	colours []wled.RGB
 }
 
 func newFakeStrip() *fakeStrip {
@@ -194,23 +201,15 @@ func (f *fakeStrip) settleWrites() int {
 	return f.settled
 }
 
-// SetEffect records one effect write: the effect and its parameters, as a test watches a word
-// being put on the panel.
+// Paint records one per-LED write: the LED the first colour belongs to, and the colours, in
+// order.
 //
 // It takes the same failure and blocking a frame write takes, because a controller that will not
-// take a frame will not take the text either, and an event that quietly half-succeeded would be
-// a light showing a colour and no word.
-func (f *fakeStrip) SetEffect(ctx context.Context, effect wled.Effect, _ ...wled.EffectOption) error {
-	return f.eventWrite(ctx, &effect, "")
-}
-
-// SetSegmentName records one name write, which is the word the text effect draws.
-func (f *fakeStrip) SetSegmentName(ctx context.Context, name string) error {
-	return f.eventWrite(ctx, nil, name)
-}
-
-// eventWrite is one write that is not a frame.
-func (f *fakeStrip) eventWrite(ctx context.Context, effect *wled.Effect, name string) error {
+// take a frame will not take a picture either, and an event that quietly half-succeeded would be
+// a panel with half a word on it. It does not split the slice the way wled.Client does: chunking
+// is the client's own arithmetic, and the bodies it produces are asserted as bytes against a
+// recording server in event_test.go.
+func (f *fakeStrip) Paint(ctx context.Context, first int, colors []wled.RGB, _ ...wled.PaintOption) error {
 	f.mu.Lock()
 
 	failed := f.broken
@@ -219,11 +218,7 @@ func (f *fakeStrip) eventWrite(ctx context.Context, effect *wled.Effect, name st
 		failed = true
 	}
 
-	if effect != nil {
-		f.effects = append(f.effects, *effect)
-	} else {
-		f.names = append(f.names, name)
-	}
+	f.pixels = append(f.pixels, pixelCall{first: first, colours: append([]wled.RGB(nil), colors...)})
 
 	hold := f.hold
 
@@ -249,28 +244,50 @@ func (f *fakeStrip) eventWrite(ctx context.Context, effect *wled.Effect, name st
 	return nil
 }
 
-// words is every name the controller was given, as a copy.
-func (f *fakeStrip) words() []string {
+// pixelWrites is every per-LED write, as a copy.
+func (f *fakeStrip) pixelWrites() []pixelCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return append([]string(nil), f.names...)
+	return append([]pixelCall(nil), f.pixels...)
 }
 
-// ran is every effect the controller was put onto, as a copy.
-func (f *fakeStrip) ran() []wled.Effect {
+// pixelsIn is every panel pixel the per-LED writes left in colour, ascending: what a person
+// looking at the panel would see in that one colour.
+//
+// The writes are read in the order they were made and the last one to touch a pixel wins, which
+// is the order the controller applies them in.
+func (f *fakeStrip) pixelsIn(colour wled.RGB) []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return append([]wled.Effect(nil), f.effects...)
+	last := map[int]wled.RGB{}
+
+	for _, write := range f.pixels {
+		for offset, painted := range write.colours {
+			last[write.first+offset] = painted
+		}
+	}
+
+	lit := make([]int, 0, len(last))
+
+	for index, painted := range last {
+		if painted == colour {
+			lit = append(lit, index)
+		}
+	}
+
+	slices.Sort(lit)
+
+	return lit
 }
 
-// wrote is how many requests of any kind reached the controller: a frame, an effect or a name.
+// wrote is how many requests of any kind reached the controller: a frame, or a picture.
 func (f *fakeStrip) wrote() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return len(f.paints) + len(f.effects) + len(f.names)
+	return len(f.paints) + len(f.pixels)
 }
 
 // State is the controller's segments, which is what a writer borrows from.

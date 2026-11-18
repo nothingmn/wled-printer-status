@@ -18,6 +18,17 @@
 // shown. Nothing here reads a clock: the writer stamps the deadline from its own, which is what
 // lets a test move an hour through an event without waiting for one.
 //
+// # The word is drawn in pixels, and that is a correction
+//
+// The first build used WLED's own Scrolling Text effect (id 122) and put the word in the
+// segment's name, which is the only string that effect can draw. On the operator's panel it
+// does not honour the segment it is given: four different groupings, every parameter named, and
+// each attempt lit only the first few columns on the left of the 256-wide panel — the operator
+// watched all four and reported the same fragment. So the word is not a name and not an effect
+// any more. It is a glyph table this repository owns (internal/text), rasterised onto the panel
+// by this module and written one LED at a time through wled.Client.Paint. Nothing in this file
+// asks a controller to draw anything.
+//
 // The list is deliberately one entry long. Print start and a filament change are both wanted
 // and neither has an animation or a duration decided, and inventing either would be a product
 // decision made quietly in a code change. What one entry needs is written on eventFor.
@@ -25,19 +36,33 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
+	"github.com/nothingmn/wled-printer-status/internal/text"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
 
 const (
-	// finishedWord is what the panel spells out when a print completes. It is the segment's
-	// own name, which is the only string WLED's text effect can draw, and it is 48 characters
-	// at most by the firmware's own limit.
+	// finishedWord is what the panel spells out when a print completes.
+	//
+	// Every character of it has to be in internal/text's font, which holds the capitals, the
+	// digits, a space, a full stop, a hyphen and a percent sign. A word outside that set is
+	// refused by the rasteriser rather than drawn short.
 	finishedWord = "FINISHED"
+
+	// finishedWordScale is how many pixels of the panel one pixel of the glyph table becomes.
+	//
+	// At 5, the eight glyphs and their seven one-pixel gaps are 47 glyph columns, so the word is
+	// 235 pixels across and 35 down — 5*47 and 5*7. The operator's panel is 256x64, which leaves
+	// 21 columns and 29 rows of slack, so the word sits at column 10 and row 14 with room above
+	// and below it; 35 pixels of height on a panel 64 high is the "letters you can read from a
+	// doorway" this is for. internal/text's tests hold that arithmetic. A panel too small for it
+	// is given no word rather than a smaller or a clipped one — see eventFor.
+	finishedWordScale = 5
 
 	// finishedEventHolds is how long the word holds the light before the steady finished
 	// frame takes it back: one minute.
@@ -47,46 +72,33 @@ const (
 	// stops sees the word rather than a green panel, and short enough that the panel is not
 	// still saying FINISHED an hour later — the steady frame already says a job finished,
 	// and it is the picture the light is meant to rest in. It is also inside the write
-	// budget by construction: the event's own writes are one repaint when it starts and one
+	// budget by construction: the event's own writes are one painting when it starts and one
 	// when it ends, however long it holds.
 	finishedEventHolds = time.Minute
+)
 
-	// scrollingTextEffect is WLED's Scrolling Text, effect id 122 on the firmware this was
-	// measured against. It draws the segment's name and nothing else, which is why a word on
-	// a panel is SetSegmentName plus this effect and no image anywhere.
-	//
-	// It requires a two-dimensional controller. On a 1D strip the firmware falls back to a
-	// solid colour and the word simply does not appear — so a strip is never sent it; see
-	// eventFor.
-	scrollingTextEffect = 122
+// finishedWordBackground is what the panel is painted behind the word.
+//
+// It is the colour the steady frame already gives the part of the range a job has not filled,
+// read from render rather than written out here so that the two pictures cannot drift: the
+// event stands in front of that picture, and a background of a different colour would be the
+// light changing twice for one thing. Today that colour is black.
+//
+//nolint:gochecknoglobals // one value, computed once from the renderer's own rule.
+var finishedWordBackground = render.Frame{}.Unfilled()
 
-	// The word's effect parameters, one constant each so that tuning it is an edit rather than
-	// an archaeology. Every one of them is PROVISIONAL except the grouping: they are the
-	// firmware's taste and this build's guess at it, and the panel is where they get settled.
-	//
-	//   - speed 128 is the middle of the slider: the word scrolls at a reading pace rather
-	//     than at a crawl or a blur.
-	//   - the vertical position of 24 is where a 48-pixel-tall word sits in a 64-row panel
-	//     without its descenders running off the bottom. ix is the effect's own vertical
-	//     offset, measured on the live 256x64 panel.
-	//   - font size 0 leaves the firmware's own glyph size, because the grouping below is what
-	//     makes the letters big; two multipliers on one word is one too many.
-	//   - grouping 4 is MEASURED, not guessed: grp multiplies the glyph size on a matrix, and
-	//     on a 256x64 panel a grouping of 4 gives roughly 48-pixel-tall characters and about
-	//     twelve of them across. That is the "big green letters" the operator asked for; a
-	//     grouping of 1 is a few pixels tall, which is a word nobody can read from a doorway.
-	//   - palette 0 is the controller's default palette, which is the one that takes its
-	//     colours from the segment's own col array — the finished green written with the word.
-	finishedTextSpeed    = 128
-	finishedTextRow      = 24
-	finishedTextCustom1  = 0
-	finishedTextFontSize = 0
-	finishedTextCustom3  = 0
-	finishedTextCheck1   = 0
-	finishedTextCheck2   = 0
-	finishedTextCheck3   = 0
-	finishedTextPalette  = 0
-	finishedTextGrouping = 4
+// The refusals a preview answers with, so that the route can tell them apart without reading a
+// sentence. Both mean "this light cannot show the word", and they are separate because what the
+// operator does about each is different: one is a setting, and one is the hardware it names.
+var (
+	// ErrPreviewBorrowedSegment means this writer drives one segment of a controller somebody
+	// else also drives. An animation nobody asked for is the one thing a zone's owner would not
+	// have agreed to, so the preview refuses exactly where the event itself refuses.
+	ErrPreviewBorrowedSegment = errors.New("the module is driving a borrowed segment, and an animation is not something it puts on a light somebody else is using")
+
+	// ErrPreviewNotDrawable means the controller cannot show this word: it reported no matrix,
+	// so it is a strip, or its panel is too small for the word at finishedWordScale.
+	ErrPreviewNotDrawable = errors.New("this light cannot carry the word")
 )
 
 // event is one thing the printer did, as the light shows it: a word, the colour it is drawn in,
@@ -95,14 +107,21 @@ const (
 // It is a value and not a func, so that the decision that makes one is pure and a test can
 // compare two of them. The writer, not this type, decides when the hold started.
 type event struct {
-	// word is the string the controller draws. It is the segment's name on the wire, so it is
-	// also the field a body without it would clear.
+	// word is what the panel is asked to spell, in the font internal/text carries. paintEvent
+	// rasterises it; no controller is asked to draw a string.
 	word string
-	// colour is what the segment is drawn in: the effect takes its colours from the segment's
-	// own palette, so the colour is written before the effect and not with it.
+	// colour is what the word's lit pixels are drawn in. Every other pixel of the panel is
+	// finishedWordBackground for the length of the hold.
 	colour wled.RGB
 	// holds is how long the word keeps the light.
 	holds time.Duration
+}
+
+// finishedWordEvent is the picture a completed print is given, and the one the preview route
+// fires. It is a function, and both paths call it, so that what an operator previews is
+// provably what his panel will do when the print ends.
+func finishedWordEvent() event {
+	return event{word: finishedWord, colour: render.ColourFinished, holds: finishedEventHolds}
 }
 
 // eventFor is the whole of the event list, as a pure function: the state the printer left, the
@@ -113,15 +132,21 @@ type event struct {
 // and a filament change are both wanted and neither is decided: the first needs a word or a
 // pattern, a colour and a hold, and the second needs at least a decision about whether it is
 // the same word for a pause and for a filament change, since they share their yellow. Adding
-// one is a case and three constants; adding one whose picture is not a word is a second body in
-// paintEvent. Neither is this build's decision to make.
+// one is a case and three constants; adding one whose picture is not this word is a second body
+// in paintEvent. Neither is this build's decision to make.
 //
 // The rules, and each of them exists because of a way this could go wrong:
 //
-//   - A controller that reported no matrix gets nothing. The text effect needs a two-
-//     dimensional target; on a strip the firmware falls back to a solid colour, so the request
-//     would cost three writes and put no word anywhere. A strip's finished state is the solid
-//     green it already shows, which is what the operator asked for on that light.
+//   - A controller that reported no matrix gets nothing. The word is drawn in pixels on a
+//     two-dimensional panel, and a strip has no second dimension to draw it in: the panel's
+//     index arithmetic would fold the letters into one run of LEDs. A strip's finished state is
+//     the solid green it already shows, which is what the operator asked for on that light.
+//   - A panel too small to hold the word at finishedWordScale gets nothing either. The other
+//     answers — a smaller word, a broken one, a clipped one — are all decisions this build has
+//     not been given, so it says nothing rather than pick. Silence is the same answer the strip
+//     gets, and for the same reason: the steady finished frame is a true picture of what
+//     happened, and a light is not the place to argue about a panel's size. The preview route
+//     says the size out loud, because a person who asked for the word deserves the sentence.
 //   - Only PRINTING to FINISHED is an event. A restart is not a transition — the first
 //     snapshot a process reads is a baseline and the driver never reports a change from it —
 //     and a state that stood still for twenty ticks is not twenty events. Both of those are the
@@ -134,32 +159,26 @@ func eventFor(from, to string, geometry panel) (event, bool) {
 		return event{}, false
 	}
 
-	if from == printer.StatePrinting && to == printer.StateFinished {
-		return event{word: finishedWord, colour: render.ColourFinished, holds: finishedEventHolds}, true
+	if from != printer.StatePrinting || to != printer.StateFinished {
+		return event{}, false
 	}
 
-	return event{}, false
+	ev := finishedWordEvent()
+
+	// The word has to fit the panel it is going on, and that is arithmetic this package can do
+	// before anything is sent; a word that does not fit would otherwise cost a failed write, a
+	// widening retry and a hold that shows the steady frame anyway.
+	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
+		return event{}, false
+	}
+
+	return ev, true
 }
 
-// finishedTextEffect is the effect the word runs with, every parameter of it.
-//
-// Every one is named, zeros included, because a controller applies only what a body names: an
-// omitted parameter would leave the previous effect's value in place, and the panel would be
-// showing somebody else's configuration of this effect. The values and their reasons are the
-// constants above.
-func finishedTextEffect() wled.Effect {
-	return wled.Effect{
-		ID:        scrollingTextEffect,
-		Speed:     finishedTextSpeed,
-		Intensity: finishedTextRow,
-		Custom1:   finishedTextCustom1,
-		Custom2:   finishedTextFontSize,
-		Custom3:   finishedTextCustom3,
-		Check1:    finishedTextCheck1,
-		Check2:    finishedTextCheck2,
-		Check3:    finishedTextCheck3,
-		Palette:   finishedTextPalette,
-	}
+// geometryOf is a panel as the rasteriser reads one, so that the one place that decides where a
+// word sits is internal/text and this package only says how big the light is.
+func geometryOf(geometry panel) text.Geometry {
+	return text.Geometry{Width: geometry.width, Height: geometry.height}
 }
 
 // heldEvent is one event the light is showing: the event, the moment its hold ends, and whether
@@ -207,6 +226,56 @@ func (w *writer) fire(ev event) {
 	}
 }
 
+// preview fires one event now, on the operator's behalf, and says whether the light will show
+// it. POST /preview-finished is the only caller.
+//
+// It is the same event a finished print fires — finishedWordEvent, not a copy of it — so that
+// looking at the preview tells a person what his panel will do when the print ends, rather than
+// what some other picture would look like.
+//
+// It refuses, with a typed error the route turns into a code, exactly the cases in which the
+// light cannot be asked for the word:
+//
+//   - a borrowed segment, for the reason fire gives: somebody else's light is not this module's
+//     to animate;
+//   - a controller that reported no matrix, which is a strip;
+//   - a panel too small for the word at finishedWordScale.
+//
+// What it does not do is write anything itself. It stores the event in the writer's one slot
+// and rings the writer's bell, so the pixels go out on the writer's own goroutine — behind the
+// same gate, the same backoff and the same one-line-per-widening failure log as every other
+// write. A preview therefore cannot reach the controller in a way a real event could not, and
+// it cannot outlast the hold, because the writer's own deadline is what ends it.
+//
+// It stores rather than swapping the way fire does: a preview is something a person just asked
+// for, so it replaces an event that was waiting rather than being dropped because the printer
+// happened to fire one a moment earlier. If an event is on the light at that moment, this one is
+// taken when that hold ends, and the reporter is told the light took it.
+func (w *writer) preview(ev event) error {
+	if w.segment != nil {
+		return fmt.Errorf("%w: segment %d on %s", ErrPreviewBorrowedSegment, *w.segment, w.where)
+	}
+
+	geometry := w.panelOf()
+	if !geometry.matrix() {
+		return fmt.Errorf("%w: %s reported no matrix, and a word needs a two-dimensional panel",
+			ErrPreviewNotDrawable, w.where)
+	}
+
+	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
+		return fmt.Errorf("%w: %w", ErrPreviewNotDrawable, err)
+	}
+
+	w.fired.Store(&ev)
+
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+
+	return nil
+}
+
 // takeEvent moves a fired event into the light, stamped with the moment its hold ends.
 //
 // The deadline is measured from when the writer takes the event and not from when it was fired:
@@ -228,29 +297,37 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 	return w.report(func() error { return w.paintEvent(ctx, ev) })
 }
 
-// paintEvent draws one event: the word, big, in the event's colour, across the whole panel.
+// paintEvent draws one event: the word, in the event's colour, on a dark panel.
 //
-// Three requests, in this order, and the order is a measurement rather than a preference:
+// # The sequence, and why it is this one
 //
-//  1. SetSegments gives segment 0 the whole panel, the event's colour and the word as its name,
-//     in one body — which also puts the segment's effect back to solid and leaves whatever
-//     effect parameters the controller held untouched. It carries the name even though the
-//     next request clears it, because a body that names a segment this module is borrowing
-//     must carry that segment's name, and writing it here keeps that true without a rule for
-//     which bodies are exempt.
-//  2. SetEffect puts the segment on Scrolling Text with every parameter of that effect, over
-//     the same rectangle. A body of this shape names no "n", and a controller clears a
-//     segment's name when a body writes that segment without one — measured on the operator's
-//     desk light, where the first frames of a borrow left his zone unnamed.
-//  3. SetSegmentName writes the word again, last, for that reason: it is what the effect draws,
-//     and step 2 is exactly the body that would have cleared it.
+//  1. **Establish the panel.** One SetSegments body gives segment 0 the whole panel, switched on,
+//     in finishedWordBackground, with the word as the segment's own name. It writes no
+//     brightness and no power: both are controller-wide, the operator set them, and a picture
+//     does not get to move them. What it does write is what makes the request below land — a
+//     Paint body carries nothing but the segment's per-LED array, it is not persisted across a
+//     reboot, it freezes the segment's effect, and it needs the segment already on and covering
+//     the pixels it addresses. Without this body the device either refuses the pixels or paints
+//     them into whatever span segment 0 happened to have, which on a controller this module has
+//     not driven yet is one row of a panel. So: this first, always. The name travels with it
+//     because /json/state then says which picture the panel is holding, and a body written
+//     without one clears the name that was there.
+//  2. **Paint the word.** One Paint call over the rows the word occupies — the band from its
+//     first row to its last, the panel's full width — in the event's colour where the
+//     rasteriser lit a pixel and in finishedWordBackground everywhere else in those rows. One
+//     call, but several requests: the client splits a body that would exceed its 8 KiB budget,
+//     so a 256-pixel band of 35 rows is 8,960 colours and about ten requests, each naming the
+//     LED it starts at. That is the full-panel-paint class of cost, paid once when the event
+//     starts and not at all while it holds — which is why the hold is a minute and not a pulse.
 //
-// So the panel shows the steady picture for the length of two requests and then the word.
-// Measured at 28 ms a request on a 256x64 panel, nobody watching sees it.
+// Nothing is written outside those rows: the panel above and below the word is already the
+// background colour from the first request, and repeating it would be traffic for no pixel. The
+// panel shows the steady picture for the length of one request and then the word; measured at
+// 28 ms a request on a 256x64 panel, nobody watching sees it.
 //
-// It refuses a controller that reported no matrix, which eventFor has already refused: a strip
-// would take these three requests and show one solid colour at the end of them, so the refusal
-// is here as the second lock on the same door rather than as a path anything walks.
+// A strip, and a panel too small for the word, are refused here as well as in eventFor: a
+// second lock on the same door costs one comparison, and the preview route reaches this function
+// by a path the decision table never walks.
 func (w *writer) paintEvent(ctx context.Context, ev event) error {
 	geometry := w.panelOf()
 
@@ -258,25 +335,54 @@ func (w *writer) paintEvent(ctx context.Context, ev event) error {
 		return fmt.Errorf("the %q event was not drawn: %s reports no matrix, and a word needs one", ev.word, w.where)
 	}
 
-	bounds := wled.Bounds{Start: 0, Stop: geometry.width, StartY: 0, StopY: geometry.height}
+	place, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry))
+	if err != nil {
+		return fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
+	}
 
-	if err := w.light.SetSegments(ctx, []wled.SegmentWrite{{
+	lit, err := text.Raster(ev.word, finishedWordScale, geometryOf(geometry))
+	if err != nil {
+		return fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
+	}
+
+	if err = w.light.SetSegments(ctx, []wled.SegmentWrite{{
 		ID:       firstSegment,
 		First:    0,
 		Count:    geometry.width,
 		FirstRow: 0,
 		RowCount: geometry.height,
 		On:       true,
-		Colour:   ev.colour,
+		Colour:   finishedWordBackground,
 		Name:     ev.word,
 	}}); err != nil {
 		return err
 	}
 
-	if err := w.light.SetEffect(ctx, finishedTextEffect(),
-		wled.WithEffectBounds(bounds), wled.WithEffectGrouping(finishedTextGrouping)); err != nil {
-		return err
+	// The band is addressed from the word's first row, so the panel's rows above it come off the
+	// front of the run: y*width + x on the panel is (y-top)*width + x in the band.
+	return w.light.Paint(ctx, place.Top*geometry.width, wordBand(geometry, place, lit, ev.colour))
+}
+
+// wordBand is the rows the word sits in, as one run of colours: the event's colour where the
+// rasteriser lit a pixel, and the background everywhere else in the band.
+//
+// The background is written rather than left alone because a band sent over a panel erases the
+// letters of the picture before it: the steady frame's own colours are still in those pixels,
+// and a word painted on top of them would be a word inside somebody else's picture.
+func wordBand(geometry panel, place text.Placement, lit []int, colour wled.RGB) []wled.RGB {
+	band := make([]wled.RGB, geometry.width*place.Height)
+
+	for index := range band {
+		band[index] = finishedWordBackground
 	}
 
-	return w.light.SetSegmentName(ctx, ev.word)
+	start := place.Top * geometry.width
+
+	for _, index := range lit {
+		if offset := index - start; offset >= 0 && offset < len(band) {
+			band[offset] = colour
+		}
+	}
+
+	return band
 }

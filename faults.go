@@ -51,6 +51,36 @@ var (
 		fault.RetryAllowed,
 		fault.ShowDetail,
 	))
+
+	// PreviewNotRunning is a preview that arrived when this instance is not driving exactly one
+	// light. The route fires the word on the instance's own panel, and a watch holding several
+	// bindings has no single light to fire at: picking one of them would be putting a picture on
+	// a light the caller did not name.
+	PreviewNotRunning = fault.Register(faultDomain, "PREVIEW_NOT_RUNNING", http.StatusServiceUnavailable, fault.Document(
+		"This module is not driving one light yet",
+		"It answers once its watch is running, which is within a second of starting, and only for an instance that drives exactly one controller. An instance holding several bindings has no single light to preview on.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+	))
+
+	// PreviewBorrowedSegment is a preview asked of a module that drives one borrowed segment of
+	// somebody else's controller. The same rule that keeps the event off that light keeps the
+	// preview off it.
+	PreviewBorrowedSegment = fault.Register(faultDomain, "PREVIEW_BORROWED_SEGMENT", http.StatusConflict, fault.Document(
+		"The light is a borrowed segment, so this module will not animate it",
+		"This module was pointed at one segment of a controller somebody else also drives, and it shows a colour there. An animation nobody asked for is not something it puts on another person's light. Point this instance at its own controller to see the word.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// PreviewNotDrawable is a preview asked of a light that cannot carry the word: a strip, which
+	// has no second dimension, or a panel too small for the word at the scale this build draws it.
+	PreviewNotDrawable = fault.Register(faultDomain, "PREVIEW_NOT_DRAWABLE", http.StatusConflict, fault.Document(
+		"This light cannot carry the word",
+		"The finished word is drawn in pixels on a two-dimensional panel. The controller this instance drives reported no matrix, so it is a strip, or its panel is too small for the word at the scale this build draws it. The details say which.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

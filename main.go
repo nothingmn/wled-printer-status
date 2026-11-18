@@ -1,12 +1,14 @@
 // Command wled-printer-status is a module that watches one printer and drives
 // one WLED controller from what it sees. It is this process and nothing else: it
-// draws no screen, and its whole surface is two routes.
+// draws no screen, and its whole surface is three routes.
 //
 // # The routes
 //
 //	GET /wled-printer-status   the line this module answers with, and who the host says is asking
 //	GET /status                what this module currently thinks: the printer it watches, how old
 //	                           its reading is, the frame it has decided, and the last send to the light
+//	POST /preview-finished     the finished word, now: what the light will do when a print ends,
+//	                           without waiting for one. See preview
 //
 // The paths are relative to the mount, so a caller reaches them under
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/. The host decides who may call
@@ -55,6 +57,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -572,6 +575,55 @@ func routes() http.Handler {
 			Reading:  seen.Reading,
 			Frame:    seen.Frame,
 			LastSend: sent.Load(),
+		})
+	})
+
+	// The finished word, now, so that a person can look at it without waiting for a print to
+	// end. It fires the same event a completed print fires — the same word, the same colour,
+	// the same minute — because a preview that showed a different picture would be telling the
+	// operator something about a light he does not have.
+	//
+	// Nothing here writes to the controller: the event goes into the writer's one slot and the
+	// writer's own goroutine paints it, behind the same gate and the same backoff as every other
+	// write, and hands the steady frame back when the hold ends. So the route cannot reach the
+	// light in a way the module's ordinary path could not, and it cannot change what the light
+	// rests at afterwards.
+	//
+	// It refuses in the three cases where the light cannot be asked for the word — no single
+	// light is being driven, the light is a borrowed segment of somebody else's controller, or
+	// it is a strip or a panel too small for the word — with a registered code for each, so a
+	// caller branches on the code and not on a sentence.
+	mux.HandleFunc("POST /preview-finished", func(w http.ResponseWriter, r *http.Request) {
+		target := previewNow()
+		if target == nil {
+			refuse(w, r, PreviewNotRunning.New(
+				"this module is not driving exactly one light, so there is nothing to preview the word on"))
+
+			return
+		}
+
+		ev := finishedWordEvent()
+
+		if err := target.pen.preview(ev); err != nil {
+			if errors.Is(err, ErrPreviewBorrowedSegment) {
+				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
+
+				return
+			}
+
+			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+
+			return
+		}
+
+		answer(w, http.StatusAccepted, map[string]any{
+			"event":      ev.word,
+			"controller": target.where,
+			"colour":     colourView{R: ev.colour.R, G: ev.colour.G, B: ev.colour.B},
+			"scale":      finishedWordScale,
+			// How long the word keeps the light, in whole seconds: the number a person needs to
+			// know when to look, and to know how long he has to look.
+			"holds_seconds": int(ev.holds / time.Second),
 		})
 	})
 

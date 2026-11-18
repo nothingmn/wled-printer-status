@@ -52,11 +52,12 @@ Everything odd about this repository follows from that one sentence:
 
 | path | what it is, and what you may assume |
 | --- | --- |
-| `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status` and `GET /status`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
+| `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status`, `GET /status` and `POST /preview-finished`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
 | `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
 | `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
 | `watch.go` | **The watch.** One `printer.Source`, one `writer` and one `driver` per binding; one `wled.Client` and one write `gate` per controller, so the bindings on one box take turns at its single small web server. `start` builds everything before any goroutine starts, so a set it cannot run leaves the light as it was. Package `main`. |
-| `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the three requests a word on a panel takes. Package `main`, beside the frame path because it is the same writer. |
+| `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the two things a word on a panel costs — one body that establishes the panel and then a per-pixel paint of the rows the word sits in. `writer.preview` is the same event, fired now, for the route. Package `main`, beside the frame path because it is the same writer. |
+| `internal/text/` | **The word, in pixels.** A 5×7 glyph table drawn for this repository — capitals, digits, a space, a full stop, a hyphen and a percent sign — and a rasteriser that centres a word on a panel, returns the lit pixel indices in the panel's own row-major order, and refuses a word that would not fit at the scale asked for. No transport, no clock, no colour: it answers with indices and leaves the drawing to the caller. It exists because WLED's own text effect does not honour the segment on this firmware — see §5.4. |
 | `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
 | `internal/ddp/` | A second transport: frames of pixels over DDP/UDP to port 4048. **Not the shipping path** — JSON over HTTP is what drives the light, because only it reads back and carries names and effects. DDP exists for the day the module draws its own pictures, and is proved to draw the same frame as the JSON body. |
 | `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
@@ -97,9 +98,9 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **163 tests**: 65 in the root package, 20 in
-`internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp` and 6 in
-`internal/matrix`. That number is a fact about this commit, not a target — update it here when it
+`gofmt -l .` printing any path is a failure. Today there are **170 tests**: 67 in the root package, 20 in
+`internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp`, 6 in
+`internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
 
 The tests never touch a network and never touch a device. They are fakes and `httptest` servers. If a test
@@ -151,11 +152,20 @@ unless the printer is connected **and** fresh (`StaleAfter` is 30 s). **Do not w
 renderer simpler.** It is the reason the package exists, and a display that lies about a dead printer is
 worse than no display.
 
-**5.4 Text on a panel is one field, on one effect.** It is the segment's `n` field with **effect 122**
-("Scrolling Text"), 48 characters maximum, written with `SetSegmentName`. It is **impossible on a 1D
-strip** — the firmware falls back to a solid colour and the text simply does not appear. So any 2D
-feature needs a 1D fallback that is designed, not an afterthought: if your status is text-only, a strip
-owner gets nothing.
+**5.4 Text on this panel is pixels this module draws, and effect 122 is not it.** The obvious road was
+WLED's own Scrolling Text — **effect 122**, the word in the segment's `n` field, 48 characters at most.
+It does not work on the operator's 256×64 panel (`morpheus`, `14.7.0-mdev`): four different groupings,
+each with the word as the name and every parameter written (`ix` 128, `c2` 255), lit **only the first few
+columns on the left**, and the operator watched all four and reported the same fragment. So the word is
+drawn here instead: `internal/text` holds a 5×7 glyph table this repository owns and a rasteriser, and
+`paintEvent` sends the pixels one LED at a time through `Paint`. **Nothing in this module asks a
+controller to draw a string any more**, and a change that puts effect 122 back because it "should work"
+is repeating a measurement this file already records.
+
+The 1D half of the rule is unchanged and cannot be fixed from here: a strip has no second dimension, so
+a word is impossible on it and its finished state is the solid green it already shows. Any 2D feature
+needs a 1D fallback that is designed, not an afterthought: if your status is text-only, a strip owner
+gets nothing.
 
 **5.5 On a 2D build, `start`/`stop` are columns and `startY`/`stopY` are rows.** `len` is a count of
 **columns**, not of pixels. A width-times-height count in a `len` field is twelve times too large on a
@@ -233,10 +243,10 @@ the picture for exactly that long.
 
 Four rules, each with the failure it prevents:
 
-- **A strip gets nothing.** WLED's text effect (id 122) needs a two-dimensional target: on a 1D strip the
-  firmware falls back to a **solid colour**, so the three requests a word costs buy no word at all. A
-  strip's finished state is the whole run in the finished green, which is what the operator asked for on
-  that light. §5.4 is the same fact from the other side.
+- **A strip gets nothing.** A word is pixels on a two-dimensional panel; a 1D strip has no second
+  dimension, so the pixels would fold into one run of LEDs and buy no word at all. A strip's finished
+  state is the whole run in the finished green, which is what the operator asked for on that light. §5.4
+  is the same fact from the other side.
 - **A borrowed segment gets nothing, at the writer's door.** `fire` refuses before the event is even
   stored. A module pointed at one zone of somebody else's controller was given a colour to show there,
   not an animation to perform; it writes no brightness and no power on that controller either, and an
@@ -262,8 +272,10 @@ word needs a second body in `paintEvent` as well, and that is a design decision 
 **And a name is not cleared everywhere.** The borrow work measured that a body writing a segment without
 its `n` clears that segment's name — WLED 16.0.1 on the desk light. The same steady body was written to
 the panel (WLED 14.7.0-mdev) after a `FINISHED` event and the name survived: segment 0 read
-`"n":"FINISHED"` with `fx` back to 0. So write the name **last** when a word matters, which is what
-`paintEvent` does, and build nothing that depends on a write without a name removing one.
+`"n":"FINISHED"` with `fx` back to 0. So a body that must keep a name carries it, and build nothing that
+depends on a write without a name removing one. The event's establishing body carries the word as the
+segment's name for exactly this reason — it is also how `/json/state` still says `FINISHED` while the
+word is up in pixels — and the pixels after it name nothing.
 
 ## 6. The supervision you live inside
 

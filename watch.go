@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
@@ -179,6 +180,16 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			name, r.binding.DeviceID, r.binding.Address, r.binding.Brightness)
 	}
 
+	// One light, one preview. A watch with several bindings offers none: the route names no
+	// binding, and firing one of several would be picking a light on the operator's behalf. See
+	// previewHeld.
+	var offered *previewTarget
+
+	if len(runners) == 1 {
+		offered = &previewTarget{pen: runners[0].pen, where: runners[0].binding.Address}
+		offerPreview(offered)
+	}
+
 	var group sync.WaitGroup
 
 	done := make(chan struct{})
@@ -231,6 +242,13 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 
 	go func() {
 		group.Wait()
+
+		// The writers have returned, so nothing is left to paint a preview: the route falls
+		// back to saying so rather than storing pixels in a slot nobody reads.
+		if offered != nil {
+			withdrawPreview(offered)
+		}
+
 		close(done)
 	}()
 
@@ -315,3 +333,41 @@ func forgetBindings() {
 
 	bindingHeld = nil
 }
+
+// previewTarget is the writer POST /preview-finished fires the finished word at, and the
+// controller it writes, for the sentences the route and the log need.
+type previewTarget struct {
+	pen   *writer
+	where string
+}
+
+// previewHeld is the one light a preview may be fired at, and nothing when there is no such
+// light.
+//
+// The route cannot reach a writer any other way: a writer is built inside start and owned by its
+// own goroutine, and the whole point of that ownership is that nothing else touches the
+// controller. So the one writer a single-binding watch builds is offered here, and taken back
+// when that watch's goroutines have all returned — because a route that answered after the
+// writer had returned would be promising a picture nothing was left to paint, and the pixels it
+// stored would sit in a slot nobody reads.
+//
+// A watch holding several bindings offers nothing. The route names no binding, so firing one of
+// several would be picking a light on the operator's behalf, and picking wrong would put the
+// word on somebody's desk light.
+//
+//nolint:gochecknoglobals // the one thing the preview route reads out of the watch.
+var previewHeld atomic.Pointer[previewTarget]
+
+// offerPreview publishes the one writer a preview may be fired at.
+func offerPreview(target *previewTarget) { previewHeld.Store(target) }
+
+// withdrawPreview takes that offer away, and only when it is this watch's own: a second
+// configuration replaces the watch, and the newer offer must survive the older watch stopping.
+func withdrawPreview(target *previewTarget) { previewHeld.CompareAndSwap(target, nil) }
+
+// previewNow is the offered writer, or nil when no single light is being driven.
+func previewNow() *previewTarget { return previewHeld.Load() }
+
+// forgetPreview takes the offer away. A test uses it between watches; the process never needs
+// it, because a process that starts begins with nothing offered.
+func forgetPreview() { previewHeld.Store(nil) }

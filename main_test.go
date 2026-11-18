@@ -122,7 +122,7 @@ func TestTheFragmentParses(t *testing.T) {
 	paths := fragment.Paths()
 	sort.Strings(paths)
 
-	if want := []string{"/status", "/wled-printer-status"}; !reflect.DeepEqual(paths, want) {
+	if want := []string{"/preview-finished", "/status", "/wled-printer-status"}; !reflect.DeepEqual(paths, want) {
 		t.Fatalf("the fragment describes the paths %v, want %v", paths, want)
 	}
 }

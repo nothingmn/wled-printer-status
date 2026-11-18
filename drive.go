@@ -146,17 +146,18 @@ func logf(format string, args ...any) {
 // controller somebody else also uses has to read what that segment was and put it back
 // afterwards. Both are unused when this module drives the whole strip.
 //
-// SetEffect and SetSegmentName are here for the event layer, and they are the only two calls
-// that can put a word on a panel: the string an effect draws is the segment's own name, and
-// nothing else in this module writes either.
+// Paint is here for the event layer, and it is the only call that puts a word on a panel: the
+// word is drawn in pixels by internal/text and written one LED at a time, because the
+// controller's own text effect does not honour the segment it is given on the firmware this
+// module was measured against. Every other call in this interface carries a rectangle or a
+// colour; this one carries the picture itself.
 type strip interface {
 	Info(ctx context.Context) (wled.Info, error)
 	State(ctx context.Context) (wled.State, error)
 	SetBrightness(ctx context.Context, brightness int) error
 	SetPower(ctx context.Context, on bool) error
 	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
-	SetEffect(ctx context.Context, effect wled.Effect, opts ...wled.EffectOption) error
-	SetSegmentName(ctx context.Context, name string) error
+	Paint(ctx context.Context, first int, colors []wled.RGB, opts ...wled.PaintOption) error
 	RestoreSegment(ctx context.Context, segment wled.Segment) error
 }
 

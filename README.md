@@ -32,12 +32,13 @@ What those runs proved, on the hardware rather than in a test:
   to say.
 - **A transition is an event, not just a colour.** When the printer's state word moves, the module
   puts a picture on the light for a fixed time and then hands the light back to the steady frame. The
-  first one is `FINISHED`: on a panel the word is spelled across it — the segment's own name, drawn by
-  WLED's scrolling-text effect at four times the glyph size, in the finished green — for one minute,
-  after which the whole panel in the finished green takes over. A print that ran into `FINISHED` under
-  this build put exactly that on the panel; the read-back is in
-  [`docs/installing-locally.md`](docs/installing-locally.md). On a strip the finished state stays the
-  solid green it has always been, because the text effect needs a matrix to draw on.
+  first one is `FINISHED`: on a panel the word is drawn in pixels — the module's own font, 235 by 35
+  pixels on the operator's 256×64 panel, in the finished green — for one minute, after which the whole
+  panel in the finished green takes over. **The word is this module's pixels and not a firmware
+  feature.** WLED's Scrolling Text effect (id 122) was the first attempt and is not used any more: on
+  this panel it lit only the first few columns on the left, at every grouping that was tried, and the
+  operator watched all four and saw the same fragment. On a strip the finished state stays the solid
+  green it has always been, because a word needs a second dimension and a strip has one.
 - **A borrowed segment works on a strip somebody else also uses.** On a six-zone desk light — 48 LEDs,
   WLED 16.0.1, six named zones — the module drove one of the six for the length of a print with the fill
   moving inside that zone, left the other five byte-identical, wrote no brightness and no power on a strip
@@ -46,11 +47,12 @@ What those runs proved, on the hardware rather than in a test:
 What that has not shown, and these are gaps rather than formalities: **idle** and a printer that has gone
 quiet mid-job have never been seen on a panel. The **starting** state — a print the machine has taken and
 has not yet started to move — has, in the waiting yellow at 0 %; it appeared for the first time on the
-evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word.** It is on the panel — the device reads back the
-name, the effect, the grouping and the finished green, and the install record quotes that read-back — but
-those are the fields a word is drawn from, not the word: whether the letters are the size and in the place
-the parameters intend is a question for eyes, and WLED's websocket pixel read returned nothing on this
-panel the one time it was tried. And **it has not been through the marketplace**: this beta is the first
+evening that the `FINISHED` word did. **Nobody has looked at the `FINISHED` word drawn in pixels yet.**
+Its predecessor — the word as the segment's name, drawn by effect 122 — was on the panel and read back
+field by field, and what it put there was the fragment described above rather than a word; that reading is
+why the module draws the letters itself now. Whether the pixels read from across a room is a question for
+eyes, and the install record in [`docs/installing-locally.md`](docs/installing-locally.md) says what was
+seen when the word was put up. And **it has not been through the marketplace**: this beta is the first
 release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
@@ -128,6 +130,33 @@ then doubling to half a minute — and a picture that changes during that wait i
 controller answers again rather than added to a pile of attempts. The log says so once per change of
 wait, not once per attempt.
 
+## Looking at the finished word without waiting for a print
+
+A person who wants to know what his panel will do when a print ends should not have to run a print to find
+out. The module serves one request for exactly that:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/preview-finished
+{"event":"FINISHED","controller":"http://10.0.0.136","colour":{"r":0,"g":170,"b":0},"scale":5,"holds_seconds":60}
+```
+
+`POST /preview-finished` fires the finished event now: the same word, in the same colour, for the same
+minute a completed print gets, so what you look at is what the light will do rather than a rehearsal of
+something else. The pixels go out on the module's own writer, behind the same gate and the same retry
+window as every other write, and the steady frame takes the light back when the minute is up — the
+route changes nothing about the light's ordinary picture and writes nothing to the controller itself.
+
+It refuses, with a code and a sentence, in the three cases where the light cannot be asked for the word:
+
+| answer | code | why |
+| --- | --- | --- |
+| 503 | `PREVIEW_NOT_RUNNING` | the module is not driving exactly one light yet — an instance holding several bindings has no single light to preview on |
+| 409 | `PREVIEW_BORROWED_SEGMENT` | the light is one borrowed segment of a controller somebody else also drives, and an animation is not something this module puts there |
+| 409 | `PREVIEW_NOT_DRAWABLE` | the controller reported no matrix (a strip), or its panel is too small for the word at the scale this build draws it |
+
+The route asks the host for `operate_resource` on the module's instance, because it changes what the light
+shows.
+
 ## What you need
 
 - **A Prusa Connect instance you run yourself**, because that server is what launches a service module.
@@ -175,9 +204,10 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **163 tests** — 65 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **170 tests** — 67 in
 the root package, 20 in `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in
-`internal/ddp` and 6 in `internal/matrix` — and they pass without touching a network or a real controller:
+`internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
+or a real controller:
 the light and the printer are both faked in the tests that need one, and the ones about a minute-long
 heartbeat or a five-minute outage move a fake clock instead of waiting. There is no `go.sum`: the only
 dependency is the SDK, replaced by a directory, so nothing is fetched and there is no hash to record.

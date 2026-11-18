@@ -6,6 +6,58 @@
     "description": "The routes wled-printer-status serves. Every path is relative to the mount the host assigns, and the host serves this document rebased under it at <mount>/openapi.json."
   },
   "paths": {
+    "/preview-finished": {
+      "post": {
+        "operationId": "preview-finished-word",
+        "summary": "Show the finished word now, for its own duration",
+        "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. The word goes out on the module's own writer, in the same order as every other write, and the steady frame takes the light back when the hold ends, so nothing about the light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, or when it is a strip or a panel too small for the word: a preview never puts an animation on a light this module was not given.",
+        "responses": {
+          "202": {
+            "description": "The word was offered to the light. It is painted within a tick and holds for holds_seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": {"type": "string", "description": "The word that will be drawn, such as FINISHED."},
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
+                    "colour": {
+                      "type": "object",
+                      "description": "The colour the word is drawn in, one byte per channel.",
+                      "properties": {
+                        "r": {"type": "integer", "minimum": 0, "maximum": 255},
+                        "g": {"type": "integer", "minimum": 0, "maximum": 255},
+                        "b": {"type": "integer", "minimum": 0, "maximum": 255}
+                      },
+                      "required": ["r", "g", "b"]
+                    },
+                    "scale": {"type": "integer", "description": "How many pixels of the panel one pixel of the glyph becomes."},
+                    "holds_seconds": {"type": "integer", "description": "How long the word keeps the light before the steady frame comes back."}
+                  },
+                  "required": ["event", "controller", "colour", "scale", "holds_seconds"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This light cannot carry the word: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or it is a strip or a panel too small for it (PREVIEW_NOT_DRAWABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          },
+          "503": {
+            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "read-status",
