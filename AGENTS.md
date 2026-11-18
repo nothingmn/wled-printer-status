@@ -52,19 +52,24 @@ Everything odd about this repository follows from that one sentence:
 
 | path | what it is, and what you may assume |
 | --- | --- |
-| `main.go` | **The generator's program.** It does the handshake, answers the lifecycle set, takes the `message` setting and serves `GET /wled-printer-status`. It imports **nothing** from `internal/`. This is the entire installed behaviour today. |
+| `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status` and `GET /status`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
+| `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. Package `main`. |
+| `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
+| `internal/ddp/` | A second transport: frames of pixels over DDP/UDP to port 4048. **Not the shipping path** — JSON over HTTP is what drives the light, because only it reads back and carries names and effects. DDP exists for the day the module draws its own pictures, and is proved to draw the same frame as the JSON body. |
+| `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
 | `internal/printer/` | The printer half: a pure reducer (`printer.Apply`, `State.Snapshot`) and a `Source` that owns the bus subscription and the periodic device read. It holds no presentation and no policy. The offline-honesty rule lives here — see §5.3. |
-| `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`, `Paint`). Per-client mutex, 2 s default timeout. |
+| `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`/`SetSegments`, `Paint`). Per-client mutex, 2 s default timeout. |
 | `faults.go` | The fault domain literal and every refusal code. The domain is **hardcoded** and must match the repository owner — see §7. |
-| `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `openapi`. It requests no `permissions` today — the reader that will need `observe` runs nowhere yet. **Its key set is closed** — see §5.9. |
+| `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `egress`, `needs`, `openapi`. It requests **`observe`, and the reader that uses it is wired** — remove the grant only by removing the reader. **Its key set is closed** — see §5.9. |
 | `openapi.json` | The route fragment, every path relative to the mount. Held to `routesapi.ParseFragment` at launch. |
 | `install.sh` | **The generator's script, and stale.** It expects a Go toolchain on the machine and a Prusa Connect checkout at a fixed `/work/prusa-connect`. Do not trust it, do not "fix" it as a side errand, and do not cite it as documentation. |
 | `.github/workflows/release.yml` | Publishes to the marketplace on a released tag. Pins `core-ref: sdk/v0.1.0-beta.1`. |
-| `docs/product-requirements.md` | The product requirements. A **draft**; nothing in it is locked. |
+| `docs/product-requirements.md` | The product requirements. A **draft**, except the state table, which the operator locked on 2026-11-18. Fourteen questions there are still his to answer. |
 
-The split matters: the two `internal/` packages are the finished, tested halves, and `main.go` is the
-unfinished join. A change that makes the packages better is a change to working code. A change that wires
-them is a product decision — see §10.
+The split matters in one direction only: a change to a `internal/` package or to `drive.go`'s painting is
+a change to working code that has tests, and a change to *what* the light should show — a new colour, an
+event, an animation, a layout — is a product decision the requirements list under a still-open question.
+Do not let a code change make one of those decisions quietly.
 
 ## 4. Build and test
 
@@ -89,9 +94,10 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **96 tests**: 26 in the root package, 20 in
-`internal/printer`, 14 in `internal/render`, 36 in `internal/wled`. That number is a fact about this
-commit, not a target — update it here when it changes, and never quote it without re-running.
+`gofmt -l .` printing any path is a failure. Today there are **133 tests**: 39 in the root package, 20 in
+`internal/printer`, 17 in `internal/render`, 37 in `internal/wled`, 14 in `internal/ddp` and 6 in
+`internal/matrix`. That number is a fact about this commit, not a target — update it here when it
+changes, and never quote it without re-running.
 
 The tests never touch a network and never touch a device. They are fakes and `httptest` servers. If a test
 you add needs a real controller or a live Connect instance to pass, it belongs in a manual note, not in
@@ -269,17 +275,21 @@ the existing one signs `nothingmn`'s releases and will not sign yours. None of t
 and all of it is expensive after anybody has installed the module, because an installed declaration
 points at an id that no longer exists.
 
-## 10. If you are asked to wire the halves together
+## 10. If you are asked to change what the light shows
 
-You will be. Read `docs/product-requirements.md` first, and treat the items marked **open** as decisions
-that are not yours. Wiring is not the hard part; the hard parts are:
+The wiring exists: `main.go` builds a source, a driver and a writer from the settings, and `drive.go`
+paints. What is left in the product is mostly decisions rather than plumbing. Read
+`docs/product-requirements.md` first and treat every item marked **open** as a decision that is not
+yours. The hard parts:
 
 - **choosing a tier per controller** — from `Info` and `Capabilities`, not from a hardcoded guess, with a
   designed fallback for a 1D strip when the feature is 2D-only (§5.4);
-- **mapping state to colour, geometry and animation**, which is the product decision;
+- **changing the state table** — the colours in `internal/render` are the operator's decision, approved
+  on 2026-11-18. Adding a state, a colour or an event is a product decision; treat his table as the
+  authority and ask before editing it;
 - **the settings**, which cannot express a colour table (§5.8) and restart the module on every save;
 - **the write budget**, which rules out a per-frame render loop (§5.7);
 - **the dead printer**, which must be visible as dead rather than frozen at 94 % (§5.3).
 
-If the request is "make it light up" and the mapping is unspecified, the honest move is to say which
-decisions are unspecified and ask, rather than to invent a palette and ship it as the answer.
+If the request is "make it show X" and X is unspecified, the honest move is to say which decisions are
+unspecified and ask, rather than to invent a palette and ship it as the answer.
