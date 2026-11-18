@@ -1012,6 +1012,75 @@ func (c *Client) SetSegments(ctx context.Context, segments []SegmentWrite) error
 	return c.do(ctx, http.MethodPost, pathState, writeState{Segments: body}, nil)
 }
 
+// RestoreSegment puts one segment back exactly as State reported it: its run, whether it
+// is drawn, the colours it was drawn in, its effect and its own name. It is the write
+// that gives back a segment this module borrowed to draw on, and it exists because a
+// controller remembers a segment's bounds: every frame written into somebody's segment
+// has already moved it, and nothing but a write can move it back.
+//
+// The four bounds travel together when the segment has a run, for the reason SetSegments
+// gives: a body that names start and stop alone is read as a flat range and folds the
+// segment onto one row of a panel. A segment the controller reported with no run — one
+// already deleted — is written back without bounds, which is what leaving it alone means.
+//
+// The effect's parameters (speed, intensity, the three custom and three check values) and
+// its palette are deliberately not written. This package never writes them while it holds
+// a segment, because it paints solid colour and solid colour names none of them, so they
+// are still the controller's own and writing them back would be a guess at values that
+// were never read back after a frame.
+//
+// A negative id is refused with ErrInvalidRange and nothing is sent.
+func (c *Client) RestoreSegment(ctx context.Context, segment Segment) error {
+	if segment.ID < 0 {
+		return fmt.Errorf("%w: segment id %d", ErrInvalidRange, segment.ID)
+	}
+
+	on := segment.On
+	written := writeSegment{ID: segment.ID, On: &on}
+
+	if segment.Stop > segment.Start {
+		start, stop := segment.Start, segment.Stop
+		written.Start, written.Stop = &start, &stop
+
+		// The row bounds only when the controller published them: a 1D controller has no
+		// rows, and a stopY of zero written to one would be a claim about geometry it does
+		// not have.
+		if segment.StopY > segment.StartY {
+			firstRow, lastRow := segment.StartY, segment.StopY
+			written.StartY, written.StopY = &firstRow, &lastRow
+		}
+	}
+
+	effect := segment.Effect
+	written.Effect = &effect
+
+	if len(segment.Colors) > 0 {
+		written.Colors = make([][]int, 0, len(segment.Colors))
+		for _, color := range segment.Colors {
+			written.Colors = append(written.Colors, color.channels())
+		}
+	}
+
+	// An empty name is not written: the segment had none, and a name written as an empty
+	// string is not the same thing to every firmware.
+	if segment.Name != "" {
+		naming := segment.Name
+		written.Name = &naming
+	}
+
+	// The segment's own brightness only when it had one. Zero is WLED's "inherit the
+	// strip's brightness", and writing it back as a value would put the segment at no
+	// light at all — the one thing a restore must never do.
+	if segment.Brightness > 0 {
+		level := segment.Brightness
+		written.Brightness = &level
+	}
+
+	return c.do(ctx, http.MethodPost, pathState, writeState{
+		Segments: []writeSegment{written},
+	}, nil)
+}
+
 // Bounds is a segment's rectangle on a two-dimensional controller: the columns it
 // covers and the rows it covers, in WLED's half-open form — Start and StartY are the
 // first column and row it covers, Stop and StopY the ones after its last.
@@ -1560,6 +1629,10 @@ type writeState struct {
 // and that effect's parameters, then the geometry controls, then the name and the
 // per-LED list.
 //
+// Brightness is the segment's own, "bri" inside the segment rather than the strip's, and
+// only RestoreSegment writes it. It is here so that a segment which carried a brightness
+// of its own before this package borrowed it can be given that brightness back.
+//
 // The row bounds are here because a 2D controller expresses a segment as a rectangle
 // in both axes, and they must travel with the column bounds or not at all. A write
 // that carries "start" and "stop" without "startY" and "stopY" is read as a flat range
@@ -1567,28 +1640,29 @@ type writeState struct {
 // and leaves the segment one row high, whatever rows it covered before. A write that
 // carries no bounds at all — a name, a per-LED list — does not touch the geometry.
 type writeSegment struct {
-	ID        int     `json:"id"`
-	Start     *int    `json:"start,omitempty"`
-	Stop      *int    `json:"stop,omitempty"`
-	StartY    *int    `json:"startY,omitempty"`
-	StopY     *int    `json:"stopY,omitempty"`
-	On        *bool   `json:"on,omitempty"`
-	Colors    [][]int `json:"col,omitempty"`
-	Effect    *int    `json:"fx,omitempty"`
-	Speed     *int    `json:"sx,omitempty"`
-	Intensity *int    `json:"ix,omitempty"`
-	Custom1   *int    `json:"c1,omitempty"`
-	Custom2   *int    `json:"c2,omitempty"`
-	Custom3   *int    `json:"c3,omitempty"`
-	Check1    *int    `json:"o1,omitempty"`
-	Check2    *int    `json:"o2,omitempty"`
-	Check3    *int    `json:"o3,omitempty"`
-	Palette   *int    `json:"pal,omitempty"`
-	Grouping  *int    `json:"grp,omitempty"`
-	Transpose *int    `json:"tp,omitempty"`
-	Expand1D  *int    `json:"m12,omitempty"`
-	Name      *string `json:"n,omitempty"`
-	Pixels    []any   `json:"i,omitempty"`
+	ID         int     `json:"id"`
+	Start      *int    `json:"start,omitempty"`
+	Stop       *int    `json:"stop,omitempty"`
+	StartY     *int    `json:"startY,omitempty"`
+	StopY      *int    `json:"stopY,omitempty"`
+	On         *bool   `json:"on,omitempty"`
+	Colors     [][]int `json:"col,omitempty"`
+	Brightness *int    `json:"bri,omitempty"`
+	Effect     *int    `json:"fx,omitempty"`
+	Speed      *int    `json:"sx,omitempty"`
+	Intensity  *int    `json:"ix,omitempty"`
+	Custom1    *int    `json:"c1,omitempty"`
+	Custom2    *int    `json:"c2,omitempty"`
+	Custom3    *int    `json:"c3,omitempty"`
+	Check1     *int    `json:"o1,omitempty"`
+	Check2     *int    `json:"o2,omitempty"`
+	Check3     *int    `json:"o3,omitempty"`
+	Palette    *int    `json:"pal,omitempty"`
+	Grouping   *int    `json:"grp,omitempty"`
+	Transpose  *int    `json:"tp,omitempty"`
+	Expand1D   *int    `json:"m12,omitempty"`
+	Name       *string `json:"n,omitempty"`
+	Pixels     []any   `json:"i,omitempty"`
 }
 
 // do performs one request and is the only place this package talks to a

@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -139,11 +140,17 @@ func logf(format string, args ...any) {
 
 // strip is the part of *wled.Client that drives a light. It is an interface so
 // that a test can watch what was sent without a controller.
+//
+// State and RestoreSegment are here for the borrow: a module that drives one segment of a
+// controller somebody else also uses has to read what that segment was and put it back
+// afterwards. Both are unused when this module drives the whole strip.
 type strip interface {
 	Info(ctx context.Context) (wled.Info, error)
+	State(ctx context.Context) (wled.State, error)
 	SetBrightness(ctx context.Context, brightness int) error
 	SetPower(ctx context.Context, on bool) error
 	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
+	RestoreSegment(ctx context.Context, segment wled.Segment) error
 }
 
 // writer sends the newest frame it has been handed to one controller, and
@@ -159,6 +166,30 @@ type writer struct {
 	brightness int
 	logf       func(format string, args ...any)
 	now        func() time.Time
+
+	// segment names the one segment of a multi-segment controller this writer drives, and
+	// nil means the whole strip, which is how this module has always driven a light.
+	//
+	// It is a pointer rather than a number because 0 is a segment an operator may
+	// legitimately name, so there is no number left over to mean "none".
+	segment *int
+
+	// where is the controller's address, carried only so the borrow and the give-back can
+	// say which controller they were about. A person reading the log has a desk light and a
+	// panel on the same network, and "segment 1" alone does not say whose.
+	where string
+
+	// borrowed is the nominated segment exactly as the controller was holding it when this
+	// module read it, and nil when nothing has been borrowed.
+	//
+	// It needs no lock: it is written in begin and read by paint, and both run on this
+	// writer's own goroutine — the one goroutine that talks to the controller.
+	borrowed *borrowed
+
+	// borrowErr is why the nominated segment could not be borrowed. A frame that has nothing
+	// to draw on is not written and this is what it reports, which is what makes the status
+	// route say the light was not updated instead of claiming it was.
+	borrowErr error
 
 	// after is how the writer waits. It is time.After in the process; a test hands
 	// it a clock it can move, because a test about a minute-long heartbeat cannot
@@ -176,20 +207,42 @@ type writer struct {
 	wake   chan struct{}
 }
 
-// newWriter prepares a writer for one controller. It sends nothing until run is
-// called, and run is the only thing that ever talks to the controller.
+// newWriter prepares a writer for one controller's whole strip. It sends nothing until run
+// is called, and run is the only thing that ever talks to the controller.
 func newWriter(light strip, brightness int, logf func(format string, args ...any)) *writer {
+	pen := prepare(light, logf)
+	pen.brightness = brightness
+
+	return pen
+}
+
+// newSegmentWriter prepares a writer that drives one nominated segment of a controller it
+// shares with other segments, and gives that segment back when the writer stops.
+//
+// It takes no brightness, and that is not an oversight: a brightness is a controller-wide
+// setting, so a writer in this mode must never write one, and a constructor that could not
+// carry a brightness is one fewer place for that rule to be broken. See begin for the whole
+// of it.
+func newSegmentWriter(light strip, segment int, where string, logf func(format string, args ...any)) *writer {
+	pen := prepare(light, logf)
+	pen.segment = &segment
+	pen.where = where
+
+	return pen
+}
+
+// prepare builds the writer both constructors start from.
+func prepare(light strip, logf func(format string, args ...any)) *writer {
 	if logf == nil {
 		logf = func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	}
 
 	return &writer{
-		light:      light,
-		brightness: brightness,
-		logf:       logf,
-		now:        time.Now,
-		after:      time.After,
-		wake:       make(chan struct{}, 1),
+		light: light,
+		logf:  logf,
+		now:   time.Now,
+		after: time.After,
+		wake:  make(chan struct{}, 1),
 	}
 }
 
@@ -211,8 +264,12 @@ func (w *writer) submit(frame render.Frame) {
 
 // run writes frames until ctx ends. It is the only goroutine that talks to the
 // controller.
+//
+// It gives back whatever it borrowed on the way out, whatever ended it: the host's stop,
+// a second configure replacing this watch, or an interrupt.
 func (w *writer) run(ctx context.Context) {
-	w.settle(ctx)
+	w.begin(ctx)
+	defer w.release()
 
 	// last is what this goroutine last delivered, and lastOK is when the strip took
 	// it. Both move only after a write succeeded, so a write that failed is tried
@@ -398,6 +455,35 @@ func (w *writer) deliver(ctx context.Context, frame render.Frame) error {
 	return nil
 }
 
+// begin is what the writer does once, before the first frame, and the two modes it has are
+// the whole of what this module owes a controller it shares.
+//
+//   - driving the whole strip (segment nil): the brightness the operator set is written
+//     once and the strip is switched on, as this module has always done. That is settle.
+//   - driving one borrowed segment: **neither is written, here or at any frame.**
+//
+// The second is the trap and it is worth stating in full. SetBrightness and SetPower are
+// controller-wide: they are not properties of a segment, they move every segment on that
+// controller at once. A module that borrowed one segment of a desk light and settled as it
+// always has would dim that light to the brightness meant for a status strip and switch on a
+// light somebody had deliberately turned off — silently, once, at start, with the other five
+// segments looking untouched. So this mode reads the controller's state, borrows the segment
+// it was told to drive, and writes no brightness and no power at all.
+//
+// The structure is what keeps that true rather than a flag checked in five places: the only
+// caller of SetBrightness and SetPower is settle, the only caller of settle is this function,
+// and this function reaches it only when no segment was named. A writer built by
+// newSegmentWriter has no brightness to write even if something asked it to.
+func (w *writer) begin(ctx context.Context) {
+	if w.segment != nil {
+		w.borrow(ctx)
+
+		return
+	}
+
+	w.settle(ctx)
+}
+
 // settle writes the brightness this instance runs at, once, and makes sure the
 // strip is on.
 //
@@ -434,7 +520,245 @@ func (w *writer) settle(ctx context.Context) {
 // black — exactly the unfilled part — and the 10158 pixels the module had painted green
 // belonged to nothing, so the panel was dark while the module logged every send as taken.
 func (w *writer) paint(ctx context.Context, frame render.Frame) error {
-	return w.light.SetSegments(ctx, segmentsFor(frame, w.panelOf()))
+	geometry := w.panelOf()
+
+	if w.segment != nil {
+		return w.paintBorrowed(ctx, frame, geometry)
+	}
+
+	return w.light.SetSegments(ctx, segmentsFor(frame, geometry))
+}
+
+// paintBorrowed draws one frame into the one segment this module borrowed, and into no
+// other. Every body it sends names one id — the borrowed one — because a second would be one
+// of the operator's own.
+//
+// A panel is refused rather than driven. The borrowing is a strip's: a segment there is a run
+// of pixels and the run can be shortened every frame without moving anything outside it. On a
+// panel this module's own body is two rectangles that cover the whole of it — segment 0 the
+// fill, segment 1 the rest — and writing those two on a controller that carries somebody
+// else's segments would be writing two of them. So the request is not carried out, and the log
+// says why; nothing on the controller is touched, and what was borrowed is given back.
+//
+// The geometry is read on every frame rather than kept, for the reason setPanel gives: the
+// driver stores it the moment the controller answers Info, and until then this is the zero
+// panel, which is a strip.
+func (w *writer) paintBorrowed(ctx context.Context, frame render.Frame, geometry panel) error {
+	if geometry.matrix() {
+		return w.refusePanel(geometry)
+	}
+
+	if w.borrowed == nil {
+		// A controller that was unplugged at start is picked up when it answers, the same way
+		// a frame is retried: the borrow is a read, and reads are cheap beside a strip that
+		// never lights.
+		w.borrow(ctx)
+
+		if w.borrowed == nil {
+			return w.borrowErr
+		}
+	}
+
+	return w.light.SetSegments(ctx, w.borrowed.frame(frame))
+}
+
+// refusePanel records that the setting cannot be applied to the controller it was pointed at,
+// and returns the reason so that the frame is reported as not sent. It says it once.
+func (w *writer) refusePanel(geometry panel) error {
+	err := fmt.Errorf("segment %d is named and %s is a %dx%d panel: a panel is drawn as two rectangles across the whole of it, and two rectangles on a controller carrying somebody else's segments would be two of theirs, so this module is driving nothing. Name no segment to draw the panel, or point this instance at a strip",
+		*w.segment, w.where, geometry.width, geometry.height)
+	w.setBorrowErr(err)
+
+	return err
+}
+
+// borrowed is one segment of somebody else's controller, exactly as it was found, and this
+// module's promise to give exactly that back.
+//
+// A controller remembers a segment's bounds: WLED keeps start and stop in its own state and
+// writes them to its own flash. So a module that drew a bar by narrowing somebody's segment
+// has changed that segment for good — the bounds survive a restart, a power cut and this
+// module being uninstalled. That is why the segment is borrowed rather than taken: what was
+// there is kept here, in memory, and written back when the module stops.
+type borrowed struct {
+	// Segment is the segment as the controller reported it: its run, its row bounds, whether it
+	// was drawn, its colours, its effect, its name and its own brightness.
+	wled.Segment
+}
+
+// borrow reads the controller's state once and captures the segment this module was told to
+// drive. It logs one line saying what was taken and from where, or why nothing was.
+func (w *writer) borrow(ctx context.Context) {
+	if w.segment == nil {
+		return
+	}
+
+	id := *w.segment
+
+	state, err := w.light.State(ctx)
+	if err != nil {
+		w.setBorrowErr(fmt.Errorf("the segment %d could not be borrowed, so the light is not being driven: %w", id, err))
+
+		return
+	}
+
+	for _, segment := range state.Segments {
+		if segment.ID == id {
+			held := borrowed{Segment: segment}
+			w.borrowed = &held
+			w.borrowErr = nil
+
+			w.logf("%s: borrowed segment %d %q from %s: pixels %d-%d, colour %s, effect %d, brightness %s; its other segments and the controller's own brightness and power are not touched",
+				name, id, segment.Name, w.where, segment.Start, segment.Stop,
+				coloursPhrase(segment.Colors), segment.Effect, brightnessPhrase(segment.Brightness))
+
+			return
+		}
+	}
+
+	w.setBorrowErr(fmt.Errorf("the segment %d could not be borrowed: %s holds the segments %s and this module will not write a segment it did not read",
+		id, w.where, segmentIDs(state.Segments)))
+}
+
+// setBorrowErr records why the nominated segment could not be borrowed, and says it once. A
+// controller that is down fails every attempt, and one line per attempt is the log this module
+// was already taught not to write.
+func (w *writer) setBorrowErr(err error) {
+	if w.borrowErr != nil && w.borrowErr.Error() == err.Error() {
+		w.borrowErr = err
+
+		return
+	}
+
+	w.borrowErr = err
+	w.logf("%s: %v", name, err)
+}
+
+// frame is one frame as a body for the borrowed segment: one segment, the borrowed id, and the
+// run inside the borrowed span the frame has filled.
+func (b *borrowed) frame(frame render.Frame) []wled.SegmentWrite {
+	lit := litInSpan(frame, b.Stop-b.Start)
+
+	if lit <= 0 {
+		// Nothing to show. The segment is switched off rather than painted black: an off
+		// segment draws nothing, so the borrowed range is dark without this module naming a
+		// colour nobody asked it for, and the segment keeps the bounds it has — a body with no
+		// span leaves the geometry alone — so it can still be given back unchanged.
+		return []wled.SegmentWrite{{ID: b.ID, On: false}}
+	}
+
+	return []wled.SegmentWrite{{
+		ID:     b.ID,
+		First:  b.Start,
+		Count:  lit,
+		On:     true,
+		Colour: frame.Colour,
+	}}
+}
+
+// litInSpan is how many pixels of a borrowed run carry the completed part of the job.
+//
+//   - A frame with no range at all — Total zero, which is what the driver holds until the
+//     controller has said how many LEDs it drives — has nothing to show, and the answer is
+//     nothing lit. The run is left dark rather than painted, which is the difference between a
+//     zone that is off and a zone somebody made black.
+//   - A frame with no completed part — Lit zero, which is an idle printer, a paused print at
+//     zero and a job that has finished — is the whole run in the frame's colour, which is what
+//     the strip does with the same frame: the range is one colour and there is no bar in it.
+//   - Anything else is the frame's own fraction of the run, rounded, and never less than one
+//     pixel: a job that has started and rounds away to nothing would be a zone that went dark
+//     while the printer was working, which says the opposite of what is happening.
+//
+// It rounds rather than floors for the reason fillColumns rounds: a unit of the run is a
+// fraction of the whole, and on a ten-pixel zone flooring would throw away most of a percent.
+// The cost is that the last pixel fills fractionally early — 47 of 48 hundredths of the print
+// is a full zone — and that is the choice this rule makes.
+func litInSpan(frame render.Frame, span int) int {
+	if span <= 0 || frame.Total <= 0 {
+		return 0
+	}
+
+	if frame.Lit <= 0 {
+		return span
+	}
+
+	lit := int(math.Round(float64(frame.Lit) / float64(frame.Total) * float64(span)))
+
+	return min(max(lit, 1), span)
+}
+
+// release gives the borrowed segment back, exactly as it was found.
+//
+// It runs on the way out of the writer's goroutine, so it covers every stop this module can
+// see: the host's shutdown call, a second configure replacing the watch, and the process
+// catching an interrupt. It is not a promise about a process that is killed without warning —
+// a SIGKILL, an out-of-memory kill, a power cut or a container stopped hard leaves the segment
+// holding this module's last frame, and nothing here can write after that. The borrowed bounds
+// are held in memory and nowhere else, so a module that comes back up reads the segment as the
+// module left it and borrows that instead.
+//
+// The write goes out on a context of its own, because the one that ended the watch is already
+// cancelled and a cancelled context fails the request before it is sent.
+func (w *writer) release() {
+	if w.borrowed == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), wled.DefaultTimeout)
+	defer cancel()
+
+	held := *w.borrowed
+
+	if err := w.light.RestoreSegment(ctx, held.Segment); err != nil {
+		w.logf("%s: the borrowed segment %d on %s was not given back: %v", name, held.ID, w.where, err)
+
+		return
+	}
+
+	w.borrowed = nil
+
+	w.logf("%s: gave segment %d %q back to %s: pixels %d-%d, colour %s, effect %d, brightness %s",
+		name, held.ID, held.Name, w.where, held.Start, held.Stop,
+		coloursPhrase(held.Colors), held.Effect, brightnessPhrase(held.Brightness))
+}
+
+// coloursPhrase names a segment's colours in a log line: one red,green,blue triple per colour,
+// and "none" for a segment the controller reported without one.
+func coloursPhrase(colors []wled.RGB) string {
+	if len(colors) == 0 {
+		return "none"
+	}
+
+	parts := make([]string, 0, len(colors))
+	for _, color := range colors {
+		parts = append(parts, fmt.Sprintf("%d,%d,%d", color.R, color.G, color.B))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// brightnessPhrase names a segment's own brightness, or says that it inherits the strip's.
+func brightnessPhrase(level int) string {
+	if level == 0 {
+		return "inherited"
+	}
+
+	return fmt.Sprintf("%d", level)
+}
+
+// segmentIDs is every id a controller reported, for a log line that says what it does hold
+// when the segment an operator named is not among them.
+func segmentIDs(segments []wled.Segment) string {
+	if len(segments) == 0 {
+		return "none"
+	}
+
+	ids := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		ids = append(ids, fmt.Sprintf("%d", segment.ID))
+	}
+
+	return strings.Join(ids, ", ")
 }
 
 // setPanel records the geometry the controller reported. It is called from the driver's

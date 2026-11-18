@@ -55,6 +55,18 @@ type fakeStrip struct {
 	broken   bool
 	hold     chan struct{}
 	painted  chan struct{}
+
+	// state is what the controller answers with a read of /json/state, which is where a
+	// borrow comes from: one entry per segment, exactly as the device holds them.
+	state wled.State
+
+	// stateErr, when set, is what a read of /json/state fails with: a controller that is
+	// unplugged at start.
+	stateErr error
+
+	// restores is every segment written back to the controller, in the order it was
+	// written: the give-back a writer makes when it stops.
+	restores []wled.Segment
 }
 
 func newFakeStrip() *fakeStrip {
@@ -174,6 +186,32 @@ func (f *fakeStrip) settleWrites() int {
 	defer f.mu.Unlock()
 
 	return f.settled
+}
+
+// State is the controller's segments, which is what a writer borrows from.
+func (f *fakeStrip) State(context.Context) (wled.State, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.state, f.stateErr
+}
+
+// RestoreSegment records one segment written back to the controller.
+func (f *fakeStrip) RestoreSegment(_ context.Context, segment wled.Segment) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.restores = append(f.restores, segment)
+
+	return nil
+}
+
+// givenBack is every segment the controller was given back, as a copy.
+func (f *fakeStrip) givenBack() []wled.Segment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]wled.Segment(nil), f.restores...)
 }
 
 // waitForPaints waits until the controller has been asked for at least count

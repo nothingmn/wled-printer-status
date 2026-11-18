@@ -76,7 +76,31 @@ options:
   - key: brightness
     type: int
     default: "128"
-    summary: The brightness written to the controller once at start, 0-255. This module never changes it afterwards.
+    summary: The brightness written to the controller once at start, 0-255, when the whole strip is driven. This module never changes it afterwards, and writes none at all when a segment is named.
+  # The one segment to drive on a controller that carries several. -1 is the whole strip,
+  # which is what this module drove before the setting existed, and it is negative rather
+  # than 0 because segment 0 is a segment an operator may legitimately name.
+  #
+  # Named, the module borrows that segment instead of taking it: it reads the segment's run,
+  # colour, effect and name from the controller once at start, draws inside that run while it
+  # runs, and writes them all back when it stops. Two consequences an operator must read
+  # before naming one:
+  #
+  #   - the controller's own brightness and power are NOT written in this mode, at start or
+  #     afterwards. Both are controller-wide, so writing either would move every segment on
+  #     the controller — dimming a desk light to the brightness meant for a status strip, or
+  #     switching on a light somebody turned off;
+  #   - only the named segment is ever written. A body that carried a second one would be one
+  #     of the operator's own.
+  #
+  # The borrowing is for a strip. On a controller that reports a matrix the setting is
+  # refused rather than applied: a panel is drawn as two rectangles across the whole of it,
+  # and two rectangles on a controller carrying somebody else's segments would be two of
+  # theirs. The module drives nothing there and the log says so.
+  - key: segment
+    type: int
+    default: "-1"
+    summary: The number of the one segment to drive on a multi-segment controller, leaving the controller's other segments, its brightness and its power alone. -1 drives the whole strip, which is what this module has always done.
 
 # Every connection this module makes outside Prusa Connect, which the operator
 # reads before they approve the install. There is exactly one: the controller they

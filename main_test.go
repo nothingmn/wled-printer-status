@@ -151,6 +151,19 @@ func TestTheSettingsCarryTheDefaultsTheManifestPublishes(t *testing.T) {
 	if want := `default: "` + strconv.Itoa(defaultBrightness) + `"`; !strings.Contains(manifest, want) {
 		t.Fatalf("module.yaml does not declare %s for the brightness setting", want)
 	}
+
+	// The segment's default is what says "the whole strip", and an operator reads it in the
+	// manifest rather than in this file.
+	storeSettings(t, nil)
+
+	if fallback := settings(); fallback.Segment != defaultSegment || defaultSegment >= 0 {
+		t.Fatalf("with nothing configured this module drives segment %d, want %d, which is negative so that segment 0 stays nameable",
+			fallback.Segment, defaultSegment)
+	}
+
+	if want := `default: "` + strconv.Itoa(defaultSegment) + `"`; !strings.Contains(manifest, want) {
+		t.Fatalf("module.yaml does not declare %s for the segment setting", want)
+	}
 }
 
 // TestTheManifestDeclaresExactlyTheSettingsTheCodeReads holds the two lists
@@ -239,6 +252,10 @@ func TestTheSettingsRefuseWhatAControllerCannotTake(t *testing.T) {
 		{"a brightness above the controller's range", Settings{ControllerAddress: "http://10.0.0.136", Brightness: 256}, true},
 		{"a negative brightness", Settings{ControllerAddress: "http://10.0.0.136", Brightness: -1}, true},
 		{"the darkest brightness a controller takes", Settings{ControllerAddress: "http://10.0.0.136"}, false},
+		{"one segment to drive", Settings{ControllerAddress: "http://10.0.0.136", Segment: 1}, false},
+		{"segment 0, which is a segment like any other", Settings{ControllerAddress: "http://10.0.0.136", Segment: 0}, false},
+		{"the whole strip, written as a negative segment", Settings{ControllerAddress: "http://10.0.0.136", Segment: -1}, false},
+		{"a segment below the one value that means the whole strip", Settings{ControllerAddress: "http://10.0.0.136", Segment: -2}, true},
 	}
 
 	for _, one := range cases {

@@ -27,7 +27,8 @@
 //	message             the line GET /wled-printer-status answers with
 //	controller_address  the WLED controller to drive; the manifest's egress entry names this setting
 //	printer             which printer to watch, by device id or by name; empty takes the only one
-//	brightness          the brightness written once at start, 0-255
+//	brightness          the brightness written once at start, 0-255, when the whole strip is driven
+//	segment             the one segment to drive on a multi-segment strip; -1 drives the whole strip
 //
 // # What it does with a reading
 //
@@ -97,6 +98,21 @@ const (
 	// the number an operator who wrote nothing already expects.
 	defaultBrightness = 128
 
+	// defaultSegment is the `segment` setting's default, and it means "the whole
+	// strip", which is what this module drove before there was a setting at all.
+	//
+	// It is negative rather than absent because zero is a segment an operator may
+	// name: a controller's first segment is segment 0, and a default of 0 would make
+	// "drive the whole strip" impossible to say. It is written out in module.yaml too,
+	// because the host applies that default and an operator reads it there.
+	defaultSegment = -1
+
+	// shutdownGrace bounds how long a stop waits for the writer to give a borrowed
+	// segment back. The client's own timeout is two seconds, so one write costs less
+	// than this and a controller that never answers costs no more: a stop that waited
+	// on an unreachable light would be a module the host has to kill.
+	shutdownGrace = 5 * time.Second
+
 	// resolveTimeout bounds the one host read plugin.configure makes: the device
 	// list it needs to turn the `printer` setting into an id. Configure is answered
 	// before any route arrives, so a list that never came back would be a module that
@@ -126,8 +142,20 @@ type Settings struct {
 
 	// Brightness is what this module writes to the strip once at start, 0-255.
 	// Nothing else here writes a brightness: the operator sets it and it stays where
-	// they put it.
+	// they put it. With a segment named it is not written at all, because a brightness
+	// is controller-wide and would move every segment on the controller.
 	Brightness int `json:"brightness"`
+
+	// Segment is the one segment of a multi-segment controller this module drives: the
+	// operator's own numbering, as the controller reports it. The default, -1, drives the
+	// whole strip as this module always has, and any number the controller holds names one
+	// segment.
+	//
+	// Named, the module borrows that segment rather than taking it: it reads the segment's
+	// run, colour, effect and name once at start, draws inside that run while it runs, and
+	// writes all of it back when it stops. It writes no brightness and no power in this mode,
+	// and it never writes a second segment.
+	Segment int `json:"segment"`
 }
 
 // validate refuses settings this module cannot act on, before it acts on them.
@@ -143,6 +171,13 @@ func (s Settings) validate() error {
 
 	if s.Brightness < 0 || s.Brightness > 255 {
 		return fmt.Errorf("brightness is %d, and a WLED controller takes 0-255", s.Brightness)
+	}
+
+	// A negative segment other than -1 is refused rather than read as "whole strip": the
+	// value would be a typo, and a typo that quietly drove the whole strip is a module
+	// changing every segment on a controller the operator asked it to leave alone.
+	if s.Segment < -1 {
+		return fmt.Errorf("segment is %d: name one segment by its number, or -1 for the whole strip", s.Segment)
 	}
 
 	return nil
@@ -168,8 +203,13 @@ var (
 	// the first one started. The host calls configure once; this exists so that a
 	// second call replaces the first rather than putting a second writer on the same
 	// light.
-	watchMu sync.Mutex
-	watch   context.CancelFunc
+	//
+	// watchDone is closed when that watch's writer has returned. A stop waits on it,
+	// because the writer gives a borrowed segment back on its way out and a process that
+	// exited first would leave somebody else's segment holding this module's last frame.
+	watchMu   sync.Mutex
+	watch     context.CancelFunc
+	watchDone chan struct{}
 )
 
 // settings is what this module is running on: what the host sent, or the
@@ -179,7 +219,7 @@ func settings() Settings {
 		return *current
 	}
 
-	return Settings{Message: defaultMessage, Brightness: defaultBrightness}
+	return Settings{Message: defaultMessage, Brightness: defaultBrightness, Segment: defaultSegment}
 }
 
 // openAPI is the fragment describing the routes, with every path relative to
@@ -204,6 +244,11 @@ func run() error {
 	defer stop()
 
 	sessionCtx = ctx
+
+	// Whatever ends the session — the host closing the channel, an interrupt, a stop —
+	// the watch is stopped and waited for, because that is what gives a borrowed segment
+	// back to the controller it came from.
+	defer stopWatching()
 
 	line, err := wire.Handshake{
 		Protocol: wire.ProtocolMajor,
@@ -269,8 +314,16 @@ func methods() wirerpc.Methods {
 		// watch starts: the controller's address and the printer to watch are both
 		// settings, so there is nothing to start before they arrive.
 		wirerpc.MethodConfigure: wirerpc.Configure(configure),
+		// The host is stopping this module. The watch is stopped and waited for here, and
+		// not merely abandoned: the writer gives a borrowed segment back on its way out,
+		// and a process that answered this call and exited would leave the operator's
+		// segment holding this module's last frame with nothing left to put it right.
+		// What a stop cannot cover is a process killed without warning — see
+		// writer.release.
 		wirerpc.MethodShutdown: func(context.Context, wirerpc.Call) (any, error) {
 			fmt.Fprintf(os.Stderr, "%s was asked to stop\n", name)
+
+			stopWatching()
 
 			return nil, nil
 		},
@@ -327,19 +380,34 @@ func configure(ctx context.Context, sent Settings) error {
 
 	held.Store(&sent)
 
-	// One watch at a time: a second configure replaces this one rather than
-	// putting a second writer on the same light.
-	watchMu.Lock()
-	if watch != nil {
-		watch()
-	}
+	// One watch at a time, and the one being replaced is waited for rather than only
+	// cancelled: a writer gives its segment back on the way out, and a second writer that
+	// borrowed the same segment before that happened would capture this module's own bar as
+	// the segment's original state — and then give that bar back as though it were his.
+	stopWatching()
 
 	watchCtx, stopWatch := context.WithCancel(sessionCtx)
-	watch = stopWatch
-	watchMu.Unlock()
 
 	pen := newWriter(light, sent.Brightness, logf)
-	go pen.run(watchCtx)
+
+	if sent.Segment >= 0 {
+		// A writer that drives one borrowed segment. It is built without the brightness,
+		// because in this mode this module writes none: see writer.begin.
+		pen = newSegmentWriter(light, sent.Segment, sent.ControllerAddress, logf)
+	}
+
+	done := make(chan struct{})
+
+	watchMu.Lock()
+	watch, watchDone = stopWatch, done
+	watchMu.Unlock()
+
+	go func() {
+		defer close(done)
+
+		pen.run(watchCtx)
+	}()
+
 	go newDriver(source, pen, light, logf).run(watchCtx)
 
 	go func() {
@@ -362,10 +430,48 @@ func configure(ctx context.Context, sent Settings) error {
 		}
 	}()
 
-	logf("%s: watching printer %s and driving %s at brightness %d",
-		name, deviceID, sent.ControllerAddress, sent.Brightness)
+	if sent.Segment >= 0 {
+		logf("%s: watching printer %s and driving segment %d of %s, leaving its other segments and its brightness and power alone",
+			name, deviceID, sent.Segment, sent.ControllerAddress)
+	} else {
+		logf("%s: watching printer %s and driving %s at brightness %d",
+			name, deviceID, sent.ControllerAddress, sent.Brightness)
+	}
 
 	return nil
+}
+
+// stopWatching stops the watch this process is running and waits for it to finish giving
+// back what it borrowed.
+//
+// It is a function rather than a cancel call at each site because the wait is the point: the
+// writer's give-back is a write to the controller, and a stop that cancelled the watch and
+// returned would race that write against the process exit. shutdownGrace is what keeps a
+// controller that never answers from turning a stop into something the host has to kill.
+//
+// Called with no watch in place it does nothing, so the second configure of a process and the
+// deferred stop at the end of run can both call it without asking first.
+func stopWatching() {
+	watchMu.Lock()
+	cancel, done := watch, watchDone
+	watch, watchDone = nil, nil
+	watchMu.Unlock()
+
+	if cancel == nil || done == nil {
+		return
+	}
+
+	cancel()
+
+	wait, stop := context.WithTimeout(context.Background(), shutdownGrace)
+	defer stop()
+
+	select {
+	case <-done:
+	case <-wait.Done():
+		logf("%s: the watch did not finish giving its segment back within %s of being stopped",
+			name, shutdownGrace)
+	}
 }
 
 // devices is the one read resolvePrinter makes of the host's fleet.
