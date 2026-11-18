@@ -106,6 +106,11 @@ const (
 	ReasonProgressUnknown Reason = "progress-unknown"
 	// ReasonProgress: the fill is the job's live progress.
 	ReasonProgress Reason = "progress"
+	// ReasonStarting: a live job whose fill has not reached a single LED — a print
+	// the printer has taken and has not yet moved. Its range is the waiting yellow
+	// and not the state colour, because a whole range in the printing green is what
+	// a job that finished shows, and a print at 0 % must not be read as one.
+	ReasonStarting Reason = "starting"
 	// ReasonPausedFrozen: the fill is the progress a paused print stopped at.
 	ReasonPausedFrozen Reason = "paused-frozen"
 )
@@ -167,10 +172,16 @@ func (f Frame) Unfilled() wled.RGB {
 //  3. The fill is the snapshot's guarded live progress. If that reading refuses,
 //     nothing is filled and the reason says so; no percentage is invented and none
 //     remembered is reused.
-//  4. A state with no job on the bed fills nothing: idle, ready, finished,
+//  4. A live job whose fill reaches no LED at all has not started moving: the range
+//     is the waiting yellow and the reason says the print is starting. A whole range
+//     in the state colour is what a job that finished shows, so a print at 0 % must
+//     not be given it. From the first LED upwards the fill is the state colour and
+//     the live progress, as before.
+//  5. A state with no job on the bed fills nothing: idle, ready, finished,
 //     stopped, unknown and an unrecognised word all show their colour alone.
-//  5. A paused print keeps the fraction it stopped at, which is that same guarded
-//     progress value, provided the reading is still live.
+//  6. A paused print keeps the fraction it stopped at, which is that same guarded
+//     progress value, provided the reading is still live. A pause at 0 % is a paused
+//     print rather than a starting one: it is stopped, not waiting to begin.
 //
 // at is the moment to judge the snapshot at, so a caller holding a snapshot can
 // ask what the strip would have shown a moment later and a test needs no clock.
@@ -223,8 +234,28 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 	frame.Lit = lit(progress, total)
 	frame.Reason = ReasonProgress
 
+	// A paused print is stopped where it stood, and a pause at 0 % is still a pause:
+	// it keeps the frozen reading it had rather than becoming a print that is about
+	// to move.
 	if snapshot.State.Known && snapshot.State.Value == printer.StatePaused {
 		frame.Reason = ReasonPausedFrozen
+
+		return frame
+	}
+
+	// A live job whose fill reaches no LED has not started moving. Without this the
+	// range would be the state colour in full — on a print at 0 % that is the whole
+	// panel in the printing green, which is exactly what this build shows for a job
+	// that has finished. It says "starting" in the waiting yellow instead: the colour
+	// ColourIdle, ColourBusy, ColourPaused and ColourAttention already carry, so this
+	// is the panel's state before the print began rather than a fifth hue.
+	//
+	// total > 0 because a range with no LEDs cannot show an indication of anything,
+	// and a frame decided before the controller has said its length keeps saying what
+	// the reading said.
+	if frame.Lit <= 0 && total > 0 {
+		frame.Colour = ColourIdle
+		frame.Reason = ReasonStarting
 	}
 
 	return frame

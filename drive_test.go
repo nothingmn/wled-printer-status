@@ -474,6 +474,178 @@ func TestTheBodyOfEveryShapeOfFrame(t *testing.T) {
 	}
 }
 
+// TestAStartingFrameIsOneWholePanelInTheWaitingYellow is the painter's half of the
+// rule, and it was proved rather than assumed: a frame with no fill is written as one
+// segment covering the whole range in the frame's own colour with the remainder
+// switched off, so the starting panel is solid yellow — not green, and not a bar left
+// over from the frame before it.
+//
+// The frame comes from render.Decide over a snapshot of a print at 0 %, so this is the
+// pair proved together: the rule says starting, and the body that reaches the panel is
+// the whole panel in the waiting colour. Both geometries, because the module drives a
+// panel and the flat body is what a strip is given.
+func TestAStartingFrameIsOneWholePanelInTheWaitingYellow(t *testing.T) {
+	now := time.Now()
+
+	starting := render.Decide(printer.Snapshot{
+		ID:        "01J8DEVICE",
+		Name:      "Morpheus",
+		Connected: true,
+		State:     printer.Reading[string]{Value: printer.StatePrinting, Known: true},
+		Job: printer.Job{
+			Live:     true,
+			Running:  printer.Reading[bool]{Value: true, Known: true},
+			Progress: printer.Reading[float64]{Value: 0, Known: true},
+		},
+		LastChange: now,
+		ObservedAt: now,
+	}, now, render.Config{LEDs: 16384})
+
+	if starting.Reason != render.ReasonStarting || starting.Lit != 0 {
+		t.Fatalf("the frame is %q with %d lit, want a starting frame with nothing lit",
+			starting.Reason, starting.Lit)
+	}
+
+	for _, test := range []struct {
+		name  string
+		want  wled.SegmentWrite
+		paint func(t *testing.T) []wled.SegmentWrite
+	}{
+		{
+			name: "the live panel",
+			want: wled.SegmentWrite{
+				ID: firstSegment, First: 0, Count: 256, FirstRow: 0, RowCount: 64,
+				On: true, Colour: render.ColourIdle,
+			},
+			paint: func(t *testing.T) []wled.SegmentWrite {
+				t.Helper()
+
+				device := newPanelStrip()
+				pen := newWriter(device, 128, quiet)
+				pen.setPanel(device.info)
+
+				if err := pen.paint(context.Background(), starting); err != nil {
+					t.Fatalf("paint the starting frame: %v", err)
+				}
+
+				shown := device.shown()
+
+				return shown[0].segments
+			},
+		},
+		{
+			name: "a controller with no matrix",
+			want: wled.SegmentWrite{ID: firstSegment, First: 0, Count: 16384, On: true, Colour: render.ColourIdle},
+			paint: func(t *testing.T) []wled.SegmentWrite {
+				t.Helper()
+
+				device := newFakeStrip()
+				pen := newWriter(device, 128, quiet)
+
+				if err := pen.paint(context.Background(), starting); err != nil {
+					t.Fatalf("paint the starting frame: %v", err)
+				}
+
+				shown := device.shown()
+
+				return shown[0].segments
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := test.paint(t)
+
+			if len(body) != 2 {
+				t.Fatalf("the starting frame is written as %d segments, want 2: %+v", len(body), body)
+			}
+
+			if body[0] != test.want {
+				t.Fatalf("the body is %+v, want one segment covering the whole range in the waiting yellow %+v",
+					body[0], test.want)
+			}
+
+			if body[1].ID != remainderSegment || body[1].On || body[1].Count != 0 {
+				t.Fatalf("the remainder is %+v, want it switched off with no span", body[1])
+			}
+		})
+	}
+}
+
+// TestTheStatusRouteSaysStartingForAPrintAtZero: the reason is not only a test's word
+// for the rule — the route answers with it, so a person reading /status while the
+// printer sits at 0 % is told the print is starting rather than that it is printing.
+func TestTheStatusRouteSaysStartingForAPrintAtZero(t *testing.T) {
+	now := time.Now()
+
+	snapshot := printer.Snapshot{
+		ID:        "01J8DEVICE",
+		Name:      "Morpheus",
+		Connected: true,
+		State:     printer.Reading[string]{Value: printer.StatePrinting, Known: true},
+		Job: printer.Job{
+			Live:     true,
+			Running:  printer.Reading[bool]{Value: true, Known: true},
+			Progress: printer.Reading[float64]{Value: 0, Known: true},
+		},
+		LastChange: now,
+		ObservedAt: now,
+	}
+
+	frame := render.Decide(snapshot, now, render.Config{LEDs: 16384})
+	publish(snapshot, frame)
+	recordSend(sendView{At: now.Format(time.RFC3339Nano), OK: true})
+
+	t.Cleanup(func() {
+		current.Store(nil)
+		sent.Store(nil)
+	})
+
+	recorder := httptest.NewRecorder()
+	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /status answered %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body struct {
+		Printer struct {
+			State string `json:"state"`
+		} `json:"printer"`
+		Frame struct {
+			Colour struct {
+				R uint8 `json:"r"`
+				G uint8 `json:"g"`
+				B uint8 `json:"b"`
+			} `json:"colour"`
+			Lit    int    `json:"lit"`
+			Total  int    `json:"total"`
+			Reason string `json:"reason"`
+		} `json:"frame"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the answer is not JSON: %v", err)
+	}
+
+	if body.Printer.State != printer.StatePrinting {
+		t.Fatalf("the printer is %q, want %q: the route must still say the printer is printing",
+			body.Printer.State, printer.StatePrinting)
+	}
+
+	if body.Frame.Reason != string(render.ReasonStarting) {
+		t.Fatalf("the frame's reason is %q, want %q", body.Frame.Reason, render.ReasonStarting)
+	}
+
+	if body.Frame.Colour.R != render.ColourIdle.R || body.Frame.Colour.G != render.ColourIdle.G ||
+		body.Frame.Colour.B != render.ColourIdle.B {
+		t.Fatalf("the frame's colour is %+v, want the waiting yellow %+v", body.Frame.Colour, render.ColourIdle)
+	}
+
+	if body.Frame.Lit != 0 || body.Frame.Total != 16384 {
+		t.Fatalf("the frame is %d of %d, want 0 of 16384", body.Frame.Lit, body.Frame.Total)
+	}
+}
+
 // TestTheStatusRouteAnswersWhatTheModuleThinks is the reason the route exists: a
 // person can read the frame, the printer and the age of the reading without walking
 // over to the light.

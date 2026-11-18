@@ -33,3 +33,12 @@ refusal. Name the route and the setting key, never a function or a file.
 - The setting `message` sets the line that route answers with.
 - The install asks for `observe`, because the module now reads one printer as itself, and declares one
   outbound connection: the controller in `controller_address`, on port 80, from this process.
+
+### Changed
+
+- A print the printer has taken but has not yet moved shows the waiting yellow, not the printing green. At
+  0 % progress the light is the same yellow an idle printer shows, and `GET /status` answers
+  `"reason": "starting"` with the printer still reported as printing. A whole panel in green is what a
+  finished job shows, and a print that had not started was being read as one. From the first lit pixel
+  upwards the frame is unchanged: the fill is the printing green and its length is the progress.
+

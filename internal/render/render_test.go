@@ -160,23 +160,156 @@ func TestPrintingFillsHalfTheStrip(t *testing.T) {
 	}
 }
 
-// TestPrintingAtZeroLightsNothing: a job that has done nothing fills nothing. The
-// strip still carries the printing green, because it is still printing.
-func TestPrintingAtZeroLightsNothing(t *testing.T) {
+// TestAPrintThatHasNotStartedWaitsInYellow: a print the printer has taken and has
+// not yet moved fills nothing, and it must not be drawn in the printing green.
+//
+// A whole range in green is what this build shows for a job that finished, so a
+// print held at 0 % was reading as a print that had already succeeded. The interim
+// is the waiting yellow: the colour the panel already carried before the job began,
+// with the frame saying "starting" rather than "progress".
+func TestAPrintThatHasNotStartedWaitsInYellow(t *testing.T) {
 	snapshot := snapshotAt(t, true, printingTree(printer.StatePrinting, percent(0)), 0)
+
+	if progress, ok := snapshot.LiveProgress(); !ok || progress != 0 {
+		t.Fatalf("the fixture should carry a live 0 %%, got %v (known %v)", progress, ok)
+	}
 
 	frame := Decide(snapshot, moment, Config{LEDs: strip})
 
 	if frame.Lit != 0 {
-		t.Errorf("lit = %d, want 0", frame.Lit)
+		t.Errorf("lit = %d, want 0: a print at 0 %% has done nothing", frame.Lit)
+	}
+
+	if frame.Reason != ReasonStarting {
+		t.Errorf("reason = %q, want %q", frame.Reason, ReasonStarting)
+	}
+
+	if frame.Colour == ColourPrinting || frame.Colour == ColourFinished {
+		t.Errorf("colour = %v, the green a finished job shows; a print that has not started must not wear it", frame.Colour)
+	}
+
+	// The colour is one the panel already carries, not a fifth hue invented for this
+	// rule: the same yellow idle, busy, paused and attention are drawn in.
+	for _, waiting := range []wled.RGB{ColourIdle, ColourBusy, ColourPaused, ColourAttention} {
+		if frame.Colour != waiting {
+			t.Errorf("colour = %v, want the waiting yellow %v", frame.Colour, waiting)
+		}
+	}
+
+	if frame.Total != strip {
+		t.Errorf("total = %d, want %d", frame.Total, strip)
+	}
+}
+
+// TestAPrintAtOnePercentIsGreenAndFilling is the other side of the rule: once the
+// print moves, nothing about the frame changes. The fill is the printing green and
+// its length is the progress.
+//
+// The total is the live panel's 16,384 pixels rather than the 48-LED strip, because
+// the rule is stated in pixels and 1 % of 48 floors to no LED at all — which is a
+// range showing no progress, and is exactly what the starting rule answers. On the
+// panel the same 1 % is 163 pixels, so the frame is a bar.
+func TestAPrintAtOnePercentIsGreenAndFilling(t *testing.T) {
+	const livePanel = 16384
+
+	snapshot := snapshotAt(t, true, printingTree(printer.StatePrinting, percent(1)), 0)
+
+	frame := Decide(snapshot, moment, Config{LEDs: livePanel})
+
+	if frame.Reason != ReasonProgress {
+		t.Errorf("reason = %q, want %q: the print has started moving", frame.Reason, ReasonProgress)
 	}
 
 	if frame.Colour != ColourPrinting {
 		t.Errorf("colour = %v, want the printing green", frame.Colour)
 	}
 
-	if frame.Reason != ReasonProgress {
-		t.Errorf("reason = %q, want %q: the progress was measured, it was just zero", frame.Reason, ReasonProgress)
+	// 1 % of 16,384 is 163.84, and the fill floors.
+	if frame.Lit != 163 {
+		t.Errorf("lit = %d, want 163 (1 %% of %d, rounded down)", frame.Lit, livePanel)
+	}
+
+	if frame.Lit == 0 {
+		t.Error("a print at 1 % on the panel lit nothing")
+	}
+
+	// A printing job's fill is proportional from here on, not merely non-zero.
+	if half := Decide(
+		snapshotAt(t, true, printingTree(printer.StatePrinting, percent(50)), 0),
+		moment, Config{LEDs: livePanel},
+	); half.Lit != livePanel/2 || half.Colour != ColourPrinting {
+		t.Errorf("half the panel is %v with %d lit, want the printing green and %d",
+			half.Colour, half.Lit, livePanel/2)
+	}
+}
+
+// TestOnlyALiveJobAtNoFillSaysStarting: "starting" belongs to one condition, and no
+// other rule may borrow it.
+//
+// A printer that finished or went idle at the same 0 % has no job on the bed and
+// keeps not-a-live-job. A live job whose progress the guarded reading refuses did
+// not measure 0 % and keeps progress-unknown. A stale or disconnected printer keeps
+// its own reason whatever the figure in its tree says. A pause at 0 % is stopped,
+// not waiting to begin, and keeps its frozen reading.
+func TestOnlyALiveJobAtNoFillSaysStarting(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     string
+		progress  *float64
+		connected bool
+		age       time.Duration
+		want      Reason
+	}{
+		{"IDLE at zero", printer.StateIdle, percent(0), true, 0, ReasonNoLiveJob},
+		{"READY at zero", printer.StateReady, percent(0), true, 0, ReasonNoLiveJob},
+		{"FINISHED at zero", printer.StateFinished, percent(0), true, 0, ReasonNoLiveJob},
+		{"STOPPED at zero", printer.StateStopped, percent(0), true, 0, ReasonNoLiveJob},
+		{"ERROR at zero", printer.StateError, percent(0), true, 0, ReasonNoLiveJob},
+		{"a live job with no progress reading", printer.StatePrinting, nil, true, 0, ReasonProgressUnknown},
+		{"a live job whose progress never arrived", printer.StateBusy, nil, true, 0, ReasonProgressUnknown},
+		{"stale at zero", printer.StatePrinting, percent(0), true, staleAge, ReasonStale},
+		{"disconnected at zero", printer.StatePrinting, percent(0), false, 0, ReasonDisconnected},
+		{"paused at zero", printer.StatePaused, percent(0), true, 0, ReasonPausedFrozen},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			frame := Decide(
+				snapshotAt(t, test.connected, printingTree(test.state, test.progress), test.age),
+				moment.Add(test.age), Config{LEDs: strip},
+			)
+
+			if frame.Reason != test.want {
+				t.Errorf("reason = %q, want %q", frame.Reason, test.want)
+			}
+
+			if frame.Reason == ReasonStarting {
+				t.Errorf("%s was answered with %q, which is the live-job-at-no-fill rule", test.name, ReasonStarting)
+			}
+		})
+	}
+}
+
+// TestBusyAtZeroIsAlsoAPrintThatHasNotStarted: BUSY is a live job — a printer heating
+// for a print it has already taken — and at no fill it is a print that has not moved.
+// Its colour does not change, because BUSY already carries the waiting yellow; only
+// the reason becomes the starting one.
+func TestBusyAtZeroIsAlsoAPrintThatHasNotStarted(t *testing.T) {
+	frame := Decide(
+		snapshotAt(t, true, printingTree(printer.StateBusy, percent(0)), 0),
+		moment, Config{LEDs: strip},
+	)
+
+	if frame.Reason != ReasonStarting {
+		t.Errorf("reason = %q, want %q", frame.Reason, ReasonStarting)
+	}
+
+	if frame.Colour != ColourBusy {
+		t.Errorf("colour = %v, want the busy yellow %v, which is the waiting yellow", frame.Colour, ColourBusy)
+	}
+
+	if frame.Lit != 0 {
+		t.Errorf("lit = %d, want 0", frame.Lit)
 	}
 }
 
