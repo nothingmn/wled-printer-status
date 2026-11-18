@@ -959,6 +959,12 @@ type SegmentWrite struct {
 	// Colour is what the segment is drawn in. It is sent only while On: a segment that is
 	// off has nothing to name a colour for.
 	Colour RGB
+	// Name is the segment's own name, "n", and empty means this body names none. A controller
+	// clears a segment's name when a body writes that segment without one — measured on the
+	// operator's desk light, where the first frames of a borrow left his "Back 1" zone unnamed
+	// at the controller — so a caller drawing inside a segment it does not own passes the name
+	// it read, on every body, whether the segment is drawn or not.
+	Name string
 }
 
 // validate reports whether this is a segment a controller can be asked for.
@@ -1038,6 +1044,11 @@ func (c *Client) SetSegments(ctx context.Context, segments []SegmentWrite) error
 
 			written.Colors = [][]int{segment.Colour.channels()}
 			written.Effect = &effect
+		}
+
+		if segment.Name != "" {
+			naming := segment.Name
+			written.Name = &naming
 		}
 
 		body = append(body, written)

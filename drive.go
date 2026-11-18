@@ -644,7 +644,7 @@ func (b *borrowed) frame(frame render.Frame) []wled.SegmentWrite {
 		// segment draws nothing, so the borrowed range is dark without this module naming a
 		// colour nobody asked it for, and the segment keeps the bounds it has — a body with no
 		// span leaves the geometry alone — so it can still be given back unchanged.
-		return []wled.SegmentWrite{{ID: b.ID, On: false}}
+		return []wled.SegmentWrite{{ID: b.ID, On: false, Name: b.Name}}
 	}
 
 	return []wled.SegmentWrite{{
@@ -653,6 +653,10 @@ func (b *borrowed) frame(frame render.Frame) []wled.SegmentWrite {
 		Count:  lit,
 		On:     true,
 		Colour: frame.Colour,
+		// The name goes on every body. A controller clears a name from a segment written
+		// without one, and a module that renamed the operator's zone as a side effect of
+		// drawing in it would be doing exactly what it promised not to.
+		Name: b.Name,
 	}}
 }
 

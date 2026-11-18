@@ -260,6 +260,32 @@ func TestABorrowedSegmentIsGivenBackVerbatimWhenTheWriterStops(t *testing.T) {
 	}
 }
 
+// TestTheBorrowedNameTravelsOnEveryBody is a side effect found on the operator's own controller:
+// a body written into a segment without its name clears the name the segment had. His zones are
+// named — "Back 1" among them — so the borrowed name goes out with every frame, drawn or dark.
+func TestTheBorrowedNameTravelsOnEveryBody(t *testing.T) {
+	strip := borrowedStrip()
+	pen := newSegmentWriter(strip, 1, "http://10.0.0.253", quiet)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pen.run(ctx)
+
+	pen.submit(render.Frame{Colour: render.ColourPrinting, Lit: 24, Total: 48, Reason: render.ReasonProgress})
+	strip.waitForPaints(t, 1)
+	pen.submit(render.Frame{Colour: render.ColourUnknown, Lit: 0, Total: 0, Reason: render.ReasonDisconnected})
+	strip.waitForPaints(t, 2)
+
+	time.Sleep(50 * time.Millisecond)
+
+	for index, call := range strip.shown() {
+		if got := call.segments[0].Name; got != "Back 1" {
+			t.Fatalf("write %d carried the name %q, want the borrowed %q", index, got, "Back 1")
+		}
+	}
+}
+
 // TestAWriterThatCannotFindItsSegmentWritesNothing is the case that must never become a write.
 // A controller that does not hold the segment an operator named is not an invitation to write
 // one: WLED would create it, at the bounds this module chose, in somebody's strip.
