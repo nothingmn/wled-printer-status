@@ -38,16 +38,48 @@
 // The same client drives a few-pixel strip and a 16,384-pixel panel, because the
 // only difference it sees is geometry: Info carries the panel's width and height
 // when the controller publishes a matrix, and a State segment carries its row
-// bounds beside its LED bounds. Nothing here draws. There is no rectangle helper,
-// no mapping from a position to a pixel, and SetRange stays what it is — a
-// contiguous run of LEDs in one dimension.
+// bounds beside its LED bounds. SetRectangle, and the row options on SetSolid and
+// SetRange, are what make a write a rectangle on a panel.
+//
+// # The three tiers a status can be shown in
+//
+// A controller's abilities are not assumed: they are read from the device and
+// used in order, so that a status which cannot be shown in the first way is shown
+// in the second and, if even that is impossible, in the third.
+//
+//  1. An effect, with its parameters. SetEffect selects one of the effects the
+//     controller itself lists — Capabilities returns that list — and names its
+//     speed, intensity, three custom values, three check values and palette.
+//     Scrolling Text (id 122 on the current firmware) is the 2D panel's text
+//     carrier, and the string it draws is the segment's own name, written with
+//     SetSegmentName. This tier animates, and it is the only tier that puts text
+//     on a matrix.
+//  2. Computed colour or geometry: SetSolid, SetRange and SetRectangle paint a
+//     colour into a run, a band or a rectangle, so a progress bar is the geometry
+//     of a segment rather than a picture of one.
+//  3. Per-LED painting, Paint. It is the floor: whatever a controller can do, it
+//     can be given 1, 2 or 16,384 individual colours, so a status that cannot be
+//     shown as an effect or as a rectangle can still be shown at all. That is the
+//     only outcome this package refuses to accept, and it is why this tier exists
+//     even though it is the crudest.
+//
+// # What per-LED painting costs
+//
+// The segment property i is not stored: a controller that loses power or is
+// rebooted comes back with whatever its saved preset says, so Paint has to be
+// re-sent after every reconnect. While painted, the segment's effect is frozen —
+// an animation cannot draw over a list of colours — and the list is cleared as
+// soon as an effect is selected again. A write that sets individual LEDs and
+// switches the segment on in the same body does not work, so Paint sends only i
+// and expects a segment that is already on and already at its brightness.
 //
 // # What this package does not do
 //
 // It never writes {"live":true}, which hijacks the strip into realtime mode and
-// blanks it, and it never uses per-LED control (the segment property i), which
-// is non-persistent and freezes the effect. Both are WLED features that exist
-// and that this module has no use for.
+// blanks it, and it never writes a preset, a playlist, or the segment geometry of
+// a controller whose matrix it has not read. It draws nothing and maps no printer
+// state to a colour: which tier to use, and what a colour means, are the caller's
+// decisions.
 package wled
 
 import (
@@ -82,6 +114,10 @@ const (
 	// segment. A GET reads it and a POST carrying a subset of it changes it.
 	pathState = "/json/state"
 
+	// pathJSON is the controller's catalogue: the effects and palettes it can
+	// show, and the per-effect flag strings that say which controls each one has.
+	pathJSON = "/json"
+
 	// solidEffect is WLED's effect id for a steady colour. Writing it is what
 	// keeps a colour from showing the last effect's animation in it.
 	solidEffect = 0
@@ -95,6 +131,25 @@ const (
 	// bounded, so a controller that answers with something enormous cannot spend
 	// the module's 128 MiB budget.
 	maxBody = 1 << 20
+
+	// MaxSegmentName is the longest segment name a controller stores, and so the
+	// longest string that can be drawn by the text effect. A longer name is refused
+	// rather than truncated: a caller that asked for 60 characters and got 48 has a
+	// bug it should see, and half a word on a panel is not a status.
+	MaxSegmentName = 48
+
+	// DefaultPaintByteBudget is how large one per-LED request body may be when the
+	// caller sets no budget. It is 8 KiB, comfortably inside both documented limits
+	// — about 10 KiB on an ESP8266 and about 24 KiB on an ESP32 — so a controller
+	// with the smaller one has room for the rest of the request beside the colours.
+	DefaultPaintByteBudget = 8 << 10
+
+	// The values of a segment's m12, which says how a one-dimensional effect is
+	// expanded onto a two-dimensional panel.
+	ExpandPixels = 0 // the effect drives individual pixels
+	ExpandBar    = 1 // the effect is drawn as a bar across the panel
+	ExpandArc    = 2 // the effect is drawn as an arc
+	ExpandCorner = 3 // the effect is drawn in a corner
 )
 
 // The failures a caller can tell apart. Each is wrapped by a typed error below,
@@ -126,6 +181,30 @@ var (
 	// ErrInvalidRange means a run of LEDs was named that is empty or outside the
 	// strip. The request is not sent.
 	ErrInvalidRange = errors.New("wled: not a usable run of leds")
+
+	// ErrInvalidEffect means an effect parameter was outside 0-255, which is what a
+	// controller's own fields carry. The request is not sent.
+	ErrInvalidEffect = errors.New("wled: an effect parameter is outside 0-255")
+
+	// ErrInvalidRectangle means a rectangle was named that covers nothing or is
+	// inverted in one axis: a panel segment whose stop is not past its start takes
+	// the segment away rather than drawing nothing, so it is refused here. The
+	// request is not sent.
+	ErrInvalidRectangle = errors.New("wled: not a usable rectangle")
+
+	// ErrInvalidName means a segment name was empty or longer than MaxSegmentName.
+	// The request is not sent.
+	ErrInvalidName = errors.New("wled: not a usable segment name")
+
+	// ErrEmptyPaint means per-LED painting was asked for with no colours. There is
+	// nothing to draw and no request worth sending; a caller that reached here has
+	// computed an empty frame.
+	ErrEmptyPaint = errors.New("wled: no colours to paint")
+
+	// ErrPaintBudget means the byte budget left no room for even one LED's colour.
+	// The budget is a caller's promise about the controller it is talking to, so a
+	// budget that cannot carry a colour is refused rather than exceeded.
+	ErrPaintBudget = errors.New("wled: the paint budget cannot carry one led")
 )
 
 // TimeoutError is a request that ran out of time. Its Err carries the transport's
@@ -304,6 +383,38 @@ type Segment struct {
 	Colors []RGB
 	// Effect is the effect id it is running, "fx". 0 is solid.
 	Effect int
+	// Name is the segment's own name, "n". It is what the text effect draws, and
+	// it is empty on a segment that has never been named.
+	Name string
+	// Speed is the effect's speed, "sx"; 0 when unset.
+	Speed int
+	// Intensity is the effect's intensity, "ix"; 0 when unset. For the text effect
+	// it is the vertical position.
+	Intensity int
+	// Custom1, Custom2 and Custom3 are the effect's own three values, "c1", "c2"
+	// and "c3". For the text effect Custom2 is the font size.
+	Custom1 int
+	// Custom2 is the effect's second custom value.
+	Custom2 int
+	// Custom3 is the effect's third custom value.
+	Custom3 int
+	// Check1, Check2 and Check3 are the effect's three check values, "o1", "o2" and
+	// "o3".
+	Check1 int
+	// Check2 is the effect's second check value.
+	Check2 int
+	// Check3 is the effect's third check value.
+	Check3 int
+	// Palette is the palette id the effect draws with, "pal".
+	Palette int
+	// Grouping is how many LEDs each colour covers, "grp". 0 when unset, which a
+	// controller treats as one.
+	Grouping int
+	// Transpose is the segment's rotation code, "tp". 0 is no rotation.
+	Transpose int
+	// Expand1D is how a one-dimensional effect is laid onto a panel, "m12": one of
+	// ExpandPixels, ExpandBar, ExpandArc or ExpandCorner.
+	Expand1D int
 	// Brightness is the segment's own brightness 0-255 when it has one; 0 when
 	// WLED left it to the strip's brightness.
 	Brightness int
@@ -469,6 +580,19 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			On         bool            `json:"on"`
 			Colors     json.RawMessage `json:"col"`
 			Effect     int             `json:"fx"`
+			Name       string          `json:"n"`
+			Speed      int             `json:"sx"`
+			Intensity  int             `json:"ix"`
+			Custom1    int             `json:"c1"`
+			Custom2    int             `json:"c2"`
+			Custom3    int             `json:"c3"`
+			Check1     int             `json:"o1"`
+			Check2     int             `json:"o2"`
+			Check3     int             `json:"o3"`
+			Palette    int             `json:"pal"`
+			Grouping   int             `json:"grp"`
+			Transpose  int             `json:"tp"`
+			Expand1D   int             `json:"m12"`
 			Brightness int             `json:"bri"`
 		} `json:"seg"`
 	}
@@ -502,6 +626,19 @@ func (c *Client) State(ctx context.Context) (State, error) {
 			On:         segment.On,
 			Colors:     colors,
 			Effect:     segment.Effect,
+			Name:       segment.Name,
+			Speed:      segment.Speed,
+			Intensity:  segment.Intensity,
+			Custom1:    segment.Custom1,
+			Custom2:    segment.Custom2,
+			Custom3:    segment.Custom3,
+			Check1:     segment.Check1,
+			Check2:     segment.Check2,
+			Check3:     segment.Check3,
+			Palette:    segment.Palette,
+			Grouping:   segment.Grouping,
+			Transpose:  segment.Transpose,
+			Expand1D:   segment.Expand1D,
 			Brightness: segment.Brightness,
 		})
 	}
@@ -535,6 +672,26 @@ type solid struct {
 	brightness *int
 	transition *int
 	ledCount   int
+	rows       *rows
+}
+
+// rows is a span of panel rows: the first row and how many, which is the same
+// shape SetRange takes for LEDs, so a caller counts rows the way it counts pixels.
+type rows struct {
+	first int
+	count int
+}
+
+// stop is the row after the last one, exclusive, as WLED defines it.
+func (r rows) stop() int { return r.first + r.count }
+
+// validate reports whether the span names at least one row.
+func (r rows) validate() error {
+	if r.first < 0 || r.count <= 0 {
+		return fmt.Errorf("%w: rows from %d, %d of them", ErrInvalidRectangle, r.first, r.count)
+	}
+
+	return nil
 }
 
 // SolidOption adjusts one SetSolid call.
@@ -563,6 +720,19 @@ func WithSolidFade(milliseconds int) SolidOption {
 // only ever writes whole colours can leave this out.
 func WithSolidLEDCount(count int) SolidOption {
 	return func(s *solid) { s.ledCount = count }
+}
+
+// WithSolidRows states which rows of a panel the whole-strip write covers: firstRow
+// is the first row, inclusive, and rowCount is how many. It is how a solid colour
+// becomes a full-width band or the whole panel instead of one row.
+//
+// The row bounds travel with the column bounds on purpose. A write that named
+// "start" and "stop" alone would be read as a flat LED index range and would
+// collapse the segment to a single row of the panel, so a caller that draws on a
+// panel passes the rows it means. A row span that names no row is refused with
+// ErrInvalidRectangle before anything is sent.
+func WithSolidRows(firstRow, rowCount int) SolidOption {
+	return func(s *solid) { s.rows = &rows{first: firstRow, count: rowCount} }
 }
 
 // fadeUnits converts milliseconds to WLED's 100 ms transition units, rounding up
@@ -595,6 +765,12 @@ func (c *Client) SetSolid(ctx context.Context, color RGB, opts ...SolidOption) e
 		return fmt.Errorf("%w: %d is not 0-255", ErrInvalidBrightness, *settings.brightness)
 	}
 
+	if settings.rows != nil {
+		if err := settings.rows.validate(); err != nil {
+			return err
+		}
+	}
+
 	on := true
 	effect := solidEffect
 
@@ -611,6 +787,12 @@ func (c *Client) SetSolid(ctx context.Context, color RGB, opts ...SolidOption) e
 		segment.Stop = &stop
 	}
 
+	if settings.rows != nil {
+		startY, stopY := settings.rows.first, settings.rows.stop()
+		segment.StartY = &startY
+		segment.StopY = &stopY
+	}
+
 	return c.do(ctx, http.MethodPost, pathState, writeState{
 		Brightness: settings.brightness,
 		Transition: settings.transition,
@@ -621,6 +803,7 @@ func (c *Client) SetSolid(ctx context.Context, color RGB, opts ...SolidOption) e
 // rangeRequest is what the options to SetRange fill in.
 type rangeRequest struct {
 	ledCount int
+	rows     *rows
 }
 
 // RangeOption adjusts one SetRange call.
@@ -632,6 +815,17 @@ type RangeOption func(*rangeRequest)
 // package will not fetch it behind a caller's back.
 func WithRangeLEDCount(count int) RangeOption {
 	return func(r *rangeRequest) { r.ledCount = count }
+}
+
+// WithRangeRows states which rows of a panel the run covers: firstRow is the first
+// row, inclusive, and rowCount is how many. On a panel a segment is a rectangle, so
+// a run of LEDs is a band across the rows it names; without the rows the controller
+// reads the LED bounds as a flat index range and folds the segment onto one row.
+//
+// A row span that names no row is refused with ErrInvalidRectangle before anything
+// is sent.
+func WithRangeRows(firstRow, rowCount int) RangeOption {
+	return func(r *rangeRequest) { r.rows = &rows{first: firstRow, count: rowCount} }
 }
 
 // SetRange sets a contiguous run of LEDs to one colour: first is the first LED it
@@ -664,19 +858,565 @@ func (c *Client) SetRange(ctx context.Context, first, count int, color RGB, opts
 			ErrInvalidRange, first, count, settings.ledCount)
 	}
 
+	if settings.rows != nil {
+		if err := settings.rows.validate(); err != nil {
+			return err
+		}
+	}
+
+	on := true
+	effect := solidEffect
+
+	segment := writeSegment{
+		ID:     firstSegment,
+		Start:  &first,
+		Stop:   &stop,
+		On:     &on,
+		Colors: [][]int{color.channels()},
+		Effect: &effect,
+	}
+
+	if settings.rows != nil {
+		startY, stopY := settings.rows.first, settings.rows.stop()
+		segment.StartY = &startY
+		segment.StopY = &stopY
+	}
+
+	return c.do(ctx, http.MethodPost, pathState, writeState{
+		Segments: []writeSegment{segment},
+	}, nil)
+}
+
+// Bounds is a segment's rectangle on a two-dimensional controller: the columns it
+// covers and the rows it covers, in WLED's half-open form — Start and StartY are the
+// first column and row it covers, Stop and StopY the ones after its last.
+//
+// All four numbers travel together, always. WLED reads Start and Stop alone as a flat
+// range of LED indices, so a rectangle that named its columns and not its rows would
+// be folded onto one row of the panel; this type cannot express that mistake.
+type Bounds struct {
+	// Start is the first column, inclusive.
+	Start int
+	// Stop is the column after the last one, exclusive.
+	Stop int
+	// StartY is the first row, inclusive.
+	StartY int
+	// StopY is the row after the last one, exclusive.
+	StopY int
+}
+
+// validate reports whether the rectangle covers at least one pixel. A rectangle that
+// covers none is refused rather than sent: a controller treats a segment whose stop
+// is not past its start as a segment to delete, so an empty rectangle would take the
+// segment away instead of drawing nothing.
+func (b Bounds) validate() error {
+	if b.Start < 0 || b.StartY < 0 || b.Stop <= b.Start || b.StopY <= b.StartY {
+		return fmt.Errorf("%w: columns %d-%d and rows %d-%d",
+			ErrInvalidRectangle, b.Start, b.Stop, b.StartY, b.StopY)
+	}
+
+	return nil
+}
+
+// effectRequest is what the options to SetEffect fill in.
+type effectRequest struct {
+	bounds *Bounds
+}
+
+// EffectOption adjusts one SetEffect call.
+type EffectOption func(*effectRequest)
+
+// WithEffectBounds states the rectangle a panel segment covers, so the effect runs
+// over that rectangle rather than over the whole panel. All four bounds are sent;
+// see Bounds for why they cannot be sent in part.
+func WithEffectBounds(bounds Bounds) EffectOption {
+	return func(e *effectRequest) { e.bounds = &bounds }
+}
+
+// Effect is one effect and the parameters it runs with: the id the controller lists
+// it under ("fx"), its speed and intensity ("sx", "ix"), the three custom values
+// ("c1", "c2", "c3"), the three check values ("o1", "o2", "o3") and its palette
+// ("pal").
+//
+// Every field is sent on every write, zeros included, because a controller applies
+// only what a body names and an omitted parameter would leave the last effect's value
+// behind. A caller that wants to change one parameter and keep the rest reads the
+// segment back with State first — a Segment carries all of them — or leaves the write
+// to SetSolid and SetRange, which name no effect parameters at all.
+//
+// Two effects are worth naming here. Solid is id 0 and is what SetSolid and SetRange
+// write. Scrolling Text is id 122 on the firmware this was measured against, and it
+// draws the segment's own name — SetSegmentName — with Custom2 as the font size and
+// Intensity as the vertical position; the id is not guaranteed across firmware, which
+// is what Capabilities exists to check.
+type Effect struct {
+	// ID is the effect's id in the controller's own list, "fx".
+	ID int
+	// Speed is the effect's speed, "sx", 0-255.
+	Speed int
+	// Intensity is the effect's intensity, "ix", 0-255; for the text effect, the
+	// vertical position.
+	Intensity int
+	// Custom1 is the effect's first custom value, "c1", 0-255.
+	Custom1 int
+	// Custom2 is the effect's second custom value, "c2", 0-255; for the text effect,
+	// the font size.
+	Custom2 int
+	// Custom3 is the effect's third custom value, "c3", 0-255.
+	Custom3 int
+	// Check1 is the effect's first check value, "o1", 0-255.
+	Check1 int
+	// Check2 is the effect's second check value, "o2", 0-255.
+	Check2 int
+	// Check3 is the effect's third check value, "o3", 0-255.
+	Check3 int
+	// Palette is the palette id it draws with, "pal".
+	Palette int
+}
+
+// validate reports whether every parameter is one a controller can carry: an id in
+// 0-255 and each parameter in 0-255. A number outside that range is a caller's
+// arithmetic going wrong, and a controller would cut it down without saying so.
+func (e Effect) validate() error {
+	for _, parameter := range []struct {
+		name  string
+		value int
+	}{
+		{"effect id", e.ID},
+		{"speed", e.Speed},
+		{"intensity", e.Intensity},
+		{"custom 1", e.Custom1},
+		{"custom 2", e.Custom2},
+		{"custom 3", e.Custom3},
+		{"check 1", e.Check1},
+		{"check 2", e.Check2},
+		{"check 3", e.Check3},
+		{"palette", e.Palette},
+	} {
+		if parameter.value < 0 || parameter.value > 255 {
+			return fmt.Errorf("%w: %s is %d, not 0-255", ErrInvalidEffect, parameter.name, parameter.value)
+		}
+	}
+
+	return nil
+}
+
+// SetEffect puts a segment onto one effect with the parameters given. The write
+// names the effect, every parameter of it, and — when WithEffectBounds is passed — all
+// four bounds of the rectangle it covers. It names no colour, because an effect takes
+// its colours from its palette, and it names no strip brightness, so the strip's
+// power and brightness are the caller's to set with SetPower and SetBrightness.
+//
+// The segment itself is switched on, because an effect written to a segment that is
+// not drawn is not shown. For text on a panel the order of SetSegmentName and this
+// call does not matter: both write the same segment and neither clears the other's
+// field.
+func (c *Client) SetEffect(ctx context.Context, effect Effect, opts ...EffectOption) error {
+	settings := effectRequest{}
+
+	for _, option := range opts {
+		if option != nil {
+			option(&settings)
+		}
+	}
+
+	if err := effect.validate(); err != nil {
+		return err
+	}
+
+	if settings.bounds != nil {
+		if err := settings.bounds.validate(); err != nil {
+			return err
+		}
+	}
+
+	on := true
+
+	segment := writeSegment{
+		ID:        firstSegment,
+		On:        &on,
+		Effect:    &effect.ID,
+		Speed:     &effect.Speed,
+		Intensity: &effect.Intensity,
+		Custom1:   &effect.Custom1,
+		Custom2:   &effect.Custom2,
+		Custom3:   &effect.Custom3,
+		Check1:    &effect.Check1,
+		Check2:    &effect.Check2,
+		Check3:    &effect.Check3,
+		Palette:   &effect.Palette,
+	}
+
+	if settings.bounds != nil {
+		segment.Start = &settings.bounds.Start
+		segment.Stop = &settings.bounds.Stop
+		segment.StartY = &settings.bounds.StartY
+		segment.StopY = &settings.bounds.StopY
+	}
+
+	return c.do(ctx, http.MethodPost, pathState, writeState{
+		Segments: []writeSegment{segment},
+	}, nil)
+}
+
+// SetSegmentName gives the segment its own name, which is the string the text effect
+// draws and nothing else. It is the only way to put a word on a matrix: the effect
+// decides where the word goes, and the name is what it says.
+//
+// The name is capped at MaxSegmentName characters, which is what a controller stores;
+// an empty name or a longer one is refused with ErrInvalidName rather than truncated,
+// because half a word on a panel is not a status. A name-only write carries no bounds
+// at all, so it leaves the segment's rectangle exactly as it was.
+func (c *Client) SetSegmentName(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: the name is empty", ErrInvalidName)
+	}
+
+	if len(name) > MaxSegmentName {
+		return fmt.Errorf("%w: %d characters, at most %d", ErrInvalidName, len(name), MaxSegmentName)
+	}
+
+	return c.do(ctx, http.MethodPost, pathState, writeState{
+		Segments: []writeSegment{{ID: firstSegment, Name: &name}},
+	}, nil)
+}
+
+// rectangleRequest is what the options to SetRectangle fill in.
+type rectangleRequest struct {
+	grouping  *int
+	transpose *int
+	expand1D  *int
+}
+
+// RectangleOption adjusts one SetRectangle call.
+type RectangleOption func(*rectangleRequest)
+
+// WithRectangleGrouping sets the segment's grouping, "grp": how many LEDs each colour
+// covers. One is every LED its own colour; two makes each colour a pair, which is how
+// a coarse bar is drawn on a panel too small to need every pixel.
+func WithRectangleGrouping(leds int) RectangleOption {
+	return func(r *rectangleRequest) { r.grouping = &leds }
+}
+
+// WithRectangleTranspose sets the segment's transpose code, "tp": 0 leaves the effect
+// as it is, and the higher codes rotate it through WLED's own quarter turns. A code
+// outside 0-255 is refused with ErrInvalidRectangle.
+func WithRectangleTranspose(code int) RectangleOption {
+	return func(r *rectangleRequest) { r.transpose = &code }
+}
+
+// WithRectangleExpand1D sets how a one-dimensional effect is laid onto the panel,
+// "m12": one of ExpandPixels, ExpandBar, ExpandArc or ExpandCorner. Anything else is
+// refused with ErrInvalidRectangle, because a code a controller does not know leaves
+// the panel showing something nobody chose.
+func WithRectangleExpand1D(mode int) RectangleOption {
+	return func(r *rectangleRequest) { r.expand1D = &mode }
+}
+
+// SetRectangle paints one colour into an explicit rectangle of a panel: columns
+// Start..Stop and rows StartY..StopY, all four sent, always. It is the geometry tier —
+// a band of rows is a bar, and resizing the rectangle is how a progress bar grows
+// without painting a pixel.
+//
+// A rectangle that covers nothing, or is inverted in either axis, is refused with
+// ErrInvalidRectangle and nothing is sent. A rectangle wider than the panel is not
+// refused here: this package does not know the matrix unless the caller supplies it,
+// and a controller clips a segment to its own LEDs.
+func (c *Client) SetRectangle(ctx context.Context, bounds Bounds, color RGB, opts ...RectangleOption) error {
+	settings := rectangleRequest{}
+
+	for _, option := range opts {
+		if option != nil {
+			option(&settings)
+		}
+	}
+
+	if err := bounds.validate(); err != nil {
+		return err
+	}
+
+	for _, geometry := range []struct {
+		name  string
+		value *int
+	}{
+		{"grouping", settings.grouping},
+		{"transpose", settings.transpose},
+		{"expand 1D", settings.expand1D},
+	} {
+		if geometry.value != nil && (*geometry.value < 0 || *geometry.value > 255) {
+			return fmt.Errorf("%w: %s is %d, not 0-255", ErrInvalidRectangle, geometry.name, *geometry.value)
+		}
+	}
+
 	on := true
 	effect := solidEffect
 
 	return c.do(ctx, http.MethodPost, pathState, writeState{
 		Segments: []writeSegment{{
-			ID:     firstSegment,
-			Start:  &first,
-			Stop:   &stop,
-			On:     &on,
-			Colors: [][]int{color.channels()},
-			Effect: &effect,
+			ID:        firstSegment,
+			Start:     &bounds.Start,
+			Stop:      &bounds.Stop,
+			StartY:    &bounds.StartY,
+			StopY:     &bounds.StopY,
+			On:        &on,
+			Colors:    [][]int{color.channels()},
+			Effect:    &effect,
+			Grouping:  settings.grouping,
+			Transpose: settings.transpose,
+			Expand1D:  settings.expand1D,
 		}},
 	}, nil)
+}
+
+// paintRequest is what the options to Paint fill in.
+type paintRequest struct {
+	budget int
+}
+
+// PaintOption adjusts one Paint call.
+type PaintOption func(*paintRequest)
+
+// WithPaintByteBudget sets the largest request body Paint may send, in bytes. The
+// default is DefaultPaintByteBudget, 8 KiB. A budget too small to carry one LED is
+// refused with ErrPaintBudget rather than exceeded.
+func WithPaintByteBudget(budget int) PaintOption {
+	return func(p *paintRequest) { p.budget = budget }
+}
+
+// Paint colours individual LEDs: colors[0] is LED number first, colors[1] the one
+// after it, and so on, which is WLED's segment property i.
+//
+// It is the floor under the other two tiers. Effects can animate and can carry text,
+// rectangles can draw a bar, but a controller that cannot do either can still be
+// given one colour per LED, so this is the call that makes "cannot be shown at all"
+// impossible. Everything it costs is in the package comment: the colours are not
+// saved across a reboot, they freeze the segment's effect, and the segment must
+// already be on and at its brightness — a body that switches a segment on and sets
+// its LEDs together does not work, so this one sends the LEDs alone.
+//
+// A frame longer than the byte budget is split into several requests, each starting
+// at the LED its first colour belongs to, so the order of the colours is preserved
+// across the whole frame and every body stays inside the budget. Each request is a
+// separate call to the controller, so another writer can land between two of them;
+// WLED has no transaction, and a caller that needs a frame to appear at once keeps it
+// within one chunk.
+//
+// An empty slice is refused with ErrEmptyPaint and no request is sent, and a first
+// below zero with ErrInvalidRange. first is the LED within the segment, which for
+// segment 0 — the only one this package writes — is the LED number on the device; on
+// a panel that is y*width + x.
+func (c *Client) Paint(ctx context.Context, first int, colors []RGB, opts ...PaintOption) error {
+	settings := paintRequest{budget: DefaultPaintByteBudget}
+
+	for _, option := range opts {
+		if option != nil {
+			option(&settings)
+		}
+	}
+
+	if len(colors) == 0 {
+		return fmt.Errorf("%w: the slice is empty", ErrEmptyPaint)
+	}
+
+	if first < 0 {
+		return fmt.Errorf("%w: first led %d", ErrInvalidRange, first)
+	}
+
+	remaining := colors
+	index := first
+
+	for len(remaining) > 0 {
+		fits := paintColoursThatFit(index, settings.budget)
+		if fits < 1 {
+			return fmt.Errorf("%w: %d bytes cannot carry the %d a body needs",
+				ErrPaintBudget, settings.budget, paintBodyBytes(index, 1))
+		}
+
+		count := min(fits, len(remaining))
+
+		segment := writeSegment{ID: firstSegment, Pixels: paintPixels(index, remaining[:count])}
+		if err := c.do(ctx, http.MethodPost, pathState, writeState{
+			Segments: []writeSegment{segment},
+		}, nil); err != nil {
+			return err
+		}
+
+		remaining = remaining[count:]
+		index += count
+	}
+
+	return nil
+}
+
+// paintEntryBytes is what one LED costs inside a paint body when it is written as the
+// hex colour WLED reads: a comma, a quote, six digits and a closing quote. Every
+// colour costs the same, which is what makes the chunk arithmetic exact rather than
+// estimated.
+const paintEntryBytes = len(`,"FFFFFF"`)
+
+// paintEnvelope is what a paint body spends on everything but its colours: the
+// wrapper, the segment id, the LED list, and the single index entry that says where
+// the list starts, counted with a one-digit index.
+var paintEnvelope = func() int {
+	raw, err := json.Marshal(writeState{
+		Segments: []writeSegment{{ID: firstSegment, Pixels: []any{0}}},
+	})
+	if err != nil {
+		// The body is a struct of integers and strings; this cannot happen, and a
+		// client that silently guessed at its own encoding would be worse than one
+		// that stops here.
+		panic("wled: the per-led body does not encode: " + err.Error())
+	}
+
+	return len(raw)
+}()
+
+// paintBodyBytes is how long the body for a chunk of colours would be if it started at
+// the LED index and carried that many colours.
+func paintBodyBytes(index, colors int) int {
+	return paintEnvelope + len(strconv.Itoa(index)) - 1 + colors*paintEntryBytes
+}
+
+// paintColoursThatFit is how many colours a chunk starting at the LED index can carry
+// inside a budget of that many bytes, or 0 when not even one fits. The index's own
+// digits are counted, so a chunk late in a 16,384-LED frame is measured against the
+// five-digit index it will actually be written with.
+func paintColoursThatFit(index, budget int) int {
+	room := budget - paintEnvelope - (len(strconv.Itoa(index)) - 1)
+	if room < paintEntryBytes {
+		return 0
+	}
+
+	return room / paintEntryBytes
+}
+
+// paintPixels is the segment's i property for one chunk: the index its first colour
+// belongs to, then each colour as six hex digits. Naming the index on every chunk,
+// including the first, is what lets a frame that was split be reassembled in order.
+func paintPixels(index int, colors []RGB) []any {
+	pixels := make([]any, 0, len(colors)+1)
+	pixels = append(pixels, index)
+
+	for _, color := range colors {
+		pixels = append(pixels, color.hex())
+	}
+
+	return pixels
+}
+
+// hex is the colour as WLED reads one inside a segment's i list: six uppercase hex
+// digits, no leading hash. It is the same shape parseHexColor accepts back.
+func (c RGB) hex() string { return fmt.Sprintf("%02X%02X%02X", c.R, c.G, c.B) }
+
+// EffectInfo is one effect a controller offers: the id to write, the name to show in a
+// list, and the effect's own flag string when the controller publishes one.
+type EffectInfo struct {
+	// ID is the effect's id, which is both its position in the controller's list and
+	// the number SetEffect writes as fx.
+	ID int
+	// Name is the effect's name as the controller reports it, such as "Solid" or
+	// "Scrolling Text".
+	Name string
+	// Flags is the effect's line of the controller's fxdata, when the controller
+	// published one: a short string of characters saying which of the effect's
+	// controls it actually uses. It is empty when the answer carried no fxdata, which
+	// is a controller whose effects this package cannot describe beyond their names.
+	Flags string
+}
+
+// Palette is one palette a controller offers.
+type Palette struct {
+	// ID is the palette's id, which is the number SetEffect writes as pal.
+	ID int
+	// Name is the palette's name as the controller reports it. A leading asterisk is
+	// the controller's own marker for a palette it generates rather than one it
+	// stores.
+	Name string
+}
+
+// Capabilities is what a controller says it can show. It is read from the controller
+// rather than assumed, because effect ids are per-firmware: the same number is a
+// different effect on a different version.
+type Capabilities struct {
+	// Effects is every effect the controller lists, in its own order.
+	Effects []EffectInfo
+	// Palettes is every palette it lists, in its own order.
+	Palettes []Palette
+}
+
+// Capabilities reads the controller's catalogue of effects and palettes from GET
+// /json. It is what a caller builds a choice from, and what says whether the effect it
+// means to use exists on this firmware at all.
+//
+// The flag strings come from the same document's fxdata when it has one; when it does
+// not, every EffectInfo reads with empty Flags and its own name, which is enough to
+// build a list and not enough to know which of an effect's controls matter. A document
+// that pairs them differently is not guessed at: an effect whose line is missing reads
+// empty rather than taking its neighbour's.
+func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
+	var answer struct {
+		Effects  []string        `json:"effects"`
+		Palettes []string        `json:"palettes"`
+		FXData   json.RawMessage `json:"fxdata"`
+	}
+
+	if err := c.do(ctx, http.MethodGet, pathJSON, nil, &answer); err != nil {
+		return Capabilities{}, err
+	}
+
+	flags := decodeFXData(answer.FXData)
+
+	capabilities := Capabilities{
+		Effects:  make([]EffectInfo, 0, len(answer.Effects)),
+		Palettes: make([]Palette, 0, len(answer.Palettes)),
+	}
+
+	for id, name := range answer.Effects {
+		effect := EffectInfo{ID: id, Name: name}
+		if id < len(flags) {
+			effect.Flags = flags[id]
+		}
+
+		capabilities.Effects = append(capabilities.Effects, effect)
+	}
+
+	for id, name := range answer.Palettes {
+		capabilities.Palettes = append(capabilities.Palettes, Palette{ID: id, Name: name})
+	}
+
+	return capabilities, nil
+}
+
+// decodeFXData reads the fxdata that may travel with the effect list. A controller
+// publishes it as one newline-separated string; a firmware that publishes an array of
+// lines instead is read too. Anything else, or nothing at all, is no flags rather than
+// a failed call: the effect list is still worth having.
+func decodeFXData(raw json.RawMessage) []string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		if text == "" {
+			return nil
+		}
+
+		lines := strings.Split(text, "\n")
+		for index, line := range lines {
+			lines[index] = strings.TrimSuffix(line, "\r")
+		}
+
+		return lines
+	}
+
+	var lines []string
+	if err := json.Unmarshal(trimmed, &lines); err == nil {
+		return lines
+	}
+
+	return nil
 }
 
 // writeState is a POST /json/state body. Every field is a pointer so that "not
@@ -691,21 +1431,39 @@ type writeState struct {
 }
 
 // writeSegment is one segment of that body, in the order the WLED documentation
-// writes it: which segment, which LEDs, whether it is drawn, its colour, its effect.
+// writes it: which segment, which LEDs, whether it is drawn, its colour, its effect
+// and that effect's parameters, then the geometry controls, then the name and the
+// per-LED list.
 //
 // The row bounds are here because a 2D controller expresses a segment as a rectangle
-// in both axes, and the two are omitted when unset: nothing in this package draws a
-// rectangle, so a write sent from here carries LED bounds alone and a controller with
-// rows keeps the rows it already had.
+// in both axes, and they must travel with the column bounds or not at all. A write
+// that carries "start" and "stop" without "startY" and "stopY" is read as a flat range
+// of LED indices: the controller recomputes the segment's rows from those two numbers
+// and leaves the segment one row high, whatever rows it covered before. A write that
+// carries no bounds at all — a name, a per-LED list — does not touch the geometry.
 type writeSegment struct {
-	ID     int     `json:"id"`
-	Start  *int    `json:"start,omitempty"`
-	Stop   *int    `json:"stop,omitempty"`
-	StartY *int    `json:"startY,omitempty"`
-	StopY  *int    `json:"stopY,omitempty"`
-	On     *bool   `json:"on,omitempty"`
-	Colors [][]int `json:"col,omitempty"`
-	Effect *int    `json:"fx,omitempty"`
+	ID        int     `json:"id"`
+	Start     *int    `json:"start,omitempty"`
+	Stop      *int    `json:"stop,omitempty"`
+	StartY    *int    `json:"startY,omitempty"`
+	StopY     *int    `json:"stopY,omitempty"`
+	On        *bool   `json:"on,omitempty"`
+	Colors    [][]int `json:"col,omitempty"`
+	Effect    *int    `json:"fx,omitempty"`
+	Speed     *int    `json:"sx,omitempty"`
+	Intensity *int    `json:"ix,omitempty"`
+	Custom1   *int    `json:"c1,omitempty"`
+	Custom2   *int    `json:"c2,omitempty"`
+	Custom3   *int    `json:"c3,omitempty"`
+	Check1    *int    `json:"o1,omitempty"`
+	Check2    *int    `json:"o2,omitempty"`
+	Check3    *int    `json:"o3,omitempty"`
+	Palette   *int    `json:"pal,omitempty"`
+	Grouping  *int    `json:"grp,omitempty"`
+	Transpose *int    `json:"tp,omitempty"`
+	Expand1D  *int    `json:"m12,omitempty"`
+	Name      *string `json:"n,omitempty"`
+	Pixels    []any   `json:"i,omitempty"`
 }
 
 // do performs one request and is the only place this package talks to a

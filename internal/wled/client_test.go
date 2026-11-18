@@ -673,3 +673,630 @@ func TestADecodeFailureKeepsTheCause(t *testing.T) {
 		t.Fatalf("the decode error does not carry the parser's own error: %v", err)
 	}
 }
+
+// capture is a controller that records every request it is given and answers
+// success, so a test can assert the body that was actually sent.
+type capture struct {
+	methods []string
+	paths   []string
+	bodies  []string
+}
+
+// server starts a controller that records into the capture and answers success.
+func (c *capture) server(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read the request body: %v", err)
+		}
+
+		c.methods = append(c.methods, r.Method)
+		c.paths = append(c.paths, r.URL.Path)
+		c.bodies = append(c.bodies, string(raw))
+
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+// TestSetEffectWritesEveryParameterAndBothAxes proves the tier-1 write end to end:
+// the effect, all nine of its parameters including the zeros, and all four bounds of
+// the rectangle it runs in, in one body. The zeros matter: a parameter left out would
+// leave the previous effect's value behind, so a body that omitted o2 and o3 would not
+// be the body this test wants to see.
+func TestSetEffectWritesEveryParameterAndBothAxes(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	effect := Effect{
+		ID:        122, // Scrolling Text
+		Speed:     128,
+		Intensity: 16,
+		Custom1:   7,
+		Custom2:   2, // font size
+		Custom3:   3,
+		Check1:    1,
+		Check2:    0,
+		Check3:    0,
+		Palette:   5,
+	}
+
+	err := client(t, server.URL).SetEffect(context.Background(), effect,
+		WithEffectBounds(Bounds{Start: 0, Stop: 256, StartY: 0, StopY: 64}))
+	if err != nil {
+		t.Fatalf("SetEffect: %v", err)
+	}
+
+	if len(recorder.methods) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
+		t.Fatalf("SetEffect sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,` +
+		`"fx":122,"sx":128,"ix":16,"c1":7,"c2":2,"c3":3,"o1":1,"o2":0,"o3":0,"pal":5}]}`
+
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetEffect sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestSetEffectRefusesAParameterOutsideAByte proves an effect parameter outside 0-255
+// is refused before anything is sent: a controller stores these in one byte and would
+// cut the number down without saying so.
+func TestSetEffectRefusesAParameterOutsideAByte(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+
+	for _, effect := range []Effect{
+		{ID: 256},
+		{ID: 1, Speed: -1},
+		{ID: 1, Intensity: 300},
+		{ID: 1, Palette: 256},
+	} {
+		if err := clientUnderTest.SetEffect(context.Background(), effect); !errors.Is(err, ErrInvalidEffect) {
+			t.Fatalf("SetEffect(%+v) returned %v, want ErrInvalidEffect", effect, err)
+		}
+	}
+
+	if len(recorder.bodies) != 0 {
+		t.Fatalf("a refused effect reached the controller %d times, want 0", len(recorder.bodies))
+	}
+}
+
+// TestSetSegmentNameWritesTheTextCarrier proves the string the text effect draws is
+// the segment's n field, and that the write carries nothing else — no bounds, so a
+// panel's rectangle is left exactly as it was.
+func TestSetSegmentNameWritesTheTextCarrier(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	if err := client(t, server.URL).SetSegmentName(context.Background(), "PRINTING 94%"); err != nil {
+		t.Fatalf("SetSegmentName: %v", err)
+	}
+
+	if len(recorder.bodies) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
+		t.Fatalf("SetSegmentName sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
+	}
+
+	want := `{"seg":[{"id":0,"n":"PRINTING 94%"}]}`
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetSegmentName sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestSetSegmentNameRefusesWhatIsNotAName proves the cap is enforced rather than
+// truncated: 48 characters is a name and travels, and an empty, blank or 49-character
+// one is refused with nothing sent. Half a word on a panel is not a status.
+func TestSetSegmentNameRefusesWhatIsNotAName(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+
+	for _, name := range []string{"", "   	 ", strings.Repeat("A", MaxSegmentName+1)} {
+		if err := clientUnderTest.SetSegmentName(context.Background(), name); !errors.Is(err, ErrInvalidName) {
+			t.Fatalf("SetSegmentName(%q) returned %v, want ErrInvalidName", name, err)
+		}
+	}
+
+	if len(recorder.bodies) != 0 {
+		t.Fatalf("a refused name reached the controller %d times, want 0", len(recorder.bodies))
+	}
+
+	if err := clientUnderTest.SetSegmentName(context.Background(), strings.Repeat("A", MaxSegmentName)); err != nil {
+		t.Fatalf("SetSegmentName with %d characters: %v", MaxSegmentName, err)
+	}
+
+	if len(recorder.bodies) != 1 {
+		t.Fatalf("a name of exactly %d characters did not travel", MaxSegmentName)
+	}
+}
+
+// TestSetRectangleWritesTheWholeGeometry proves the tier-2 write: all four bounds, the
+// colour, the solid effect so the rectangle is not filled by an animation, and the
+// three geometry controls — grouping, transpose and the 1D expansion — in one body.
+func TestSetRectangleWritesTheWholeGeometry(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	err := client(t, server.URL).SetRectangle(context.Background(),
+		Bounds{Start: 0, Stop: 256, StartY: 0, StopY: 64},
+		RGB{R: 0, G: 255, B: 0},
+		WithRectangleGrouping(2),
+		WithRectangleTranspose(1),
+		WithRectangleExpand1D(ExpandCorner))
+	if err != nil {
+		t.Fatalf("SetRectangle: %v", err)
+	}
+
+	if len(recorder.bodies) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
+		t.Fatalf("SetRectangle sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
+	}
+
+	want := `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,` +
+		`"col":[[0,255,0]],"fx":0,"grp":2,"tp":1,"m12":3}]}`
+
+	if recorder.bodies[0] != want {
+		t.Fatalf("SetRectangle sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestSetRectangleRefusesWhatIsNotARectangle proves an empty or inverted rectangle
+// never leaves the process. A controller reads a segment whose stop is not past its
+// start as a segment to delete, so sending one would take the panel's segment away
+// rather than draw nothing on it.
+func TestSetRectangleRefusesWhatIsNotARectangle(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+
+	for _, rectangle := range []struct {
+		name   string
+		bounds Bounds
+	}{
+		{"the zero value", Bounds{}},
+		{"inverted columns", Bounds{Start: 10, Stop: 5, StartY: 0, StopY: 1}},
+		{"inverted rows", Bounds{Start: 0, Stop: 4, StartY: 5, StopY: 2}},
+		{"no rows at all", Bounds{Start: 0, Stop: 4, StartY: 7, StopY: 7}},
+		{"a negative column", Bounds{Start: -1, Stop: 4, StartY: 0, StopY: 1}},
+	} {
+		err := clientUnderTest.SetRectangle(context.Background(), rectangle.bounds, RGB{R: 1, G: 2, B: 3})
+		if !errors.Is(err, ErrInvalidRectangle) {
+			t.Fatalf("%s: SetRectangle returned %v, want ErrInvalidRectangle", rectangle.name, err)
+		}
+	}
+
+	if len(recorder.bodies) != 0 {
+		t.Fatalf("a refused rectangle reached the controller %d times, want 0", len(recorder.bodies))
+	}
+}
+
+// TestTheColourWritesCarryPanelRows proves the row options on the two existing colour
+// writes: with rows supplied, SetSolid and SetRange each carry all four bounds, so a
+// panel draws a band instead of the single row a columns-only body would collapse to.
+func TestTheColourWritesCarryPanelRows(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+
+	err := clientUnderTest.SetSolid(context.Background(), RGB{R: 0, G: 255, B: 0},
+		WithSolidBrightness(128), WithSolidFade(700), WithSolidLEDCount(30), WithSolidRows(0, 64))
+	if err != nil {
+		t.Fatalf("SetSolid: %v", err)
+	}
+
+	wantSolid := `{"bri":128,"transition":7,"seg":[{"id":0,"start":0,"stop":30,"startY":0,"stopY":64,` +
+		`"on":true,"col":[[0,255,0]],"fx":0}]}`
+	if recorder.bodies[0] != wantSolid {
+		t.Fatalf("SetSolid sent\n%s\nwant\n%s", recorder.bodies[0], wantSolid)
+	}
+
+	err = clientUnderTest.SetRange(context.Background(), 10, 5, RGB{R: 0, G: 0, B: 255},
+		WithRangeLEDCount(256), WithRangeRows(3, 2))
+	if err != nil {
+		t.Fatalf("SetRange: %v", err)
+	}
+
+	wantRange := `{"seg":[{"id":0,"start":10,"stop":15,"startY":3,"stopY":5,"on":true,` +
+		`"col":[[0,0,255]],"fx":0}]}`
+	if recorder.bodies[1] != wantRange {
+		t.Fatalf("SetRange sent\n%s\nwant\n%s", recorder.bodies[1], wantRange)
+	}
+}
+
+// TestPaintWritesTheIndexAndHexColours proves the tier-3 encoding byte for byte: the
+// LED list names the index its first colour belongs to and then one six-digit hex
+// colour per LED, and it carries nothing else — no power, because switching a segment
+// on and painting it in the same body does not work.
+func TestPaintWritesTheIndexAndHexColours(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	err := client(t, server.URL).Paint(context.Background(), 7, []RGB{
+		{R: 255, G: 0, B: 0},
+		{R: 0, G: 255, B: 0},
+		{R: 0, G: 0, B: 255},
+	})
+	if err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	if len(recorder.bodies) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
+		t.Fatalf("Paint sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
+	}
+
+	want := `{"seg":[{"id":0,"i":[7,"FF0000","00FF00","0000FF"]}]}`
+	if recorder.bodies[0] != want {
+		t.Fatalf("Paint sent\n%s\nwant\n%s", recorder.bodies[0], want)
+	}
+}
+
+// TestPaintRefusesWhatItCannotSend proves the three refusals reach no controller: an
+// empty frame and a nil one have nothing to draw, a negative first LED is not an LED,
+// and a budget smaller than one colour would be broken by the first chunk rather than
+// honoured.
+func TestPaintRefusesWhatItCannotSend(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	clientUnderTest := client(t, server.URL)
+	oneColour := []RGB{{R: 1, G: 2, B: 3}}
+
+	for _, paint := range []struct {
+		name   string
+		first  int
+		colors []RGB
+		opts   []PaintOption
+		want   error
+	}{
+		{"an empty slice", 0, []RGB{}, nil, ErrEmptyPaint},
+		{"a nil slice", 0, nil, nil, ErrEmptyPaint},
+		{"a negative first led", -1, oneColour, nil, ErrInvalidRange},
+		{"a budget under one colour", 0, oneColour, []PaintOption{WithPaintByteBudget(34)}, ErrPaintBudget},
+		{"a zero budget", 0, oneColour, []PaintOption{WithPaintByteBudget(0)}, ErrPaintBudget},
+	} {
+		err := clientUnderTest.Paint(context.Background(), paint.first, paint.colors, paint.opts...)
+		if !errors.Is(err, paint.want) {
+			t.Fatalf("%s: Paint returned %v, want %v", paint.name, err, paint.want)
+		}
+	}
+
+	if len(recorder.bodies) != 0 {
+		t.Fatalf("a refused paint reached the controller %d times, want 0", len(recorder.bodies))
+	}
+}
+
+// TestPaintSplitsAFrameToStayInsideTheBudget proves the whole of the largest frame this
+// module drives: 16,384 colours go out in as many requests as the budget needs, every
+// body is inside the budget, each names the LED its first colour belongs to, and the
+// colours reassemble into the frame that was handed in, in order.
+func TestPaintSplitsAFrameToStayInsideTheBudget(t *testing.T) {
+	recorder := &capture{}
+	server := recorder.server(t)
+
+	const panelLEDs = 16384
+
+	colors := make([]RGB, panelLEDs)
+	for led := range colors {
+		colors[led] = RGB{R: uint8(led), G: uint8(led >> 8), B: 0x40}
+	}
+
+	if err := client(t, server.URL).Paint(context.Background(), 0, colors); err != nil {
+		t.Fatalf("Paint: %v", err)
+	}
+
+	if len(recorder.bodies) < 2 {
+		t.Fatalf("a %d-colour frame was sent in %d request(s), want it split", panelLEDs, len(recorder.bodies))
+	}
+
+	painted := 0
+
+	for request, body := range recorder.bodies {
+		if recorder.methods[request] != http.MethodPost || recorder.paths[request] != "/json/state" {
+			t.Fatalf("request %d was %s %s, want POST /json/state",
+				request, recorder.methods[request], recorder.paths[request])
+		}
+
+		if len(body) > DefaultPaintByteBudget {
+			t.Fatalf("request %d carries %d bytes, over the %d budget",
+				request, len(body), DefaultPaintByteBudget)
+		}
+
+		var decoded struct {
+			Segments []struct {
+				Pixels []json.RawMessage `json:"i"`
+			} `json:"seg"`
+		}
+
+		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+			t.Fatalf("request %d does not decode: %v: %s", request, err, body)
+		}
+
+		if len(decoded.Segments) != 1 || len(decoded.Segments[0].Pixels) < 2 {
+			t.Fatalf("request %d carries no led list: %s", request, body)
+		}
+
+		pixels := decoded.Segments[0].Pixels
+
+		var index int
+		if err := json.Unmarshal(pixels[0], &index); err != nil {
+			t.Fatalf("request %d does not name its first led: %v: %s", request, err, body)
+		}
+
+		if index != painted {
+			t.Fatalf("request %d starts at led %d, want %d: the frame would be out of order",
+				request, index, painted)
+		}
+
+		for offset, raw := range pixels[1:] {
+			var got string
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("request %d led %d is not a colour: %v", request, painted+offset, err)
+			}
+
+			if got != colors[painted+offset].hex() {
+				t.Fatalf("request %d led %d reads %s, want %s",
+					request, painted+offset, got, colors[painted+offset].hex())
+			}
+		}
+
+		painted += len(pixels) - 1
+	}
+
+	if painted != panelLEDs {
+		t.Fatalf("the requests painted %d leds, want %d", painted, panelLEDs)
+	}
+
+	// The split is arithmetic, not a guess: at 8 KiB a body holds 907 colours from a
+	// one-digit index, and 16,384 needs eighteen of those and a short last one.
+	if len(recorder.bodies) != 19 {
+		t.Fatalf("the frame went out in %d requests, want 19", len(recorder.bodies))
+	}
+
+	if len(recorder.bodies[0]) != paintBodyBytes(0, 907) {
+		t.Fatalf("the first request carries %d bytes, want the %d of 907 colours",
+			len(recorder.bodies[0]), paintBodyBytes(0, 907))
+	}
+
+	// A 48-pixel strip is one request, which is the other end of the same arithmetic.
+	if fits := paintColoursThatFit(0, DefaultPaintByteBudget); fits < 48 {
+		t.Fatalf("a %d-byte budget carries %d colours, want at least the 48 of a strip",
+			DefaultPaintByteBudget, fits)
+	}
+}
+
+// TestPaintChunkArithmeticIsExact proves the arithmetic the splitting rests on, at its
+// edges: the envelope a body spends before any colour, what one colour costs, how many
+// fit at a one-digit and at a five-digit index, and the two smallest budgets that can
+// and cannot carry a single colour.
+func TestPaintChunkArithmeticIsExact(t *testing.T) {
+	if paintEnvelope != 26 {
+		t.Fatalf("the per-led envelope is %d bytes, want 26", paintEnvelope)
+	}
+
+	if paintEntryBytes != 9 {
+		t.Fatalf("one colour costs %d bytes, want 9", paintEntryBytes)
+	}
+
+	for _, fit := range []struct {
+		index  int
+		budget int
+		want   int
+	}{
+		{0, 34, 0},     // the envelope and a colour is one byte more than this
+		{0, 35, 1},     // exactly one colour
+		{0, 8192, 907}, // the default budget at the frame's first led
+		{907, 8192, 907},
+		{16326, 8192, 906}, // a five-digit index leaves room for one colour fewer
+	} {
+		if got := paintColoursThatFit(fit.index, fit.budget); got != fit.want {
+			t.Fatalf("paintColoursThatFit(%d, %d) = %d, want %d",
+				fit.index, fit.budget, got, fit.want)
+		}
+	}
+
+	for _, body := range []struct {
+		index   int
+		colors  int
+		want    int
+		budget  int
+		inside  bool
+		comment string
+	}{
+		{0, 48, 458, 8192, true, "a 48-led strip in one request"},
+		{0, 907, 8189, 8192, true, "the most the default budget carries"},
+		{0, 908, 8198, 8192, false, "one more than the default budget carries"},
+	} {
+		if got := paintBodyBytes(body.index, body.colors); got != body.want {
+			t.Fatalf("paintBodyBytes(%d, %d) = %d, want %d: %s",
+				body.index, body.colors, got, body.want, body.comment)
+		}
+
+		if got := paintBodyBytes(body.index, body.colors) <= body.budget; got != body.inside {
+			t.Fatalf("%s: %d bytes inside a %d budget reads %v, want %v",
+				body.comment, paintBodyBytes(body.index, body.colors), body.budget, got, body.inside)
+		}
+	}
+}
+
+// catalogueBody is a 2D controller's GET /json, cut down to the lists this package
+// reads: the effect names, the palette names, and the fxdata that says which controls
+// each effect has. The effect ids are this document's own positions, which is what a
+// controller writes as fx — a real firmware lists 123 of them and "Scrolling Text" is
+// id 122, so a list this short is a fixture and not a device.
+const catalogueBody = `{
+  "state": {"on": true, "bri": 128, "seg": [{"id": 0, "start": 0, "stop": 16384, "startY": 0, "stopY": 64}]},
+  "info": {"ver": "14.7.0-mdev", "leds": {"count": 16384, "maxseg": 32, "matrix": {"w": 256, "h": 64}}},
+  "effects": ["Solid", "Blink", "Breathe", "Scrolling Text"],
+  "palettes": ["Default", "* Random Cycle", "Ocean"],
+  "fxdata": ";;1\n!;1\n!;0\n-;1"
+}`
+
+// TestCapabilitiesReadsTheEffectAndPaletteLists proves the catalogue a dropdown is
+// built from: every effect with the id it is written by and its own fxdata line, and
+// every palette with its id — including the asterisk a controller puts on a palette it
+// generates rather than stores.
+func TestCapabilitiesReadsTheEffectAndPaletteLists(t *testing.T) {
+	server := serve(t, http.StatusOK, catalogueBody)
+
+	capabilities, err := client(t, server.URL).Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+
+	wantEffects := []EffectInfo{
+		{ID: 0, Name: "Solid", Flags: ";;1"},
+		{ID: 1, Name: "Blink", Flags: "!;1"},
+		{ID: 2, Name: "Breathe", Flags: "!;0"},
+		{ID: 3, Name: "Scrolling Text", Flags: "-;1"},
+	}
+
+	if len(capabilities.Effects) != len(wantEffects) {
+		t.Fatalf("Capabilities read %d effects, want %d", len(capabilities.Effects), len(wantEffects))
+	}
+
+	for index, want := range wantEffects {
+		if capabilities.Effects[index] != want {
+			t.Fatalf("effect %d reads %+v, want %+v", index, capabilities.Effects[index], want)
+		}
+	}
+
+	wantPalettes := []Palette{
+		{ID: 0, Name: "Default"},
+		{ID: 1, Name: "* Random Cycle"},
+		{ID: 2, Name: "Ocean"},
+	}
+
+	if len(capabilities.Palettes) != len(wantPalettes) {
+		t.Fatalf("Capabilities read %d palettes, want %d", len(capabilities.Palettes), len(wantPalettes))
+	}
+
+	for index, want := range wantPalettes {
+		if capabilities.Palettes[index] != want {
+			t.Fatalf("palette %d reads %+v, want %+v", index, capabilities.Palettes[index], want)
+		}
+	}
+}
+
+// TestCapabilitiesWithoutAFullFXDataStillListsTheEffects proves the tolerant half: a
+// controller that publishes no fxdata gives a list with empty flags rather than an
+// error, and a document whose fxdata is shorter than its effect list gives empty flags
+// to the effects it does not describe rather than lending them a neighbour's.
+func TestCapabilitiesWithoutAFullFXDataStillListsTheEffects(t *testing.T) {
+	for _, catalogue := range []struct {
+		name  string
+		body  string
+		flags []string
+	}{
+		{
+			name:  "no fxdata at all",
+			body:  `{"effects": ["Solid", "Blink"], "palettes": ["Default"]}`,
+			flags: []string{"", ""},
+		},
+		{
+			name:  "fxdata shorter than the list",
+			body:  `{"effects": ["Solid", "Blink", "Breathe"], "palettes": [], "fxdata": ";;1"}`,
+			flags: []string{";;1", "", ""},
+		},
+		{
+			name:  "fxdata as an array of lines",
+			body:  `{"effects": ["Solid", "Blink"], "palettes": [], "fxdata": [";;1", "!;1"]}`,
+			flags: []string{";;1", "!;1"},
+		},
+	} {
+		server := serve(t, http.StatusOK, catalogue.body)
+
+		capabilities, err := client(t, server.URL).Capabilities(context.Background())
+		if err != nil {
+			t.Fatalf("%s: Capabilities: %v", catalogue.name, err)
+		}
+
+		if len(capabilities.Effects) != len(catalogue.flags) {
+			t.Fatalf("%s: read %d effects, want %d", catalogue.name, len(capabilities.Effects), len(catalogue.flags))
+		}
+
+		for index, want := range catalogue.flags {
+			if capabilities.Effects[index].Flags != want {
+				t.Fatalf("%s: effect %d flags read %q, want %q",
+					catalogue.name, index, capabilities.Effects[index].Flags, want)
+			}
+		}
+	}
+}
+
+// textStateBody is a panel running the text effect with a name set, so the read side
+// can be shown to carry what the write side sends: an effect's parameters and the
+// segment name are read back, which is what lets a caller change one and keep the rest.
+const textStateBody = `{"on":true,"bri":200,"seg":[
+  {"id":0,"start":0,"stop":256,"startY":0,"stopY":8,"len":256,"on":true,"n":"PRINTING 94%",
+   "col":[[255,255,255],[0,0,0],[0,0,0]],"fx":122,"sx":128,"ix":16,"c1":7,"c2":2,"c3":3,
+   "o1":1,"o2":0,"o3":0,"pal":5,"grp":2,"tp":1,"m12":3}
+]}`
+
+// TestStateCarriesTheEffectParametersAndTheName proves the read side of tier 1: every
+// parameter SetEffect writes comes back, so a caller can preserve what it does not mean
+// to change, and the name the text effect draws is readable rather than write-only.
+func TestStateCarriesTheEffectParametersAndTheName(t *testing.T) {
+	server := serve(t, http.StatusOK, textStateBody)
+
+	state, err := client(t, server.URL).State(context.Background())
+	if err != nil {
+		t.Fatalf("State: %v", err)
+	}
+
+	if len(state.Segments) != 1 {
+		t.Fatalf("State read %d segments, want 1", len(state.Segments))
+	}
+
+	segment := state.Segments[0]
+
+	want := Segment{
+		ID:        0,
+		Start:     0,
+		Stop:      256,
+		StartY:    0,
+		StopY:     8,
+		On:        true,
+		Colors:    []RGB{{R: 255, G: 255, B: 255}, {R: 0, G: 0, B: 0}, {R: 0, G: 0, B: 0}},
+		Effect:    122,
+		Name:      "PRINTING 94%",
+		Speed:     128,
+		Intensity: 16,
+		Custom1:   7,
+		Custom2:   2,
+		Custom3:   3,
+		Check1:    1,
+		Check2:    0,
+		Check3:    0,
+		Palette:   5,
+		Grouping:  2,
+		Transpose: 1,
+		Expand1D:  3,
+	}
+
+	if segment.ID != want.ID || segment.Start != want.Start || segment.Stop != want.Stop ||
+		segment.StartY != want.StartY || segment.StopY != want.StopY || segment.On != want.On {
+		t.Fatalf("segment reads %+v, want the bounds of %+v", segment, want)
+	}
+
+	if segment.Effect != want.Effect || segment.Name != want.Name ||
+		segment.Speed != want.Speed || segment.Intensity != want.Intensity ||
+		segment.Custom1 != want.Custom1 || segment.Custom2 != want.Custom2 ||
+		segment.Custom3 != want.Custom3 || segment.Check1 != want.Check1 ||
+		segment.Check2 != want.Check2 || segment.Check3 != want.Check3 ||
+		segment.Palette != want.Palette || segment.Grouping != want.Grouping ||
+		segment.Transpose != want.Transpose || segment.Expand1D != want.Expand1D {
+		t.Fatalf("segment reads %+v, want the effect parameters of %+v", segment, want)
+	}
+
+	if len(segment.Colors) != len(want.Colors) || segment.Colors[0] != want.Colors[0] {
+		t.Fatalf("segment colours read %v, want %v", segment.Colors, want.Colors)
+	}
+}

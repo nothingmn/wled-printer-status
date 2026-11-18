@@ -110,25 +110,52 @@ resources:
 
 `internal/wled` is the only code in here that talks to a light. `package wled` gives you
 a `Client` for one controller — its base URL and its own `*http.Client` — and it uses
-three of WLED's own endpoints.
+four of WLED's own endpoints.
 
 | call | endpoint | what it does |
 | --- | --- | --- |
 | `Info` | `GET /json/info` | the controller's facts: firmware version, LED count, segment limit, matrix width and height, name, UDP port, whether something is streaming into it |
-| `State` | `GET /json/state` | power, brightness, and each segment's LED bounds, row bounds, colours, effect and brightness |
-| `SetPower`, `SetBrightness`, `SetSolid`, `SetRange` | `POST /json/state` | one small body carrying only the keys that change |
+| `State` | `GET /json/state` | power, brightness, and each segment's LED bounds, row bounds, colours, effect, name, effect parameters and brightness |
+| `Capabilities` | `GET /json` | the effects and palettes the controller itself lists, each with the id it is written by, and each effect's fxdata line when the document carries one |
+| `SetPower`, `SetBrightness`, `SetSolid`, `SetRange`, `SetRectangle`, `SetEffect`, `SetSegmentName`, `Paint` | `POST /json/state` | one small body carrying only the keys that change |
 
 Every request is bounded at two seconds, because the host pings this module every
 fifteen seconds and waits five for the answer: a call that blocked longer would cost the
 process three missed pings. Calls to one controller are queued behind a mutex, which is
 what WLED asks for. Failures are typed — `ErrUnreachable`, `ErrTimeout`, `ErrStatus` for a
 failing HTTP status, `ErrDevice` for WLED's own `{"error":n}` — and a brightness outside
-0-255 or a run of LEDs with nothing in it is refused before anything is sent.
+0-255, a run of LEDs with nothing in it, an empty or inverted rectangle, an effect
+parameter outside a byte, and a name longer than 48 characters are all refused before
+anything is sent.
 
 A panel and a strip are the same client. `Info` reports the matrix geometry when the
 controller publishes it and zero when it does not, and a segment carries its row bounds
-beside its LED bounds; nothing here draws a rectangle, and `SetRange` is a
-one-dimensional run of LEDs.
+beside its LED bounds.
+
+**Three tiers, in the order a status should be tried.** WLED's abilities differ by
+firmware, so they are read from the device and not assumed: `Capabilities` says which
+effects exist, and a caller falls back only when the tier above cannot show the status.
+
+1. **An effect, with parameters** — `SetEffect` writes the effect id and its speed,
+   intensity, three custom values, three check values and palette. Text on a 2D panel is
+   effect 122 ("Scrolling Text") and the string is the segment's name, written with
+   `SetSegmentName`.
+2. **Computed colour or geometry** — `SetSolid`, `SetRange` and `SetRectangle` put a
+   colour into a run, a band or a rectangle. Every body that names LED bounds names the
+   row bounds too, because WLED reads columns alone as a flat index range and folds the
+   segment onto one row of the panel.
+3. **Per-LED painting** — `Paint` sends one colour per LED in the segment's `i` list,
+   split into as many requests as a byte budget needs (8 KiB by default, so a 16,384-pixel
+   frame is nineteen requests and a 48-pixel strip is one). It is the floor: whatever a
+   controller can do, it can be given individual colours, so a status that cannot be
+   shown any other way is still shown.
+
+That last tier costs something and the cost is in the package comment: the colours are
+not saved across a reboot, they freeze the segment's effect until an effect is selected
+again, and a body that switches a segment on and paints it at once does not work — so
+`Paint` sends the LED list alone and expects a segment that is already on and at its
+brightness. Painting is also the slowest way to move a pixel, which is why it is the
+fallback and not the default.
 
 It is **not wired into the module**: `main.go` imports nothing from it, and `module.yaml`
 and `openapi.json` are untouched, so the route still answers with the configured message
