@@ -8,17 +8,35 @@ that somebody walking past can tell what the printer is doing without opening an
 
 ## Status
 
-**This module is early, and it has never been run against a live host or a live controller.** What is
-written is wired: the program the server launches reads one printer, decides what a 1D strip should
-show, and writes that to the controller named in its settings. `GET /status` answers what it currently
-thinks — the printer, how old its reading is, the frame it has decided, and what the last write to the
-light did — so a person can read the decision without walking over to the light.
+**This module reads one printer through Prusa Connect and drives one WLED controller, and it has done
+that for the length of a real print: an MK4 on a 256×64 panel, watched from 0 % to `FINISHED`.** The
+program the server launches reads the printer, decides what the light should show, and writes it to the
+controller named in its settings, with nobody standing at the panel. `GET /status` answers what it
+currently thinks — the printer, how old its reading is, the frame it has decided, and what the last write
+to the light did — so a person can read the decision without walking over to the light.
 
-So: it is a working first light and not a finished product. Colour and a progress bar are the part that
-is decided. Animations, the panel's richer display, a brightness schedule and the composer are still
-open, and none of them is here; the open ones are written down in
-[`docs/product-requirements.md`](docs/product-requirements.md). Nothing has been proven on real
-hardware: there is no record of this module driving a strip in somebody's room.
+What that run proved, on the panel rather than in a test:
+
+- **The fill tracks the job.** At 87, 90, 91, 96 and 98 % the lit columns were counted against the panel's
+  own geometry, and each one was the printer's percentage of 256 — the fill is decided in the controller's
+  pixels rather than in a number that merely looks plausible.
+- **A finished print holds the whole panel** in the finished state's colour, and keeps holding it.
+- **A controller that goes away is waited out, not hammered.** Unplugged for two minutes, the module
+  logged six escalating retries; thirty seconds after the controller came back it was driving the panel
+  again, with no restart and nobody touching it.
+- **A picture that has stopped moving is written again once a minute**, which is how a controller that
+  rebooted into its own saved state comes back to the printer's picture while the printer has nothing new
+  to say.
+
+What that has not shown, and these are gaps rather than formalities: the **starting** state, before a
+print begins to move, has never been seen on a panel, and neither have **idle** or a printer that has gone
+quiet mid-job. The **1D strip path has never run against a strip** — the panel is the only geometry it has
+met. And **it has not been through the marketplace**: no release exists, so nobody has installed it the way
+a stranger would.
+
+So: a working module on one printer and one panel, and not a finished product. Animations, the panel's
+richer display, a brightness schedule and the composer are still open, and none of them is here; the open
+ones are written down in [`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## What it is meant to do
 
