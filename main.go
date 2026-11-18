@@ -457,7 +457,7 @@ func stopWatching() {
 	select {
 	case <-done:
 	case <-wait.Done():
-		logf("%s: the watch did not finish giving its segment back within %s of being stopped",
+		logf("%s: the watch had not stopped within %s of being asked, so a borrowed segment may still be holding this module's last frame",
 			name, shutdownGrace)
 	}
 }
