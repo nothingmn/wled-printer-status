@@ -2,6 +2,7 @@
   "bindings": {
     "title": "Bindings",
     "intro": "Each line is one printer drawn on one segment of one light. A change here applies at once, in the running module.",
+    "multi_room": "One printer may sit on more than one light, at the cost of a second steady stream. A segment carries one printer only.",
     "not_saved": "Nothing here is written to the module's settings, so a restart starts again from the bindings setting. Copy a working list into that setting to keep it.",
     "printer": "Printer",
     "controller": "Controller",
@@ -9,6 +10,7 @@
     "whole": "Whole light",
     "brightness": "Brightness",
     "light": "Light",
+    "reach_heading": "Reachability",
     "actions": "Actions",
     "add": "Add a printer",
     "edit": "Edit",
@@ -26,6 +28,13 @@
     "load_failed": "The bindings could not be read",
     "save_failed": "That was not accepted",
     "position": "Order",
-    "printer_gone": "A printer the host no longer holds"
+    "printer_gone": "A printer the host no longer holds",
+    "several": "one of several bindings for this printer",
+    "already_on": "\u2014 already on",
+    "on_this_light": "\u2014 already on this light",
+    "no_printer_free": "Every printer this module knows is already on this light",
+    "taken_here": "Taken on this light:",
+    "segment_taken": "That segment is already taken on this light by",
+    "whole_takes_all": "A whole-light binding leaves no segment for anything else, and a segment leaves none for the whole light."
   }
 }

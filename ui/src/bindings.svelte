@@ -1,9 +1,31 @@
 <script lang="ts">
 	// The bindings screen: the one tab on this module's own page under Settings,
-	// Extensions. Every printer the module shows, the light it is drawn on, and
-	// whether that light is answering -- and the same three added, changed and
-	// removed in place, with the printers and controllers offered as the choices
-	// the module itself reports rather than as ids somebody has to know.
+	// Extensions. Every binding the module drives -- the printer, the light it is
+	// drawn on, the segment it takes and whether that light is answering -- and the
+	// same four added, changed and removed in place, with the printers and
+	// controllers offered as the choices the module itself reports rather than as
+	// ids somebody has to know.
+	//
+	// # One printer on several lights
+	//
+	// docs/product-requirements.md §2.2 is the rule this screen obeys: a printer may
+	// sit on several lights -- multi-room status -- and a segment carries one printer
+	// only. So where a printer is bound is two questions and not one:
+	//
+	//   - is it already on the light being edited? Then the field does not offer it:
+	//     that light already shows it, its row is already in the table below, and the
+	//     segment it would take is taken;
+	//   - is it on some other light? Then the field offers it and says where it is,
+	//     because naming the second light for a machine is exactly what multi-room is.
+	//
+	// The screen asked one question before -- "is this printer bound at all?" -- which
+	// was right while a printer could be bound once and hid every printer already
+	// shown anywhere, so a second light could not be given to one from here.
+	//
+	// Where a printer is, is read off GET /bindings and not off GET /printers: a
+	// printer's `bound` member carries the first of its bindings and cannot say
+	// whether *this* light is one of them. `bound_count` says how many there are, which
+	// is what explains two rows of one printer below.
 	import { onMount } from 'svelte';
 
 	import { Badge, Button } from '@prusa/connect-ui/primitives';
@@ -57,6 +79,69 @@
 	const sendOf = (binding: Binding): LastSend | null | undefined =>
 		sends[key(binding.controller, binding.segment)];
 
+	/**
+	 * A controller's name on these routes: its address without the scheme, which is what
+	 * a binding carries as `light`. It is computed here for an address typed in rather
+	 * than picked, because the editor has to compare like with like: the module names a
+	 * binding's light, and this names the light the editor is pointed at.
+	 */
+	const lightName = (address: string): string =>
+		address
+			.trim()
+			.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '')
+			.replace(/\/+$/, '')
+			.toLowerCase();
+
+	/** The address the editor is pointed at: the one picked, or the one being typed. */
+	const draftAddress = $derived(draft === null ? '' : draft.fresh ? draft.address : draft.controller);
+
+	/** The light being edited, named the way GET /bindings names one. */
+	const draftLight = $derived(lightName(draftAddress));
+
+	/**
+	 * The bindings on the light being edited, other than the row being changed: the
+	 * segments that light has already taken, and the printers that took them.
+	 */
+	const taken = $derived(bindings.filter((one) => one.light === draftLight && one.id !== editing));
+
+	/**
+	 * The printers the light being edited does not already show, in the operator's own
+	 * order. A printer on a different light is here, and must be: that is multi-room.
+	 */
+	const free = $derived(printers.filter((one) => !taken.some((held) => held.printer === one.id)));
+
+	/** The printers an add could still place somewhere: one on every light has nowhere to go. */
+	const addable = $derived(
+		controllers.length === 0
+			? printers
+			: printers.filter((one) =>
+					controllers.some(
+						(light) =>
+							!bindings.some(
+								(placed) => placed.light === lightName(light.address) && placed.printer === one.id,
+							),
+					),
+				),
+	);
+
+	/** The segment the editor is pointed at, read the way save() reads it: -1 is the whole light. */
+	const wanted = $derived.by(() => {
+		const segment = Number.parseInt(draft?.segment ?? '', 10);
+
+		return Number.isNaN(segment) ? -1 : segment;
+	});
+
+	/**
+	 * The binding that already takes the segment the editor is pointed at, and undefined
+	 * when none does. It is the refusal the route makes, said before Save is pressed: one
+	 * segment is shown by one binding, and a whole light leaves no segment for anything
+	 * else. It is a warning and not a lock, because this screen's list can be a moment
+	 * behind a change made elsewhere, and the route has the last word.
+	 */
+	const conflict = $derived(
+		wanted < 0 ? taken[0] : taken.find((one) => one.segment < 0 || one.segment === wanted),
+	);
+
 	/** Every controller address the module is driving, and the one being changed. */
 	const addresses = $derived.by(() => {
 		const known = controllers.map((one) => one.address);
@@ -65,8 +150,38 @@
 		return current && !known.includes(current) ? [current, ...known] : known;
 	});
 
-	/** The printers not shown yet, and the one the editor is changing. */
-	const choices = $derived(printers.filter((one) => !one.bound || one.id === draft?.printer));
+	/** Where a printer is already shown, on any light but the one being edited. */
+	const shownElsewhere = (one: Printer): string =>
+		bindings
+			.filter((held) => held.printer === one.id && held.light !== draftLight)
+			.map((held) => (held.whole ? held.light : `${held.light}:${held.segment}`))
+			.join(', ');
+
+	/**
+	 * What one printer is called in the field. A printer already on this light says so
+	 * instead of disappearing, so that the operator can see where it went; a printer on
+	 * another light is offered and says where, so that adding it here is his choice and
+	 * not a surprise.
+	 */
+	const choiceName = (one: Printer): string => {
+		if (!free.some((held) => held.id === one.id)) {
+			return `${one.name} ${t('bindings.on_this_light')}`;
+		}
+
+		const where = shownElsewhere(one);
+
+		return where === '' ? one.name : `${one.name} ${t('bindings.already_on')} ${where}`;
+	};
+
+	/** One taken segment in the operator's words: which segment, and whose it is. */
+	const takenName = (held: Binding): string =>
+		`${held.whole ? t('bindings.whole') : `${t('bindings.segment')} ${held.segment}`} \u2014 ${
+			held.printer_name ?? t('bindings.printer_gone')
+		}`;
+
+	/** How many bindings show one printer, which is what two rows of one name are. */
+	const countOf = (printer: string): number =>
+		printers.find((one) => one.id === printer)?.bound_count ?? 1;
 
 	/** What a refusal said, in one line. */
 	const describe = (problem: unknown): string => {
@@ -112,11 +227,34 @@
 		}
 	};
 
+	/**
+	 * Keeps the printer field pointing at a printer the light being edited can still take.
+	 *
+	 * It runs when the light changes, because the field's offer is the light's: a printer
+	 * picked for one light may already be on the next. A row being edited keeps the printer
+	 * it shows -- a binding's printer does not move, and the route refuses one that tries.
+	 */
+	const retarget = (): void => {
+		if (!draft || editing !== null) return;
+
+		const chosen = draft.printer;
+
+		if (!free.some((one) => one.id === chosen)) {
+			draft.printer = free[0]?.id ?? '';
+		}
+	};
+
 	const startNew = (): void => {
+		const address = addresses[0] ?? '';
+		const light = lightName(address);
+
 		editing = null;
 		draft = {
-			printer: choices[0]?.id ?? '',
-			controller: addresses[0] ?? '',
+			printer:
+				printers.find(
+					(one) => !bindings.some((placed) => placed.light === light && placed.printer === one.id),
+				)?.id ?? '',
+			controller: address,
 			address: '',
 			segment: '-1',
 			brightness: '',
@@ -148,10 +286,11 @@
 		draft.fresh = !draft.fresh;
 		draft.address = '';
 		draft.controller = addresses[0] ?? '';
+		retarget();
 	};
 
 	const save = async (): Promise<void> => {
-		if (!draft) return;
+		if (!draft || draft.printer === '') return;
 
 		const segment = Number.parseInt(draft.segment, 10);
 		const body: BindingRequest = {
@@ -209,6 +348,7 @@
 	<header class="flex flex-col gap-1">
 		<h2 class="text-base font-semibold">{t('bindings.title')}</h2>
 		<p class="text-sm opacity-70">{t('bindings.intro')}</p>
+		<p class="text-sm opacity-70">{t('bindings.multi_room')}</p>
 		<p class="text-sm opacity-70">{t('bindings.not_saved')}</p>
 	</header>
 
@@ -231,7 +371,7 @@
 					<th class="py-2 pr-3 font-medium">{t('bindings.printer')}</th>
 					<th class="py-2 pr-3 font-medium">{t('bindings.controller')}</th>
 					<th class="py-2 pr-3 font-medium">{t('bindings.segment')}</th>
-					<th class="py-2 pr-3 font-medium">{t('bindings.light')}</th>
+					<th class="py-2 pr-3 font-medium">{t('bindings.reach_heading')}</th>
 					<th class="py-2 font-medium">{t('bindings.actions')}</th>
 				</tr>
 			</thead>
@@ -239,8 +379,16 @@
 				{#each bindings as binding (binding.id)}
 					<tr class="border-b align-middle">
 						<td class="py-2 pr-3 opacity-70">{binding.position}</td>
-						<td class="py-2 pr-3">{nameOf(binding)}</td>
-						<td class="py-2 pr-3 font-mono text-xs">{binding.controller}</td>
+						<td class="py-2 pr-3">
+							<div>{nameOf(binding)}</div>
+							{#if countOf(binding.printer) > 1}
+								<div class="text-xs opacity-60">{t('bindings.several')}</div>
+							{/if}
+						</td>
+						<td class="py-2 pr-3">
+							<div class="font-mono text-xs">{binding.light}</div>
+							<div class="font-mono text-xs opacity-60">{binding.controller}</div>
+						</td>
 						<td class="py-2 pr-3">
 							{binding.whole ? t('bindings.whole') : binding.segment}
 						</td>
@@ -278,34 +426,57 @@
 			}}
 		>
 			<div class="flex flex-wrap items-end gap-3">
-				<label class="flex flex-col gap-1 text-sm">
-					<span class="font-medium">{t('bindings.printer')}</span>
-					<select class="rounded border px-2 py-1" bind:value={draft.printer} disabled={editing !== null}>
-						{#each choices as printer (printer.id)}
-							<option value={printer.id}>{printer.name}</option>
-						{/each}
-					</select>
-				</label>
-
 				{#if draft.fresh}
 					<label class="flex flex-col gap-1 text-sm">
 						<span class="font-medium">{t('bindings.controller')}</span>
 						<input
 							class="rounded border px-2 py-1 font-mono text-xs"
 							placeholder="http://10.0.0.136"
-							bind:value={draft.address}
+							value={draft.address}
+							oninput={(event) => {
+								if (!draft) return;
+
+								draft.address = (event.currentTarget as HTMLInputElement).value;
+								retarget();
+							}}
 						/>
 					</label>
 				{:else}
 					<label class="flex flex-col gap-1 text-sm">
 						<span class="font-medium">{t('bindings.controller')}</span>
-						<select class="rounded border px-2 py-1" bind:value={draft.controller}>
+						<select
+							class="rounded border px-2 py-1"
+							value={draft.controller}
+							onchange={(event) => {
+								if (!draft) return;
+
+								draft.controller = (event.currentTarget as HTMLSelectElement).value;
+								retarget();
+							}}
+						>
 							{#each addresses as address (address)}
 								<option value={address}>{address}</option>
 							{/each}
 						</select>
 					</label>
 				{/if}
+
+				<label class="flex flex-col gap-1 text-sm">
+					<span class="font-medium">{t('bindings.printer')}</span>
+					<select class="rounded border px-2 py-1" bind:value={draft.printer} disabled={editing !== null}>
+						{#if draft.printer === ''}
+							<option value="">{t('bindings.no_printer_free')}</option>
+						{/if}
+						{#each printers as printer (printer.id)}
+							<option
+								value={printer.id}
+								disabled={printer.id !== draft.printer && !free.some((held) => held.id === printer.id)}
+							>
+								{choiceName(printer)}
+							</option>
+						{/each}
+					</select>
+				</label>
 
 				<label class="flex flex-col gap-1 text-sm">
 					<span class="font-medium">{t('bindings.segment')}</span>
@@ -331,14 +502,32 @@
 				</div>
 			</div>
 
+			{#if taken.length > 0}
+				<p class="text-xs opacity-70">
+					{t('bindings.taken_here')}
+					{taken.map(takenName).join(' \u00b7 ')}
+				</p>
+			{/if}
+
+			{#if conflict}
+				<p class="rounded border px-3 py-2 text-sm" role="status">
+					{t('bindings.segment_taken')}
+					{conflict.printer_name ?? t('bindings.printer_gone')}
+					({conflict.whole ? t('bindings.whole') : conflict.segment}).
+					{#if wanted < 0 || conflict.whole}
+						{t('bindings.whole_takes_all')}
+					{/if}
+				</p>
+			{/if}
+
 			<div class="flex gap-2">
-				<Button type="submit" disabled={busy}>{t('bindings.save')}</Button>
+				<Button type="submit" disabled={busy || draft.printer === ''}>{t('bindings.save')}</Button>
 				<Button variant="secondary" onclick={stop} disabled={busy}>{t('bindings.cancel')}</Button>
 			</div>
 		</form>
 	{:else}
 		<div>
-			<Button variant="secondary" onclick={startNew} disabled={busy || choices.length === 0}>
+			<Button variant="secondary" onclick={startNew} disabled={busy || addable.length === 0}>
 				{t('bindings.add')}
 			</Button>
 		</div>

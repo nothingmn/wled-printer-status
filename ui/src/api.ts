@@ -13,9 +13,20 @@
 import type { Operation, OperationRequest } from '@prusa/connect';
 import type { ModuleHost } from '@prusa/connect-ui/slots';
 
-/** One printer, shown on one segment of one controller. `Binding` in openapi.json. */
+/**
+ * One printer, shown on one segment of one controller. `Binding` in openapi.json.
+ *
+ * Since one printer may sit on several lights (docs/product-requirements.md §2.2),
+ * this is no longer the same thing as one printer: a printer shown twice is two of
+ * these, with two names, and `light` is what tells them apart.
+ */
 export interface Binding {
-  /** The binding's name on these routes: the host's device id for its printer. */
+  /**
+   * The binding's name on these routes: the host's device id for its printer while
+   * that printer is shown once, and `<device id>@<light>:<segment>` — or `:whole` —
+   * once the same printer is shown again. It is minted once and never moves, so a
+   * path a screen already holds keeps working.
+   */
   id: string;
   /** Where it sits in the operator's order, counting from one. */
   position: number;
@@ -23,6 +34,12 @@ export interface Binding {
   printer: string;
   /** The name an operator gave the machine. Absent when the host could not be read. */
   printer_name?: string;
+  /**
+   * The controller's name on these routes: its address without the scheme, such as
+   * `10.0.0.253`. It is the noun GET /controllers names and the one a screen
+   * compares when it asks whether a light already shows a printer.
+   */
+  light: string;
   /** The controller as the operator wrote it, a base URL with no path. */
   controller: string;
   /** The segment this binding drives, and -1 for the whole controller. */
@@ -47,8 +64,17 @@ export interface Printer {
   name: string;
   model?: string;
   connected: boolean;
-  /** The binding that already shows it, absent when none does. */
-  bound?: { controller: string; segment: number; whole: boolean };
+  /**
+   * The first binding that shows it, absent when none does. It speaks for the first
+   * of several: a printer on two lights answers with the first, which is why a screen
+   * asking "is it on *this* light" reads GET /bindings and not this.
+   */
+  bound?: { id: string; light: string; controller: string; segment: number; whole: boolean };
+  /**
+   * How many bindings show this printer: 0 for none, 1 for the ordinary case, and 2
+   * or more for a printer in more than one room.
+   */
+  bound_count: number;
 }
 
 /** One controller the running set drives, and the bindings on it. */
@@ -70,7 +96,9 @@ export interface LastSend {
 
 /**
  * One binding's answer on the status route. `controller` and `segment` together
- * name the binding, which is how a frame is matched back to its row.
+ * name the binding, which is how a frame is matched back to its row: a segment is
+ * claimed by one binding only, so the pair is unique even when one printer sits on
+ * several lights.
  */
 export interface StatusEntry {
   controller: string;
