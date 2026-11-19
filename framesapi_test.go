@@ -660,9 +660,15 @@ func TestTheWriterReportsWhatItsLightIsHolding(t *testing.T) {
 	// The pause goes into the same table rather than into a second one, because the writer is running:
 	// swapping its store underneath it is a race, and the store it has is the one the process would
 	// have written a pause into.
-	pausedAt := at.Add(time.Minute)
+	//
+	// It has no expiry, and that is deliberate. This writer is the process's own — it reads the
+	// machine's clock, which a test cannot hand it one — so a pause stamped at a fixed instant and
+	// ending ten minutes later is in force until that instant plus ten minutes and expired for ever
+	// after: this test passed all day at 22:00:00Z and would have failed at 22:11Z, and never passed
+	// again. A pause of forever is in force at every hour, which is the only shape a clock this test
+	// does not own can honestly be asked about.
 	table.pausing(storedPause{
-		Scope: pauseGlobal, Chosen: pause10m, SetAt: pausedAt, Expires: ptr(pausedAt.Add(10 * time.Minute)),
+		Scope: pauseGlobal, Chosen: durationForever, SetAt: time.Now(),
 	})
 
 	waitFor(t, "the pause to be reported", func() bool { return pen.shapeOf().paused })

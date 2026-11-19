@@ -69,13 +69,21 @@ type momentRun struct {
 	written *logs
 }
 
+// show makes the driver read this state on its next turn, stamped at the instant it is shown.
+func (r *momentRun) show(one momentReading) {
+	r.source.show(one.now())
+}
+
 // runMoments starts one writer and one driver over one binding on the reading given, with the store
 // the test wrote, at a tick short enough that a test does not wait for a second.
-func runMoments(t *testing.T, pen *writer, store lights, light strip, first printer.Snapshot) *momentRun {
+//
+// The first reading is taken here, at the instant the run begins, and a later one is taken by show:
+// this harness accepts a state and never an instant. See momentReading for why.
+func runMoments(t *testing.T, pen *writer, store lights, light strip, first momentReading) *momentRun {
 	t.Helper()
 
 	source := &changingReadings{}
-	source.show(first)
+	source.show(first.now())
 
 	written := &logs{}
 
@@ -102,8 +110,46 @@ func runMoments(t *testing.T, pen *writer, store lights, light strip, first prin
 	return &momentRun{pen: pen, strip: light, source: source, written: written}
 }
 
-// momentsAt is the instant these tests start at.
-var momentsAt = time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+// momentReading is what a moment test puts in front of the driver: the printer's state word,
+// whether the host holds a session with it, and whether its newest fact is too old to present.
+//
+// There is no instant here, and that is the whole of the rule. The driver in these tests ticks on
+// the machine's clock — driver.run is a real ticker and a test cannot hand it one — so the reading
+// it judges is a live printer only while it is newer than printer.StaleAfter. A fixture anchored to
+// a fixed instant is therefore a live printer for the half-minute after that instant and a dim red
+// strip for ever after: this suite went red at 20:06Z on a tree nobody had touched, because its
+// anchor was 20:00Z, and four other tests failed the same way at other hours before it. So the
+// instant is the run's, stamped here, and a test that wants an older reading says so with
+// quietReading rather than by writing a date.
+type momentReading struct {
+	state     string
+	connected bool
+	stale     bool
+}
+
+// liveReading is a printer this module is talking to, as of now.
+func liveReading(state string) momentReading {
+	return momentReading{state: state, connected: true}
+}
+
+// quietReading is a printer that has said nothing for longer than printer.StaleAfter, which is what
+// "the printer stopped reporting" means — the state word it left behind is the same one.
+func quietReading(state string) momentReading {
+	return momentReading{state: state, connected: true, stale: true}
+}
+
+// now stamps the reading at the instant it is taken, which is the only instant a moment fixture may
+// carry.
+func (r momentReading) now() printer.Snapshot {
+	return snapshotOf(r.state, r.connected, r.stale, time.Now())
+}
+
+// newMomentClock is the clock a moment test owns, standing where the run stands: a thirty-second
+// hold is proved in microseconds rather than waited out, and the instant it starts from is now
+// rather than a date, for the reason momentReading gives.
+func newMomentClock() *fakeClock {
+	return newFakeClock(time.Now().UTC())
+}
 
 // momentTableFor is a store whose one moment says what a test wants it to say.
 func momentTableFor(id string, entry momentEntry) *handTable {
@@ -254,17 +300,17 @@ func TestEachShowsValueFiresOnItsMoment(t *testing.T) {
 			strip := newPanelStrip()
 			pen := newWriter(strip, 128, quiet)
 
-			clock := newFakeClock(momentsAt)
+			clock := newMomentClock()
 			clock.watch(pen)
 			pushInto(pen)
 
 			run := runMoments(t, pen, momentTableFor(momentPrintFinished, one.entry), strip,
-				snapshotOf(printer.StatePrinting, true, false, momentsAt))
+				liveReading(printer.StatePrinting))
 
 			// The baseline: the printing frame is on the light before anything happens.
 			waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
-			run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+			run.show(liveReading(printer.StateFinished))
 
 			one.want(t, run)
 		})
@@ -277,7 +323,7 @@ func TestAMomentThatIsOffDoesNothing(t *testing.T) {
 	strip := newPanelStrip()
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
@@ -285,11 +331,11 @@ func TestAMomentThatIsOffDoesNothing(t *testing.T) {
 	off := momentEntry{Enabled: false, Shows: showsColour, Which: printer.StateError, For: "30s"}
 
 	run := runMoments(t, pen, momentTableFor(momentPrintFinished, off), strip,
-		snapshotOf(printer.StatePrinting, true, false, momentsAt))
+		liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the steady finished frame", func() bool { return painted(strip, render.ColourFinished) })
 
@@ -320,14 +366,14 @@ func TestAPresetMomentBorrowsTheWholeLightAndPutsItBack(t *testing.T) {
 
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
 	entry := momentEntry{Enabled: true, Shows: showsPreset, Which: "Matrix", For: "30s"}
 
 	run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-		snapshotOf(printer.StatePrinting, true, false, momentsAt))
+		liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
@@ -337,7 +383,7 @@ func TestAPresetMomentBorrowsTheWholeLightAndPutsItBack(t *testing.T) {
 	// ordering, not the module's behaviour — it failed once inside a full run and never alone.
 	mark := clock.mark()
 
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the preset to be run", func() bool { return len(strip.ranPresets()) == 1 })
 	clock.waitArmed(t, mark)
@@ -382,17 +428,17 @@ func TestAPresetMomentOnABorrowedZoneIsRefused(t *testing.T) {
 
 	pen := newSegmentWriter(strip, 1, "http://10.0.0.253", quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 
 	entry := momentEntry{Enabled: true, Shows: showsPreset, Which: "Matrix", For: "30s"}
 
 	run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-		snapshotOf(printer.StatePrinting, true, false, momentsAt))
+		liveReading(printer.StatePrinting))
 
 	waitFor(t, "the segment to be borrowed", func() bool { return len(strip.shown()) > 0 })
 
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the refusal", func() bool {
 		for _, line := range run.written.all() {
@@ -421,19 +467,19 @@ func TestAMomentEndsOnItsOwnLengthAndTheSteadyPictureReturns(t *testing.T) {
 	strip := newPanelStrip()
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
 	entry := momentEntry{Enabled: true, Shows: showsColour, Which: printer.StateError, For: "10s"}
 
 	run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-		snapshotOf(printer.StatePrinting, true, false, momentsAt))
+		liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
 	mark := clock.mark()
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the moment's colour", func() bool { return painted(strip, render.ColourError) })
 
@@ -469,18 +515,18 @@ func TestTheFinishedMomentHoldsItsColourThroughSilence(t *testing.T) {
 	strip := newPanelStrip()
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
 	// No store at all: the default table, which is what an install that never opened the Events screen
 	// acts on. Its finished row is the word FINISHED for a minute.
-	run := runMoments(t, pen, nil, strip, snapshotOf(printer.StatePrinting, true, false, momentsAt))
+	run := runMoments(t, pen, nil, strip, liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
 	mark := clock.mark()
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the finished word", func() bool { return paintings(strip) > 0 })
 	clock.waitArmed(t, mark)
@@ -499,7 +545,7 @@ func TestTheFinishedMomentHoldsItsColourThroughSilence(t *testing.T) {
 	// because a terminal word is a fact silence cannot retract.
 	mark = clock.mark()
 
-	run.source.show(snapshotOf(printer.StateFinished, true, true, momentsAt.Add(-232*time.Second)))
+	run.show(quietReading(printer.StateFinished))
 
 	clock.Advance(232 * time.Second)
 	time.Sleep(50 * time.Millisecond)
@@ -529,16 +575,16 @@ func TestAWordMomentIsAWordOnAPanelAndAColourOnAStrip(t *testing.T) {
 		strip := newPanelStrip()
 		pen := newWriter(strip, 128, quiet)
 
-		clock := newFakeClock(momentsAt)
+		clock := newMomentClock()
 		clock.watch(pen)
 		pushed := pushInto(pen)
 
 		run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-			snapshotOf(printer.StatePrinting, true, false, momentsAt))
+			liveReading(printer.StatePrinting))
 
 		waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
-		run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+		run.show(liveReading(printer.StateFinished))
 
 		waitFor(t, "the word's pixels", func() bool { return len(wordPixels(pushed)) > 0 })
 
@@ -556,15 +602,15 @@ func TestAWordMomentIsAWordOnAPanelAndAColourOnAStrip(t *testing.T) {
 		strip := newFakeStrip()
 		pen := newWriter(strip, 128, quiet)
 
-		clock := newFakeClock(momentsAt)
+		clock := newMomentClock()
 		clock.watch(pen)
 
 		run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-			snapshotOf(printer.StatePrinting, true, false, momentsAt))
+			liveReading(printer.StatePrinting))
 
 		waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
-		run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+		run.show(liveReading(printer.StateFinished))
 
 		waitFor(t, "the moment's colour", func() bool { return painted(strip, render.ColourFinished) })
 
@@ -619,18 +665,18 @@ func TestAMomentWithNoLengthHoldsUntilItsStateMoves(t *testing.T) {
 	strip := newPanelStrip()
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
 	entry := momentEntry{Enabled: true, Shows: showsColour, Which: printer.StateError, For: durationForever}
 
 	run := runMoments(t, pen, momentTableFor(momentPrintFinished, entry), strip,
-		snapshotOf(printer.StatePrinting, true, false, momentsAt))
+		liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
-	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run.show(liveReading(printer.StateFinished))
 
 	waitFor(t, "the moment's colour", func() bool { return painted(strip, render.ColourError) })
 
@@ -648,7 +694,7 @@ func TestAMomentWithNoLengthHoldsUntilItsStateMoves(t *testing.T) {
 	// once a second, which is what keeping a pushed picture alive costs anyway — so the clock has to be
 	// moved past one of them *after* the driver has taken the new state up. On a real clock the second
 	// passes by itself; here the test owns it.
-	run.source.show(snapshotOf(printer.StateIdle, true, false, momentsAt.Add(2*time.Minute)))
+	run.show(liveReading(printer.StateIdle))
 
 	waitFor(t, "the driver to be showing the idle state", func() bool {
 		standing := pen.standing.Load()
@@ -672,19 +718,19 @@ func TestAPrinterThatGoesQuietFiresItsMoment(t *testing.T) {
 	strip := newPanelStrip()
 	pen := newWriter(strip, 128, quiet)
 
-	clock := newFakeClock(momentsAt)
+	clock := newMomentClock()
 	clock.watch(pen)
 	pushInto(pen)
 
 	entry := momentEntry{Enabled: true, Shows: showsColour, Which: printer.StateError, For: "30s"}
 	table := momentTableFor(momentPrinterWentQuiet, entry)
 
-	run := runMoments(t, pen, table, strip, snapshotOf(printer.StatePrinting, true, false, momentsAt))
+	run := runMoments(t, pen, table, strip, liveReading(printer.StatePrinting))
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
 	// The printer says nothing for a minute: the same state word, a stale reading.
-	run.source.show(snapshotOf(printer.StatePrinting, true, true, momentsAt))
+	run.show(quietReading(printer.StatePrinting))
 
 	waitFor(t, "the quiet moment's colour", func() bool { return painted(strip, render.ColourError) })
 
@@ -693,15 +739,15 @@ func TestAPrinterThatGoesQuietFiresItsMoment(t *testing.T) {
 	strip2 := newPanelStrip()
 	pen2 := newWriter(strip2, 128, quiet)
 
-	clock2 := newFakeClock(momentsAt)
+	clock2 := newMomentClock()
 	clock2.watch(pen2)
 	pushInto(pen2)
 
-	run2 := runMoments(t, pen2, table, strip2, snapshotOf(printer.StateFinished, true, false, momentsAt))
+	run2 := runMoments(t, pen2, table, strip2, liveReading(printer.StateFinished))
 
 	waitFor(t, "the finished frame", func() bool { return painted(strip2, render.ColourFinished) })
 
-	run2.source.show(snapshotOf(printer.StateFinished, true, true, momentsAt))
+	run2.show(quietReading(printer.StateFinished))
 
 	time.Sleep(50 * time.Millisecond)
 
