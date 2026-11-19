@@ -97,8 +97,10 @@ jobs:
           # The browser half goes beside them, at the path module.yaml's
           # ui.entry names. The manifest is already at dist/module.yaml, and the
           # host reads the ui block out of the bundle it installs, so the two
-          # have to travel together.
-          if [ -d ui/dist/ui ]; then cp -R ui/dist/ui dist/ui; fi
+          # have to travel together: a release that declares a tab and carries
+          # no bundle is refused when somebody opens it.
+          test -d ui/dist/ui || { echo "::error::module.yaml declares a ui block and ui/dist/ui is missing"; exit 1; }
+          cp -R ui/dist/ui dist/ui
           ls -l dist
           find dist/ui -type f | sort
       # A key generated here, used once, discarded with the runner. Its public
