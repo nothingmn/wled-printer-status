@@ -900,6 +900,104 @@ reading into staleness, so that half of the rule is proved by
 the panel is still unlooked at: no preview was fired, no DDP frame pushed, and `10.0.0.253` was not
 written to.
 
+**Thirteenth run, 2026-11-19 05:23Z, from `ea47a1b`.** The change that makes one look at the panel
+enough: `POST /preview-pattern` draws one of three diagnostic pictures — `solid`, `border`, `quarters` —
+over the same writer, establishing body, once-a-second DDP repeat and hand-back the finished word uses,
+and both preview routes take `hold` in whole seconds (default 60, ceiling 300, refused past it by name).
+Built from `git archive HEAD` for the reason run six gives; release
+`/config/config.d/wled-release-ea47a1b`, whose `linux_amd64` digest is
+`a3a9f6e01143a2e007ea8f8fad6b37ad5afb1daf617d42ed5c16d70a66b36d38` and is what the installed binary
+reads back. `ui/` is unchanged between `e8bc059` and this commit, so the bundle was carried over from the
+release it was last built into: `ui/index.js` and `ui/locales/en.json` are the same two digests run twelve
+installed, and `module.yaml`'s digest is unchanged too — this change touches no setting. Ten files, which
+`module add` counted back. The settings file was **not** touched.
+
+```console
+$ docker exec -u 10001 prusa_connect sh -c \
+    "cd /config/config.d/wled-release-ea47a1b && sha256sum -c checksums.txt"
+module.yaml: OK   README.md: OK   CHANGELOG.md: OK   LICENSE: OK
+ui/index.js: OK   ui/locales/en.json: OK
+wled-printer-status_linux_amd64: OK  … (four platforms)
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-ea47a1b \
+    -settings /config/config.d/wled-settings.json -approve
+  checksums   10 files verified against checksums.txt
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+$ docker restart prusa_connect        # 05:23:12Z
+prusa_connect                         # Up 20 seconds (healthy) at 05:23:34Z
+$ curl -s localhost:8080/api/v1/readiness
+{"ready":true,"serving":4,"declared":4,"blocked":[],…}   # 05:23:36Z
+… the module's OpenAPI document is served … paths=9        # eight before this release
+… watching printer 07e893bb-… and driving http://10.0.0.136 at the brightness of brightness_schedule …
+… the controller drives 16384 LEDs
+… the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+**The three pictures, fired once each with `hold=15` and read on both sides.** The panel was holding the
+steady finished green and `live:false` before the first one; every firing was followed by a read of
+`/json/info` once a second for twenty seconds, and by a read of `/json/state` five seconds in, while the
+picture was up. `10.0.0.253` was not touched. Nothing here says a pixel was drawn: `/json/info`'s `live`
+is the only thing this firmware reports about a pushed frame, and it says the controller took the
+datagrams into the buffer it draws instead of its segments.
+
+```console
+$ curl -s http://10.0.0.136/json/info | grep -o '"live":[a-z]*'
+"live":false                                  # 05:23:44, before anything
+$ curl -s -X POST …/preview-pattern?pattern=solid&hold=15
+{"answers":"does DDP draw at all: …","controller":"http://10.0.0.136","holds_seconds":15,"pattern":"solid"}
+05:23:45 … 05:24:00  "live":true              # sixteen samples, one a second
+05:24:01 … 05:24:05  "live":false             # seventeen seconds after the fire
+
+$ curl -s -X POST …/preview-pattern?pattern=border&hold=15   # 05:24:17
+05:24:18 … 05:24:33  "live":true
+05:24:34 … 05:24:39  "live":false
+$ curl -s http://10.0.0.136/json/state        # 05:24:22, five seconds in
+seg0 start 0 stop 256 rows 0..64 on true  n 'border'
+
+$ curl -s -X POST …/preview-pattern?pattern=quarters&hold=15 # 05:24:41
+05:24:42 … 05:24:58  "live":true
+05:24:59 … 05:25:02  "live":false
+$ curl -s http://10.0.0.136/json/state        # 05:24:47, five seconds in
+seg0 start 0 stop 256 rows 0..64 on true  n 'quarters'
+```
+
+Each hold ran the fifteen seconds it was given and no longer, and the hand-back was said once per
+firing — `the picture is off the panel and http://10.0.0.136 reports live=false: the light is back on
+its own segments` (the first at `05:24:02.236Z`) — because the line names "the picture" and not the word
+now that a pattern holds the panel through the same path.
+
+**The refusals, on the live instance rather than in a test.**
+
+```console
+$ curl -s -o /dev/null -w "%{http_code}\n" -X POST …/preview-pattern?pattern=quaters
+400
+{"code":"…/PREVIEW_PATTERN_UNKNOWN","title":"This module draws no diagnostic pattern of that name",
+ "detail":"this module draws no pattern of that name: \"quaters\" is not one of them: this module draws
+            solid, border and quarters","params":{"pattern":"quaters"},"status":400}
+$ curl -s -X POST …/preview-pattern?pattern=solid&hold=301
+{"code":"…/PREVIEW_HOLD_OUT_OF_RANGE","detail":"… 301 seconds is outside it; it defaults to 60 and may
+  not exceed 300","params":{"hold":"301"},"status":400}
+$ curl -s -X POST …/preview-finished?hold=abc
+{"code":"…/PREVIEW_HOLD_OUT_OF_RANGE","detail":"… \"abc\" is not a whole number of seconds; it defaults
+  to 60 and may not exceed 300","status":400}
+```
+
+Nothing was fired by any of the three, and the steady frame was untouched: the panel read back at
+`05:25:12Z` exactly as it had at `05:23:44Z` — `on true`, `bri 128`, `mainseg 0`, seg0 `start 0 stop 256`
+rows `0..64` `on` `col [0,170,0]` `fx 0` `frz true` and no name on it, seg1 `253..256` off, `live:false`.
+The release directory for `87fb786` was **left in place**, against the usual practice of removing the one
+an install replaced: the operator's own look at the panel is tomorrow and a release that is known to run
+is worth more overnight than a tidy volume.
+
+**What this run does not prove.** That a pixel of any of the three pictures was drawn, or that the
+letters of the word are. The word itself was **not** fired: `preview-finished` without a `hold` still
+holds for its own minute by the tests behind it, and putting it up here would have spent the operator's
+experiment. What is proved is that the routes answer, that the frames leave, that the controller takes
+each one into realtime for the hold asked for, and that the light comes back to the picture it was
+holding. `AGENTS.md` §8 says the rest.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
