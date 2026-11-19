@@ -204,8 +204,10 @@ func TestASettingsBlockReadsBackAsWhateverItCarried(t *testing.T) {
 }
 
 // TestTheManifestKeepsOnlyWhatTheHostRequires is §4's list, checked against the file: name, kind,
-// version, platforms, permissions, egress, memory, lifecycle — and the data directory the store
-// lives on, which is what replaced the settings as the place configuration is kept.
+// version, platforms, permissions, memory, lifecycle — and the data directory the store lives
+// on, which is what replaced the settings as the place configuration is kept. `egress` is in that
+// list and is absent from the file on purpose: an absent block declares no connections, and the
+// test below holds that absence.
 //
 // The fields Settings still reads are here on purpose and are not a manifest key: they are the
 // migration source an install from 0.1.0 seeds its store from, and a key the manifest declared
@@ -219,7 +221,6 @@ func TestTheManifestKeepsOnlyWhatTheHostRequires(t *testing.T) {
 		"\nversion: ",
 		"\nplatforms:",
 		"\npermissions:",
-		"\negress:",
 		"\n  memory_mib:",
 		"\nlifecycle:",
 		"\n  data: true",
@@ -241,33 +242,29 @@ func TestTheManifestKeepsOnlyWhatTheHostRequires(t *testing.T) {
 	}
 }
 
-// TestTheEgressEntriesNameTheControllersTheModuleDrives keeps the declaration honest about the
-// connections an operator is asked to approve: one entry per controller, each naming both ports a
-// WLED controller answers on — HTTP on 80 for the state, and UDP on 4048, DDP, for the pixels. The
-// schema has no field for the protocol, so the port is what separates them and the `sends` line is
-// where a reviewer reads that the second one is raw colour bytes. A build that pushed pixels while
-// declaring only port 80 would be a module whose published connections do not describe what it
-// does, which is a finding.
+// TestTheManifestDeclaresNoConnections holds the release to the one claim its egress block used to
+// make: it declares nothing. The controllers this module drives are the ones the operator adds on
+// the Lights screen, and their addresses are kept in this module's own store, so the manifest cannot
+// name them. The host's parser (sdk/manifest/egress.go, checkEgressTarget) accepts an exact host, a
+// `*.domain` whose remainder carries a dot, or an IP address, and has no form for a range or for
+// "whatever light the operator points it at". Naming the author's own two lights instead described
+// the wrong hosts for every other install, so the key is gone.
 //
-// The entries used to name the setting the address was typed into. A manifest with no options has
-// no setting to name, and the host's parser refuses an `option:` that names a setting the manifest
-// does not declare — so the addresses are written out. That is the one place this manifest speaks
-// about the operator's own network, and the comment beside the block says what it costs.
-func TestTheEgressEntriesNameTheControllersTheModuleDrives(t *testing.T) {
+// Absence has to be checked as absence: an `egress` key left behind is a connection an installer is
+// asked to approve, and a literal address in this file is the author's home network in every release.
+func TestTheManifestDeclaresNoConnections(t *testing.T) {
 	manifest := readManifest(t)
 
-	for _, want := range []string{"ports: [80, 4048]", "from: process", "DDP", "/json/state"} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("module.yaml does not declare %q in its egress entries", want)
+	if strings.Contains(manifest, "\negress:") {
+		t.Fatal("module.yaml declares egress, and this release connects nowhere outside Prusa Connect " +
+			"until an operator adds a light on the Lights screen")
+	}
+
+	for _, unwanted := range []string{"\n  - host: ", "\n  - option: ", "10.0.0."} {
+		if strings.Contains(manifest, unwanted) {
+			t.Fatalf("module.yaml carries %q, and every address this module drives is the operator's, "+
+				"kept in the store", unwanted)
 		}
-	}
-
-	if entries := strings.Count(manifest, "\n  - host: "); entries != 2 {
-		t.Fatalf("module.yaml carries %d egress entries that name a host, want 2: one per controller", entries)
-	}
-
-	if entries := strings.Count(manifest, "\n  - option: "); entries != 0 {
-		t.Fatalf("module.yaml carries %d egress entries that name an option, and it declares no option", entries)
 	}
 }
 

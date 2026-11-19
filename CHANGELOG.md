@@ -10,6 +10,15 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## 0.5.1 — 2026-11-19
+
+**This release declares no outbound connections.** The manifest used to name two addresses, and they were the
+author's own lights: every installer read them in the approval prompt, and an instance driving a different
+controller described a connection nothing was making. The block is gone, and its absence means the release
+declares nothing. The module still talks only to the WLED controllers the operator adds on its **Lights**
+screen — their addresses live in the module's own store, which the manifest was never able to name. No route,
+no screen and no stored document changes.
+
 ## 0.5.0 — 2026-11-19
 
 The Lights screen is three levels deep — the screen, then **In-Use / Available / Ignored**, then one tab per

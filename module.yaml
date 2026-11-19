@@ -14,7 +14,7 @@ name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,
 # which is what a module with a process needs.
 kind: sink
-version: 0.5.0
+version: 0.5.1
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT
@@ -73,31 +73,13 @@ platforms:
 #     first start and never reads them again — §4 again. That path exists for the one
 #     upgrade and is not a surface anyone edits.
 
-# Every connection this module makes outside Prusa Connect, which the operator reads
-# before they approve the install: the WLED controllers this module drives, on the two
-# ports such a controller listens on — HTTP for its state, and UDP for its pixels.
-#
-# They are written as addresses because a manifest with no `options` has no setting to
-# name here. `option:` was how this block pointed at the address the operator typed, and
-# the addresses are typed into this module's own store now. So this is the one place the
-# manifest speaks about the operator's own network, and it is worth being plain about
-# what that costs: the two addresses below are the two controllers this release was
-# built and proven against — a 256x64 panel and a strip — and an instance whose store
-# names a different controller is a connection this block does not describe. That gap
-# wants a form in the host's manifest schema for "the host this module keeps in its own
-# store"; it is recorded as a question rather than papered over with a wildcard the
-# schema would refuse.
-egress:
-  - host: 10.0.0.136
-    ports: [80, 4048]
-    from: process
-    why: The module drives this WLED controller, a 256x64 panel, over the two connections such a controller answers on.
-    sends: The current status colour and progress as a WLED state write to /json/state on port 80, and — when a print runs or finishes — the panel's picture as 16,384 pixels over DDP on port 4048. Raw colour bytes, no printer data, no credentials.
-  - host: 10.0.0.253
-    ports: [80, 4048]
-    from: process
-    why: The module drives this WLED controller, a strip, over the two connections such a controller answers on.
-    sends: The current status colour and progress, as a WLED state write to /json/state on port 80 — and, when a print finishes, the word as pixels over DDP on port 4048. Raw colour bytes only, no printer data, no credentials, and nothing beyond the controller's own /json endpoints and its DDP buffer.
+# No `egress` block, and its absence is a statement: this release declares no
+# connections. The controllers it drives are the ones the operator adds on its own Lights
+# screen, and their addresses are kept in this module's own store rather than here. The
+# manifest format names a connection by an exact host, a `*.domain`, or an IP address —
+# it has no form for a range, nor for a bare `*.local` — so it cannot say "whatever light
+# the operator points it at". Naming the author's own two lights instead would describe
+# the wrong hosts for everybody else, so the release names none.
 
 # The memory in MiB the server may budget for the process, children included.
 # 32 is a measurement, not a guess.
