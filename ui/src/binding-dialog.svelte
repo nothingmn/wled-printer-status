@@ -20,15 +20,17 @@
 	//
 	// It carries `colourScheme` on its body div because of where it is drawn: the library
 	// portals a dialog to `<body>`, outside the module's own markup and therefore outside
-	// the shell's colour scheme and outside this module's own stylesheet. Without it, the
-	// three selects here are the three that stay white on white in the dark theme.
-	import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@prusa/connect-ui/primitives';
+	// the shell's colour scheme and outside this module's own stylesheet. The dialog's own
+	// frame is the host's -- a modal is not one of the module's eight shapes -- and
+	// everything inside it is the module's own field, button and panel.
+	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@prusa/connect-ui/primitives';
 
 	import type { Binding, BindingRequest, Printer, Segment } from './api';
 	import { segmentText } from './format';
 	import { heldHost } from './host';
 	import { addressOf, takerIn, type LightFacts } from './lights.svelte';
 	import { colourScheme } from './scheme';
+	import { Button, Field, FieldInput, FieldSelect, Panel } from './ui';
 
 	interface Props {
 		/** The controller address to start on, empty for none. */
@@ -190,75 +192,86 @@
 			<DialogDescription>{t('bindings.dialog_intro')}</DialogDescription>
 		</DialogHeader>
 
-		<div class="flex flex-col gap-3 py-3" use:colourScheme>
+		<div class="flex flex-col gap-section py-row" use:colourScheme>
 			{#if failure !== ''}
-				<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+				<Panel>
+					<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+				</Panel>
 			{/if}
 
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="font-medium">{t('bindings.light')}</span>
-				<select
-					class="rounded border px-2 py-1"
-					value={light}
-					onchange={(event) => moveTo((event.currentTarget as HTMLSelectElement).value)}
-				>
+			<Field id="binding-light" label={t('bindings.light')} kind="select" value={light} oninput={moveTo}>
+				{#snippet children()}
 					{#each lights as one (addressOf(one))}
-						<option value={addressOf(one)}>
+						<option value={addressOf(one)} selected={addressOf(one) === light}>
 							{one.controller?.name} · {addressOf(one)}
 						</option>
 					{/each}
-				</select>
-			</label>
+				{/snippet}
+			</Field>
 
 			{#if !readable}
-				<p class="rounded border px-3 py-2 text-sm" role="status">
-					{t('bindings.segments_unreadable', { why: facts?.segmentsUnread ?? t('bindings.no_answer') })}
-				</p>
+				<Panel>
+					<p class="font-ui text-sm" role="status">
+						{t('bindings.segments_unreadable', { why: facts?.segmentsUnread ?? t('bindings.no_answer') })}
+					</p>
+				</Panel>
 			{/if}
 
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="font-medium">{t('bindings.segment')}</span>
-				<select class="rounded border px-2 py-1" bind:value={segment} disabled={!readable}>
-					{#each choices as choice (choice.id)}
-						<option value={String(choice.id)} disabled={choice.disabled}>{choice.label}</option>
-					{/each}
-				</select>
-				<span class="text-xs opacity-60">{t('bindings.segments_from_light')}</span>
-			</label>
+			<Field id="binding-segment" label={t('bindings.segment')} hint={t('bindings.segments_from_light')}>
+				{#snippet children()}
+					<FieldSelect id="binding-segment" value={segment} disabled={!readable} oninput={(value) => (segment = value)}>
+						{#snippet children()}
+							{#each choices as choice (choice.id)}
+								<option value={String(choice.id)} selected={String(choice.id) === segment} disabled={choice.disabled}>
+									{choice.label}
+								</option>
+							{/each}
+						{/snippet}
+					</FieldSelect>
+				{/snippet}
+			</Field>
 
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="font-medium">{t('bindings.printer')}</span>
-				<select class="rounded border px-2 py-1" bind:value={printer}>
-					{#if printer === ''}
-						<option value="">{t('bindings.pick_printer')}</option>
+			<Field id="binding-printer" label={t('bindings.printer')}>
+				{#snippet children()}
+					<FieldSelect id="binding-printer" value={printer} oninput={(value) => (printer = value)}>
+						{#snippet children()}
+							{#if printer === ''}
+								<option value="">{t('bindings.pick_printer')}</option>
+							{/if}
+							{#each printers as one (one.id)}
+								<option value={one.id} selected={one.id === printer} disabled={printerLabel(one) !== one.name}>
+									{printerLabel(one)}
+								</option>
+							{/each}
+						{/snippet}
+					</FieldSelect>
+				{/snippet}
+			</Field>
+
+			<Field id="binding-brightness" label={t('bindings.brightness')}>
+				{#snippet children()}
+					{#if whole}
+						<FieldInput
+							id="binding-brightness"
+							class="w-24"
+							type="number"
+							min="0"
+							max="255"
+							placeholder="128"
+							value={brightness}
+							oninput={(value) => (brightness = value)}
+						/>
+						<span class="font-ui text-xs text-wled-text-quiet">{t('bindings.brightness_note')}</span>
+					{:else}
+						<span class="font-ui text-xs text-wled-text-quiet">{t('bindings.brightness_borrowed')}</span>
 					{/if}
-					{#each printers as one (one.id)}
-						<option value={one.id} disabled={printerLabel(one) !== one.name}>{printerLabel(one)}</option>
-					{/each}
-				</select>
-			</label>
-
-			<label class="flex flex-col gap-1 text-sm">
-				<span class="font-medium">{t('bindings.brightness')}</span>
-				{#if whole}
-					<input
-						class="w-24 rounded border px-2 py-1"
-						type="number"
-						min="0"
-						max="255"
-						bind:value={brightness}
-						placeholder="128"
-					/>
-					<span class="text-xs opacity-60">{t('bindings.brightness_note')}</span>
-				{:else}
-					<span class="text-xs opacity-60">{t('bindings.brightness_borrowed')}</span>
-				{/if}
-			</label>
+				{/snippet}
+			</Field>
 		</div>
 
 		<DialogFooter showCloseButton={false}>
 			<Button variant="secondary" disabled={busy} onclick={onclose}>{t('bindings.cancel')}</Button>
-			<Button disabled={busy || !canSave} onclick={() => void submit()}>{t('bindings.save')}</Button>
+			<Button variant="primary" disabled={busy || !canSave} onclick={() => void submit()}>{t('bindings.save')}</Button>
 		</DialogFooter>
 	</DialogContent>
 </Dialog>

@@ -3,74 +3,72 @@
 <head>
 <meta charset="utf-8">
 <title>Devices — the lights themselves</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
-    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  .wrap{padding:20px 22px 80px;max-width:1040px}
-  .top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+    *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-4)}
+  header.app b{color:var(--wled-text);font-size:13px}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  .wrap{padding:var(--wled-space-5) var(--wled-space-5) 80px;max-width:1040px}
+  .top{display:flex;align-items:flex-end;gap:var(--wled-space-3);flex-wrap:wrap}
   .top .spacer{flex:1}
   h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
-  .sub{font-size:12px;color:var(--muted)}
-  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
-  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
-  .card>.lh{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);background:#fbfbfc}
+  .sub{font-size:12px;color:var(--wled-text-quiet)}
+  .note{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-3) var(--wled-space-4);margin-top:var(--wled-space-4);font-size:12.5px;color:var(--wled-text);display:flex;gap:var(--wled-space-3)}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--wled-accent-quiet);color:var(--wled-accent-quiet-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:var(--wled-space-1)}
+  .card{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);margin-top:var(--wled-space-4);overflow:hidden}
+  .card>.lh{display:flex;align-items:center;gap:var(--wled-space-3);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-sunken)}
   .card>.lh b{font-size:13px}
-  .card>.lh .addr{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .card>.lh .right{margin-left:auto;display:flex;gap:7px;align-items:center}
-  .facts{display:flex;gap:26px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid #f1f3f5}
-  .facts div .k{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:650}
+  .card>.lh .addr{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .card>.lh .right{margin-left:auto;display:flex;gap:var(--wled-space-2);align-items:center}
+  .facts{display:flex;gap:var(--wled-space-6);flex-wrap:wrap;padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line)}
+  .facts div .k{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--wled-text-quiet);font-weight:650}
   .facts div .v{font-size:12.5px;font-weight:560}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
-  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fff}
-  td{padding:7px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--wled-text-quiet);font-weight:650;padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-panel)}
+  td{padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);vertical-align:middle}
   tr:last-child td{border-bottom:none}
-  .sect{padding:11px 14px;border-top:1px solid #f1f3f5}
-  .sect .h{font-size:11px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;margin-bottom:6px}
-  button{font:inherit;font-size:12px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
-  button:hover{border-color:#c6ccd4;background:#fafbfc}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.tiny{padding:2px 7px;font-size:11px}
-  button.danger{color:var(--bad);border-color:#f0d6d6}
-  select,input[type=text]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
-  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600}
-  .chip.amber{background:var(--warnbg);color:var(--warn)}
-  .chip.grey{background:#f1f2f4;color:var(--muted)}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
-  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
-  .found{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .sect{padding:var(--wled-space-3) var(--wled-space-4);border-top:1px solid var(--wled-line)}
+  .sect .h{font-size:11px;text-transform:uppercase;letter-spacing:.55px;color:var(--wled-text-quiet);font-weight:650;margin-bottom:var(--wled-space-2)}
+  button{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius);cursor:pointer;white-space:nowrap}
+  button:hover{border-color:var(--wled-line-field);background:var(--wled-sunken)}
+  button.primary{background:var(--wled-accent);border-color:var(--wled-accent);color:var(--wled-accent-fill-ink)}
+  button.tiny{padding:var(--wled-space-1) var(--wled-space-2);font-size:11px}
+  button.danger{color:var(--wled-status-error-ink);border-color:var(--wled-status-error)}
+  select,input[type=text]{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);border-radius:var(--wled-radius);background:var(--wled-panel);color:var(--wled-text)}
+  .chip{display:inline-flex;align-items:center;gap:var(--wled-space-1);font-size:11px;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius-xs);background:var(--wled-status-done);color:var(--wled-status-done-ink);font-weight:600}
+  .chip.amber{background:var(--wled-status-idle);color:var(--wled-status-idle-ink)}
+  .chip.grey{background:var(--wled-sunken);color:var(--wled-text-quiet)}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .mono{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid var(--wled-status-quiet);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--wled-status-done-ink);background:var(--wled-status-done);border:1px solid var(--wled-status-done);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  .found{display:flex;align-items:center;gap:var(--wled-space-3);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .found:last-child{border-bottom:none}
-  .found .new{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  .found .new{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--wled-status-done-ink);background:var(--wled-status-done);border:1px solid var(--wled-status-done);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
   .found .right{margin-left:auto}
-  .rules{padding:6px 14px 12px}
-  .rules div{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .rules{padding:var(--wled-space-2) var(--wled-space-4) var(--wled-space-3)}
+  .rules div{display:flex;justify-content:space-between;gap:var(--wled-space-4);padding:var(--wled-space-2) 0;border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .rules div:last-child{border-bottom:none}
-  .veil{position:fixed;inset:0;background:rgba(12,14,18,.45);display:none;align-items:center;justify-content:center;z-index:70;padding:20px}
+  .veil{position:fixed;inset:0;background:rgba(12,14,18,.45);display:none;align-items:center;justify-content:center;z-index:70;padding:var(--wled-space-5)}
   .veil.on{display:flex}
-  .modal{background:#fff;border-radius:12px;width:min(680px,100%);max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.28)}
-  .modal header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center}
+  .modal{background:var(--wled-panel);border-radius:var(--wled-radius);width:min(680px,100%);max-height:88vh;overflow:auto;}
+  .modal header{padding:var(--wled-space-4) var(--wled-space-4);border-bottom:1px solid var(--wled-line);display:flex;align-items:center}
   .modal header h3{font-size:14px;font-weight:650}
-  .modal header .x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--muted);cursor:pointer}
-  .mbody{padding:15px 18px}
-  .mrow{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;padding:7px 0;font-size:12.5px}
-  .mrow>label{color:#3b4250}
-  .modal footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;background:#fafbfc}
-  .maprow{display:grid;grid-template-columns:1fr 18px 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .modal header .x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--wled-text-quiet);cursor:pointer}
+  .mbody{padding:var(--wled-space-4) var(--wled-space-4)}
+  .mrow{display:grid;grid-template-columns:130px 1fr;gap:var(--wled-space-3);align-items:center;padding:var(--wled-space-2) 0;font-size:12.5px}
+  .mrow>label{color:var(--wled-text)}
+  .modal footer{padding:var(--wled-space-3) var(--wled-space-4);border-top:1px solid var(--wled-line);display:flex;gap:var(--wled-space-2);justify-content:flex-end;background:var(--wled-sunken)}
+  .maprow{display:grid;grid-template-columns:1fr 18px 1fr;gap:var(--wled-space-2);align-items:center;padding:var(--wled-space-2) 0;border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .maprow:last-of-type{border-bottom:none}
-  .maprow .arrow{text-align:center;color:var(--muted)}
-  .warnbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--warnbg);border:1px solid #f0dcb4;color:#7c4a03}
-  .okbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--okbg);border:1px solid #cdead8;color:#14532d}
-  .badbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--badbg);border:1px solid #f2cece;color:#8a1f1f}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:80}
+  .maprow .arrow{text-align:center;color:var(--wled-text-quiet)}
+  .warnbox{margin-top:var(--wled-space-3);border-radius:var(--wled-radius);padding:var(--wled-space-2) var(--wled-space-3);font-size:12px;background:var(--wled-status-idle);border:1px solid var(--wled-status-idle);color:var(--wled-status-idle-ink)}
+  .okbox{margin-top:var(--wled-space-3);border-radius:var(--wled-radius);padding:var(--wled-space-2) var(--wled-space-3);font-size:12px;background:var(--wled-status-done);border:1px solid var(--wled-status-done);color:var(--wled-status-done-ink)}
+  .badbox{margin-top:var(--wled-space-3);border-radius:var(--wled-radius);padding:var(--wled-space-2) var(--wled-space-3);font-size:12px;background:var(--wled-status-error);border:1px solid var(--wled-status-error);color:var(--wled-status-error-ink)}
+  .toast{position:fixed;right:20px;bottom:20px;background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:80}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -100,7 +98,7 @@
   <div class="card">
     <div class="lh"><b>Found on the network, not added</b><span class="right"><span class="chip grey" id="foundCount">2 found</span></span></div>
     <div id="found"></div>
-    <div style="padding:9px 14px;border-top:1px solid var(--line);background:#fafbfc" class="hint">Discovery is best effort — a light on another subnet, or a network that blocks multicast, will not answer. Adding by address is always there.</div>
+    <div style="padding:9px 14px;border-top:1px solid var(--wled-line);background:var(--wled-sunken)" class="hint">Discovery is best effort — a light on another subnet, or a network that blocks multicast, will not answer. Adding by address is always there.</div>
   </div>
 
   <div class="card">
@@ -117,6 +115,7 @@
 <div class="veil" id="veil" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
 let DEVICES=[
  {id:'morpheus', name:'morpheus', addr:'http://10.0.0.136', ver:'14.7.0-mdev', px:'16,384', kind:'panel', shape:'256 × 64 panel',
@@ -153,7 +152,7 @@ function render(){
       : '<div class="hint">No presets defined on this light.</div>';
 
     card.innerHTML=
-      '<div class="lh"><span style="width:7px;height:7px;border-radius:50%;background:'+(d.live?'#15803d':'#b45309')+'"></span>'+
+      '<div class="lh"><span style="width:7px;height:7px;border-radius:50%;background:'+(d.live?'var(--wled-status-done-ink)':'var(--wled-status-idle-ink)')+'"></span>'+
         '<b>'+d.name+'</b><span class="addr">'+d.addr+'</span>'+
         '<span class="right"><span class="chip'+(d.live?'':' amber')+'">'+d.health+'</span>'+
         '<button class="tiny" data-replace="'+d.id+'">Replace this light…</button>'+
@@ -198,7 +197,7 @@ function render(){
   if(!FOUND.length){f.innerHTML='<div style="padding:14px" class="hint">Every light the network answered for has been added.</div>';}
   FOUND.forEach(x=>{
     const row=document.createElement('div');row.className='found';
-    row.innerHTML='<span style="width:7px;height:7px;border-radius:50%;background:#15803d"></span><b>'+x.name+'</b>'+
+    row.innerHTML='<span style="width:7px;height:7px;border-radius:50%;background:var(--wled-status-done-ink)"></span><b>'+x.name+'</b>'+
       '<span class="mono">'+x.addr+'</span><span class="hint">· '+x.px+' px</span><span class="new">found</span><span class="right"></span>';
     const btn=document.createElement('button');btn.className='tiny primary';btn.textContent='+ add';
     btn.onclick=()=>add(x.id);
@@ -334,7 +333,7 @@ function plan(){
         'create that segment on the new light in WLED and save it, then come back — this page watches the '+
         'light and ticks each one off as it appears.</div>'+
       '<div class="sect" style="padding:8px 0 0;border:none"><div class="h">Segments to create</div>'+rows+'</div>'+
-      '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;font-size:11.5px;color:var(--muted)">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;font-size:11.5px;color:var(--wled-text-quiet)">'+
         '<span id="pollStatus">checked 0 s ago · checking again in 23 s</span>'+
         '<button class="tiny" onclick="checkNow()">check now</button>'+
         '<span style="margin-left:auto"></span>'+
@@ -359,10 +358,10 @@ function plan(){
       ' <span class="hint" style="text-transform:none;letter-spacing:0">— taken '+from.snap.at+' · '+from.snap.cfg+' + '+from.snap.presets+'</span></div>'+
       '<table style="margin-top:4px"><tbody>'+
         RESTORE.map(([k,d])=>
-          '<tr><td style="width:74px"><input type="checkbox" checked> <b class="mono" style="font-size:11.5px;color:var(--ink)">'+k+'</b></td>'+
+          '<tr><td style="width:74px"><input type="checkbox" checked> <b class="mono" style="font-size:11.5px;color:var(--wled-text)">'+k+'</b></td>'+
           '<td class="hint">'+d+'</td></tr>').join('')+
         NEVER.map(([k,d,why])=>
-          '<tr><td style="width:74px"><input type="checkbox" disabled> <b class="mono" style="font-size:11.5px;color:#a8aeb8">'+k+'</b></td>'+
+          '<tr><td style="width:74px"><input type="checkbox" disabled> <b class="mono" style="font-size:11.5px;color:var(--wled-text-quiet)">'+k+'</b></td>'+
           '<td class="hint"><s>'+d+'</s> — '+why+'</td></tr>').join('')+
       '</tbody></table>'+
       '<div class="hint" style="margin-top:8px">The wifi section is never written: the new light is already on your network, and '+
@@ -448,7 +447,7 @@ function doSwap(){
     }
     const [text,delay]=steps[i];
     lines.push('<div style="display:flex;gap:8px;font-size:12.5px;padding:3px 0">'+
-      '<span style="color:'+(i===steps.length-1?'#15803d':'#6b7280')+'">'+(i===steps.length-1?'✓':'·')+'</span>'+
+      '<span style="color:'+(i===steps.length-1?'var(--wled-status-done-ink)':'var(--wled-text-quiet)')+'">'+(i===steps.length-1?'✓':'·')+'</span>'+
       '<span>'+text+'</span></div>');
     document.getElementById('progress').innerHTML=lines.join('');
     i++;

@@ -25,3 +25,7 @@ export { default as Panel } from './panel.svelte';
 export { default as Progress } from './progress.svelte';
 export { default as Row } from './row.svelte';
 export { default as Tabs } from './tabs.svelte';
+
+// What a tab looks like, for the one screen that draws a nested `tablist` of its own (`Tabs`
+// is the bar itself, and is what draws the rail).
+export { TAB_BAR, TAB_CURRENT, TAB_RESTING, TAB_UPRIGHT } from './tab-classes';

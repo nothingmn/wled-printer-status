@@ -85,6 +85,7 @@
 			{options}
 			{value}
 			{oninput}
+			class="w-full"
 			aria-invalid={error !== ''}
 		/>
 	{:else}
@@ -97,6 +98,7 @@
 			{required}
 			{value}
 			{oninput}
+			class="w-full"
 			aria-invalid={error !== ''}
 		/>
 	{/if}

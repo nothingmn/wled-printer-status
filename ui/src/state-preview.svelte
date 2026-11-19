@@ -93,8 +93,8 @@
 	});
 </script>
 
-<div class="flex flex-wrap items-end gap-3">
-	<figure class="m-0 flex flex-col gap-1">
+<div class="flex flex-wrap items-end gap-section">
+	<figure class="m-0 flex flex-col gap-tight">
 		<!--
 			The picture is decorative and the sentence is not: a screen reader is given the label on
 			the wrapper, because a `<canvas>` cannot carry `role="img"` of its own.
@@ -109,23 +109,23 @@
 				bind:this={panel}
 				width={PANEL.width}
 				height={PANEL.height}
-				class="block h-[64px] w-[256px] max-w-full rounded bg-black [image-rendering:pixelated]"
+				class="block h-16 w-64 max-w-full rounded-panel bg-wled-pixel-off [image-rendering:pixelated]"
 				aria-hidden="true"
 			></canvas>
 		</div>
-		<figcaption class="text-[10px] uppercase tracking-wide opacity-60">{t('colours.panel_caption')}</figcaption>
+		<figcaption class="font-ui text-xs uppercase tracking-label text-wled-text-quiet">{t('colours.panel_caption')}</figcaption>
 	</figure>
 
-	<figure class="m-0 flex flex-col gap-1">
+	<figure class="m-0 flex flex-col gap-tight">
 		<div role="img" aria-label={t('colours.strip_plain', { colour: painted })}>
 			<canvas
 				bind:this={strip}
 				width={STRIP}
 				height={6}
-				class="block h-[12px] w-[96px] max-w-full rounded bg-black [image-rendering:pixelated]"
+				class="block h-3 w-24 max-w-full rounded-panel bg-wled-pixel-off [image-rendering:pixelated]"
 				aria-hidden="true"
 			></canvas>
 		</div>
-		<figcaption class="text-[10px] uppercase tracking-wide opacity-60">{t('colours.strip_caption')}</figcaption>
+		<figcaption class="font-ui text-xs uppercase tracking-label text-wled-text-quiet">{t('colours.strip_caption')}</figcaption>
 	</figure>
 </div>

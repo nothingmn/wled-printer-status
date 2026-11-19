@@ -3,77 +3,90 @@
 <head>
 <meta charset="utf-8">
 <title>Right now</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
-    --pause:#475569;--pausebg:#eef1f5;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  /* The page's own layout, in the mockups' idiom. Every colour, radius, space and type role comes
+     from ../theme.css, which carries the same custom properties the module paints with; nothing
+     here writes a value. Two things the guide settles and this sheet follows: corners are almost
+     square (--wled-radius), and nothing floats — separation is a hairline, never a shadow. */
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  .wrap{padding:26px 22px 80px;max-width:1000px}
-  .top{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+  body{font-family:var(--wled-font-ui);background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text);border-bottom:var(--wled-hairline) solid var(--wled-line);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-3)}
+  header.app b{color:var(--wled-text);font-size:13px;font-weight:600}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  .wrap{padding:var(--wled-space-6) var(--wled-space-5) 80px;max-width:1000px}
+  .top{display:flex;align-items:flex-start;gap:var(--wled-space-3);flex-wrap:wrap}
   .top .spacer{flex:1}
-  h1{font-size:22px;font-weight:660;letter-spacing:-.4px}
-  h2.sect{font-size:11px;text-transform:uppercase;letter-spacing:.75px;color:var(--muted);font-weight:650;margin:26px 0 10px}
-  .summary{font-size:13.5px;color:var(--muted);margin-top:5px}
-  .summary b{color:var(--ink);font-weight:600}
-  .summary .bad{color:var(--bad);font-weight:600}
-  .summary .paused{color:var(--pause);font-weight:600}
-  .btn{font:inherit;font-size:12px;padding:5px 11px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;white-space:nowrap}
-  .btn:hover{border-color:#c6ccd4}
-  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  .btn.small{font-size:11.5px;padding:3px 9px}
-  .menu{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 6px 18px rgba(0,0,0,.06)}
-  .menu .lbl{font-size:11.5px;color:var(--muted);align-self:center;margin-right:2px}
-  .menu button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer}
-  .menu button:hover{border-color:var(--accent);color:var(--accent);background:var(--accent2)}
-  .menu button.cancel{border-color:transparent;color:var(--muted)}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
-  .row{display:grid;grid-template-columns:176px 1fr auto;gap:18px;align-items:center;padding:16px 18px;border-bottom:1px solid #f1f3f5}
+  h1{font-size:20px;font-weight:600;letter-spacing:-.2px}
+  h2.sect{font-size:11px;text-transform:uppercase;letter-spacing:var(--wled-track-label);color:var(--wled-text-quiet);font-weight:600;margin:var(--wled-space-6) 0 var(--wled-space-2)}
+  .summary{font-size:13.5px;color:var(--wled-text-quiet);margin-top:var(--wled-space-1)}
+  .summary b{color:var(--wled-text);font-weight:600}
+  .summary .bad{color:var(--wled-danger);font-weight:600}
+  .summary .paused{color:var(--wled-text);font-weight:600}
+  .btn{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:var(--wled-hairline) solid var(--wled-accent-quiet);background:var(--wled-accent-quiet);color:var(--wled-accent-quiet-ink);border-radius:var(--wled-radius);cursor:pointer;white-space:nowrap}
+  .btn:hover{background:var(--wled-accent-quiet-ink);color:var(--wled-accent-quiet)}
+  .btn.primary{background:var(--wled-accent-fill);border-color:var(--wled-accent-fill);color:var(--wled-accent-fill-ink)}
+  .btn.primary:hover{background:var(--wled-accent-text);border-color:var(--wled-accent-text)}
+  .btn.small{font-size:11.5px;padding:var(--wled-space-1) var(--wled-space-2)}
+  .btn:focus-visible{outline:2px solid var(--wled-focus);outline-offset:2px}
+  .menu{display:flex;gap:var(--wled-space-1);flex-wrap:wrap;margin-top:var(--wled-space-2);padding:var(--wled-space-2) var(--wled-space-3);background:var(--wled-panel);border:var(--wled-hairline) solid var(--wled-line);border-radius:var(--wled-radius)}
+  .menu .lbl{font-size:11.5px;color:var(--wled-text-quiet);align-self:center;margin-right:var(--wled-space-1)}
+  .menu button{font:inherit;font-size:11.5px;padding:var(--wled-space-1) var(--wled-space-2);border:var(--wled-hairline) solid var(--wled-line);background:var(--wled-panel);color:var(--wled-text);border-radius:var(--wled-radius);cursor:pointer}
+  .menu button:hover{border-color:var(--wled-accent);background:var(--wled-accent-quiet);color:var(--wled-accent-quiet-ink)}
+  .menu button:focus-visible{outline:2px solid var(--wled-focus);outline-offset:2px}
+  .menu button.cancel{border-color:transparent;color:var(--wled-text-quiet)}
+  .card{background:var(--wled-panel);border:var(--wled-hairline) solid var(--wled-line);border-radius:var(--wled-radius);margin-top:var(--wled-space-4);overflow:hidden}
+  .row{display:grid;grid-template-columns:176px 1fr auto;gap:var(--wled-space-4);align-items:center;padding:var(--wled-space-4);border-bottom:var(--wled-hairline) solid var(--wled-line)}
   .row:last-child{border-bottom:none}
-  .row.isPaused{background:#fbfbfc}
-  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block;transition:filter .2s}
+  .row.isPaused{background:var(--wled-sunken)}
+  canvas{background:var(--wled-pixel-off);border-radius:var(--wled-radius);image-rendering:pixelated;display:block;transition:filter .2s}
   .isPaused canvas{filter:grayscale(.85) brightness(.55)}
-  .what{font-size:12.5px;color:#3b4250}
+  .what{font-size:12.5px;color:var(--wled-text)}
   .what .prn{font-weight:600}
-  .what .seg{color:var(--muted)}
-  .what .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
-  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600;white-space:nowrap}
-  .chip.amber{background:var(--warnbg);color:var(--warn)}
-  .chip.red{background:var(--badbg);color:var(--bad)}
-  .chip.pause{background:var(--pausebg);color:var(--pause)}
-  .chip.grey{background:#f1f2f4;color:var(--muted)}
-  .meta{text-align:right;font-size:11.5px;color:var(--muted);white-space:nowrap}
-  .meta .nm{font-size:13px;font-weight:620;color:var(--ink)}
-  .meta .acts{margin-top:7px;display:flex;gap:6px;justify-content:flex-end}
-  .foot{padding:11px 18px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
-  .banner{display:none;margin-top:16px;border-radius:9px;padding:11px 14px;font-size:12.5px;background:var(--pausebg);border:1px solid #d8dee7;color:#334155}
-  .banner.on{display:flex;align-items:center;gap:10px}
+  .what .seg{color:var(--wled-text-quiet)}
+  .what .sub{font-size:11.5px;color:var(--wled-text-quiet);margin-top:2px}
+  .chip{display:inline-flex;align-items:center;gap:var(--wled-space-1);font-size:11px;padding:0 var(--wled-space-2);border:var(--wled-hairline) solid var(--wled-status-done);border-radius:var(--wled-radius-xs);background:var(--wled-status-done);color:var(--wled-status-done-ink);font-weight:600;white-space:nowrap;text-transform:uppercase;letter-spacing:var(--wled-track-label)}
+  .chip.amber{border-color:var(--wled-status-idle);background:var(--wled-status-idle);color:var(--wled-status-idle-ink)}
+  .chip.red{border-color:var(--wled-status-error);background:var(--wled-status-error);color:var(--wled-status-error-ink)}
+  .chip.pause{border-color:var(--wled-status-quiet);background:var(--wled-status-quiet);color:var(--wled-status-quiet-ink)}
+  .chip.grey{border-color:var(--wled-status-quiet);background:var(--wled-status-quiet);color:var(--wled-status-quiet-ink)}
+  .meta{text-align:right;font-size:11.5px;color:var(--wled-text-quiet);white-space:nowrap}
+  .meta .nm{font-size:13px;font-weight:600;color:var(--wled-text)}
+  .meta .acts{margin-top:var(--wled-space-2);display:flex;gap:var(--wled-space-1);justify-content:flex-end}
+  .meta .acts button{font:inherit;font-size:11.5px;padding:0 var(--wled-space-1);border:var(--wled-hairline) solid transparent;background:transparent;color:var(--wled-text-quiet);border-radius:var(--wled-radius);cursor:pointer}
+  .meta .acts button:hover{background:var(--wled-hover);color:var(--wled-text)}
+  .meta .acts button:focus-visible{outline:2px solid var(--wled-focus);outline-offset:2px}
+  .foot{padding:var(--wled-space-2) var(--wled-space-4);background:var(--wled-sunken);border-top:var(--wled-hairline) solid var(--wled-line);font-size:11.5px;color:var(--wled-text-quiet)}
+  .banner{display:none;margin-top:var(--wled-space-4);border-radius:var(--wled-radius);padding:var(--wled-space-2) var(--wled-space-3);font-size:12.5px;background:var(--wled-sunken);border:var(--wled-hairline) solid var(--wled-line);color:var(--wled-text)}
+  .banner.on{display:flex;align-items:center;gap:var(--wled-space-2)}
   .banner .spacer{flex:1}
-  .toggles{display:flex;gap:7px;margin-top:14px}
-  .toggles button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer;color:var(--muted)}
-  .toggles button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  /* The tab bar: uppercase, letter-spaced, the current one marked by a thin accent rule under a
+     hairline. Never a filled pill — where you are is not a thing you press. */
+  .toggles{display:flex;gap:var(--wled-space-4);margin-top:var(--wled-space-4);border-bottom:var(--wled-hairline) solid var(--wled-line)}
+  .toggles button{font:inherit;font-size:11px;text-transform:uppercase;letter-spacing:var(--wled-track-label);padding:0 0 var(--wled-space-2);border:0;border-bottom:2px solid transparent;background:none;cursor:pointer;color:var(--wled-text-quiet)}
+  .toggles button:hover{color:var(--wled-text)}
+  .toggles button.on{border-bottom-color:var(--wled-accent);color:var(--wled-text)}
+  .toggles button:focus-visible{outline:2px solid var(--wled-focus);outline-offset:2px}
   /* quick bind */
-  .bind{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
-  .col{background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-  .col .h{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:650;padding:9px 13px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;gap:8px;align-items:center}
-  .col .h .right{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;font-weight:500}
-  .item{display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:1px solid #f1f3f5;font-size:12.5px;cursor:pointer}
+  .bind{display:grid;grid-template-columns:1fr 1fr;gap:var(--wled-space-4);margin-top:var(--wled-space-2)}
+  .col{background:var(--wled-panel);border:var(--wled-hairline) solid var(--wled-line);border-radius:var(--wled-radius);overflow:hidden}
+  .col .h{font-size:10.5px;text-transform:uppercase;letter-spacing:var(--wled-track-label);color:var(--wled-text-quiet);font-weight:600;padding:var(--wled-space-2) var(--wled-space-3);border-bottom:var(--wled-hairline) solid var(--wled-line);background:var(--wled-sunken);display:flex;gap:var(--wled-space-2);align-items:center}
+  .col .h .right{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;font-weight:500;font-family:var(--wled-font-data)}
+  .item{display:flex;align-items:center;gap:var(--wled-space-2);padding:var(--wled-space-2) var(--wled-space-3);border-bottom:var(--wled-hairline) solid var(--wled-line);font-size:12.5px;cursor:pointer}
   .item:last-child{border-bottom:none}
-  .item:hover{background:#fcfcfd}
-  .item.sel{background:var(--accent2);box-shadow:inset 3px 0 0 var(--accent)}
+  .item:hover{background:var(--wled-hover)}
+  .item.sel{background:var(--wled-sunken);border-left:2px solid var(--wled-accent)}
   .item .nm{font-weight:600}
-  .item .sub{font-size:11px;color:var(--muted)}
-  .item .right{margin-left:auto;display:flex;gap:6px;align-items:center}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .defaults{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;font-size:12px;color:#3b4250}
-  .defaults b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);margin-bottom:6px}
-  .defaults ul{margin:0 0 0 16px}
+  .item .sub{font-size:11px;color:var(--wled-text-quiet)}
+  .item .sub.mono,.mono{font-family:var(--wled-font-data)}
+  .item .right{margin-left:auto;display:flex;gap:var(--wled-space-1);align-items:center}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .defaults{margin-top:var(--wled-space-3);background:var(--wled-panel);border:var(--wled-hairline) solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-3) var(--wled-space-4);font-size:12px;color:var(--wled-text)}
+  .defaults b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:var(--wled-track-label);color:var(--wled-text-quiet);margin-bottom:var(--wled-space-1)}
+  .defaults ul{margin:0 0 0 var(--wled-space-4)}
   .defaults li{padding:2px 0}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast{position:fixed;right:var(--wled-space-5);bottom:var(--wled-space-5);background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -121,12 +134,14 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
+const PIXEL_OFF=TOKEN.colourOf('--wled-pixel-off');
 const F={F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],' ':[0,0,0,0,0,0,0]};
 function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
   for(const ch of s){const gl=F[ch]||F[' '];for(let r=0;r<7;r++)for(let c=0;c<5;c++)if(gl[r]&(0x10>>c))g.fillRect(x+c*sc,y+r*sc,sc,sc);x+=6*sc;}}
 
-const GREEN=[0,170,0], AMBER=[210,165,0], LOST=[70,0,0];
+const GREEN=TOKEN.rgbOf('--mock-light-green'), AMBER=TOKEN.rgbOf('--mock-light-amber'), LOST=TOKEN.rgbOf('--mock-light-lost');
 const DURATIONS=[['10 minutes',10],['1 hour',60],['6 hours',360],['1 day',1440],['3 days',4320],['forever',Infinity]];
 
 /* the lights the module has, and what is on them */
@@ -174,7 +189,7 @@ function banner(){
 }
 
 function drawPanel(cv,L){
-  const g=cv.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,256,64);
+  const g=cv.getContext('2d');g.fillStyle=PIXEL_OFF;g.fillRect(0,0,256,64);
   if(L.lost){g.fillStyle='rgb('+LOST.join(',')+')';g.fillRect(0,0,256,64);return;}
   if(L.state==='printing'){
     g.fillStyle='rgb('+L.colour.join(',')+')';g.fillRect(0,52,Math.round(L.pct/100*256),12);
@@ -182,7 +197,7 @@ function drawPanel(cv,L){
   } else {g.fillStyle='rgb('+L.colour.join(',')+')';g.fillRect(0,0,256,64);}
 }
 function drawStrip(cv,L){
-  const g=cv.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,48,8);
+  const g=cv.getContext('2d');g.fillStyle=PIXEL_OFF;g.fillRect(0,0,48,8);
   const col=L.lost?LOST:L.colour,[a,b]=L.zone||[0,48];
   g.fillStyle='rgb('+col.join(',')+')';
   for(let i=a;i<b;i++)g.fillRect(i,1,1,6);
@@ -193,7 +208,7 @@ function drawStrip(cv,L){
 function drawOff(cv,L){
   // paused means the light is off. Nothing is drawn on it, because nothing is on it.
   const g=cv.getContext('2d');
-  g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);
+  g.fillStyle=PIXEL_OFF;g.fillRect(0,0,cv.width,cv.height);
   if(L.kind!=='panel'){
     // a borrowed zone was handed back: the rest of the strip belongs to its owner, so it is not drawn here
     g.fillStyle='rgba(255,255,255,.06)';
@@ -297,7 +312,7 @@ function render(){
     row.innerHTML='<div></div>'+
       '<div class="what"><span class="prn">'+L.printer+'</span> <span class="seg">on '+L.seg+'</span>'+
         '<div class="sub">'+sub+'</div>'+(inMenu?'<div class="menu" style="margin-top:9px">'+menuHTML(L.id)+'</div>':'')+'</div>'+
-      '<div class="meta"><span class="nm">'+L.light+'</span><div class="mono" style="font-size:11px;color:var(--muted)">'+L.dims+'</div>'+
+      '<div class="meta"><span class="nm">'+L.light+'</span><div class="mono" style="font-size:11px;color:var(--wled-text-quiet)">'+L.dims+'</div>'+
         '<div style="margin-top:5px">'+chip+'</div>'+
         '<div style="margin-top:3px">'+(paused?'last wrote '+L.wrote.replace('wrote ','')+' ago':L.wrote)+'</div>'+
         '<div class="acts">'+act+'</div></div>';

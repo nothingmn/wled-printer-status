@@ -68,6 +68,12 @@
   --color-wled-status-quiet: var(--wled-status-quiet);
   --color-wled-status-quiet-ink: var(--wled-status-quiet-ink);
 
+  /* The unlit pixel: the one colour that is not a colour of the page, because
+     it is what the light itself shows. A mat behind a picture, a thumbnail or a
+     strip is this, in both themes, so no screen writes a colour to a canvas. */
+  --color-wled-pixel-off: var(--wled-pixel-off);
+  --color-wled-pixel-off-ink: var(--wled-pixel-off-ink);
+
   /* Shape and rhythm, from the host's own corner scale and its one spacing
      unit. Named rather than numbered on purpose: the guide's complaint is eight
      different paddings on one screen, and four names cannot drift into eight

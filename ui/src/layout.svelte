@@ -80,7 +80,7 @@
 	// is not a bug.
 	import { onMount } from 'svelte';
 
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
+	import { Button, Chip, Field, FieldInput, FieldSelect, Panel } from './ui';
 
 	import {
 		moduleApi,
@@ -953,85 +953,96 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-wrap items-end gap-3">
-		<div class="flex flex-col gap-1">
-			<h1 class="text-lg font-semibold">{t('layout.title')}</h1>
-			<p class="text-sm opacity-70">{t('layout.intro')}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-wrap items-end gap-section">
+		<div class="flex flex-col gap-tight">
+			<h1 class="font-ui text-lg font-medium">{t('layout.title')}</h1>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('layout.intro')}</p>
 		</div>
 
-		<label class="ml-auto flex flex-col gap-1 text-sm">
-			<span class="text-xs opacity-70">{t('layout.light')}</span>
-			<select
-				class="rounded border px-2 py-1"
-				value={chosen}
-				disabled={loading || lights.list.length === 0}
-				onchange={(event) => void openLight((event.currentTarget as HTMLSelectElement).value)}
-			>
-				{#each lights.list as one (addressOf(one))}
-					<option value={nameOf(one)}>{one.controller?.name ?? addressOf(one)}</option>
-				{/each}
-			</select>
-		</label>
+		<Field id="layout-light" class="ml-auto" label={t('layout.light')}>
+			{#snippet children()}
+				<FieldSelect
+					id="layout-light"
+					value={chosen}
+					disabled={loading || lights.list.length === 0}
+					oninput={(value) => void openLight(value)}
+				>
+					{#snippet children()}
+						{#each lights.list as one (addressOf(one))}
+							<option value={nameOf(one)} selected={nameOf(one) === chosen}>
+								{one.controller?.name ?? addressOf(one)}
+							</option>
+						{/each}
+					{/snippet}
+				</FieldSelect>
+			{/snippet}
+		</Field>
 	</header>
 
-	<p class="rounded border px-3 py-2 text-sm">{t('layout.per_binding')}</p>
+	<Panel>
+		<p class="font-ui text-sm">{t('layout.per_binding')}</p>
+	</Panel>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 	{#if notice !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{notice}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('layout.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('layout.loading')}</p>
 	{:else if lights.list.length === 0}
-		<div class="rounded border px-4 py-6">
-			<p class="text-sm font-medium">{t('layout.no_lights')}</p>
-		</div>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('layout.no_lights')}</p>
+		</Panel>
 	{:else if reading}
-		<p class="text-sm opacity-70">{t('layout.reading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('layout.reading')}</p>
 	{:else if board !== null}
 		{#if !board.persisted}
-			<p class="rounded border px-3 py-2 text-sm" role="status">
-				{t('layout.not_kept', { why: board.note ?? '' })}
-			</p>
+			<Panel>
+				<p class="font-ui text-sm" role="status">
+					{t('layout.not_kept', { why: board.note ?? '' })}
+				</p>
+			</Panel>
 		{/if}
 
 		{#if rows.length === 0}
-			<p class="text-sm opacity-70">{t('layout.no_bindings')}</p>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('layout.no_bindings')}</p>
 		{:else}
 			<!--
 				Moving between bindings. One card is drawn at a time and this picks which, so the
 				second binding on a light is a press rather than a scroll past the first. The
-				warning badge is the whole reason this is a selector and not a pair of tabs: a
+				warning chip is the whole reason this is a selector and not a pair of tabs: a
 				binding whose arrangement does not fit says so here, without being opened.
 			-->
-			<div class="flex flex-col gap-1">
-				<!-- The chips below are the control that picks a binding, so their printer names stay
+			<div class="flex flex-col gap-tight">
+				<!-- The buttons below are the control that picks a binding, so their printer names stay
 				     plain text: an anchor inside a button is invalid HTML and would swallow the press.
 				     The card's own heading is where the printer is shown, and there it is a link. -->
-				<div class="flex flex-wrap gap-1" role="group" aria-label={t('layout.bindings_heading')}>
+				<div class="flex flex-wrap gap-tight" role="group" aria-label={t('layout.bindings_heading')}>
 					{#each rows as one (one.id)}
 						{@const shown = showing !== undefined && showing.id === one.id}
-						<button
-							type="button"
-							class={shown
-								? 'flex items-center gap-2 rounded-md border bg-black/5 px-3 py-1.5 text-sm font-semibold dark:bg-white/10'
-								: 'flex items-center gap-2 rounded-md border border-transparent px-3 py-1.5 text-sm opacity-70 hover:opacity-100'}
+						<Button
+							variant={shown ? 'secondary' : 'ghost'}
+							size="md"
 							aria-pressed={shown}
 							onclick={() => (picked = one.id)}
 						>
 							<span>{printerOf(one)}</span>
-							<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
+							<span class="font-data text-xs font-normal text-wled-text-quiet">{segmentOf(one)}</span>
 							{#if overflows(one)}
-								<Badge variant="warning" size="sm">{t('layout.does_not_fit')}</Badge>
+								<Chip tone="idle">{t('layout.does_not_fit')}</Chip>
 							{/if}
-						</button>
+						</Button>
 					{/each}
 				</div>
-				<p class="text-[11px] opacity-60">{t('layout.bindings_note')}</p>
+				<p class="font-ui text-xs text-wled-text-quiet">{t('layout.bindings_note')}</p>
 			</div>
 
 			{#if showing !== undefined}
@@ -1044,39 +1055,43 @@
 				{@const sketch = kind === 'panel' && height > 0 ? sketchOf(draft, frame?.width ?? 256, height) : null}
 				{@const tally = kind === 'panel' && height > 0 ? linesTally(draft, height) : null}
 
-				<article class="flex flex-col gap-3" data-binding={one.id} data-kind={kind}>
+				<article class="flex flex-col gap-section" data-binding={one.id} data-kind={kind}>
 					<!-- Which binding this is, and the one reset that puts all of it back. -->
-					<div class="flex flex-wrap items-center gap-2 rounded border px-3 py-2">
-						<span class="text-sm font-semibold"
-							><PrinterLink id={one.printer} name={printerOf(one)} cls={NAME_LINK} /></span
-						>
-						<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
-						{#if kind === 'panel'}
-							<Badge variant="outline" size="sm">{t('layout.panel_chip', { width: frame?.width ?? 0, height })}</Badge>
-						{:else if kind === 'strip'}
-							<Badge variant="outline" size="sm">{t('layout.strip_chip', { pixels: frame?.width ?? 0 })}</Badge>
-						{:else}
-							<Badge variant="outline" size="sm">{t('layout.shape_unknown_chip')}</Badge>
-						{/if}
-						<div class="ml-auto flex flex-wrap items-center gap-1">
-							<Badge variant={one.overridden ? 'secondary' : 'outline'} size="sm">
-								{one.overridden ? t('layout.yours') : t('layout.default')}
-							</Badge>
-							{#if discardable(one)}
-								<Button variant="link" size="sm" onclick={() => adopt(one.id, one)}>
-									{t('layout.discard')}
-								</Button>
+					<Panel>
+						<div class="flex flex-wrap items-center gap-row">
+							<span class="font-ui text-sm font-medium"
+								><PrinterLink id={one.printer} name={printerOf(one)} cls={NAME_LINK} /></span
+							>
+							<span class="font-data text-xs text-wled-text-quiet">{segmentOf(one)}</span>
+							{#if kind === 'panel'}
+								<Chip>{t('layout.panel_chip', { width: frame?.width ?? 0, height })}</Chip>
+							{:else if kind === 'strip'}
+								<Chip>{t('layout.strip_chip', { pixels: frame?.width ?? 0 })}</Chip>
+							{:else}
+								<Chip>{t('layout.shape_unknown_chip')}</Chip>
 							{/if}
-							{#if one.overridden}
-								<Button variant="ghost" size="sm" onclick={() => reset(one)}>
-									{t('layout.reset')}
-								</Button>
-							{/if}
+							<div class="ml-auto flex flex-wrap items-center gap-tight">
+								<Chip>
+									{one.overridden ? t('layout.yours') : t('layout.default')}
+								</Chip>
+								{#if discardable(one)}
+									<Button variant="link" size="sm" onclick={() => adopt(one.id, one)}>
+										{t('layout.discard')}
+									</Button>
+								{/if}
+								{#if one.overridden}
+									<Button variant="ghost" size="sm" onclick={() => reset(one)}>
+										{t('layout.reset')}
+									</Button>
+								{/if}
+							</div>
 						</div>
-					</div>
+					</Panel>
 
 					{#if (faults[one.id] ?? '') !== ''}
-						<p class="rounded border border-dashed px-2 py-1 text-xs" role="alert">{faults[one.id]}</p>
+						<Panel class="border-dashed">
+							<p class="font-ui text-xs text-wled-danger" role="alert">{faults[one.id]}</p>
+						</Panel>
 					{/if}
 
 					{#if kind === 'panel'}
@@ -1085,20 +1100,19 @@
 							column is sticky, so it holds its place while the groups scroll or change
 							height — which they do, because the sharing group comes and goes.
 						-->
-						<div class="grid gap-4 lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
+						<div class="flex flex-col gap-section lg:flex-row lg:items-start">
 							<!--
 								The column stretches to the row's height and the card inside it is
 								what sticks: a sticky element is held inside its own grid area, so
-								pinning the grid item itself has nowhere to travel.
+								pinning the column itself has nowhere to travel.
 							-->
-							<div class="flex flex-col">
-								<section class="flex flex-col gap-2 overflow-hidden rounded border lg:sticky lg:top-4">
-									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-										<span class="text-sm font-medium">{t('layout.picture_heading')}</span>
-										<span class="ml-auto text-[11px] opacity-60">{t('layout.picture_what')}</span>
-									</div>
+							<div class="flex flex-col lg:w-100 lg:shrink-0">
+								<Panel title={t('layout.picture_heading')} pad="none" class="lg:sticky lg:top-panel">
+									{#snippet meta()}
+										<span class="font-ui text-xs text-wled-text-quiet">{t('layout.picture_what')}</span>
+									{/snippet}
 
-									<div class="flex flex-col gap-2 px-3 pb-3">
+									<div class="flex flex-col gap-row p-panel">
 										{#if frame !== undefined && pictureOf(frame) !== ''}
 											<!--
 												The picture's own pixel size is carried on the element, so the
@@ -1110,14 +1124,14 @@
 												alt={t('layout.picture_alt')}
 												width={frame.image?.width ?? frame.width}
 												height={frame.image?.height ?? frame.height}
-												class="w-full rounded border"
+												class="w-full rounded-panel border border-wled-line"
 												style="image-rendering: pixelated;"
 											/>
-											<p class="text-[10px] opacity-60">{t('layout.picture_caption')}</p>
+											<p class="font-ui text-xs text-wled-text-quiet">{t('layout.picture_caption')}</p>
 										{/if}
 
 										{#if frame !== undefined}
-											<div class="flex flex-col gap-1 text-[11px] opacity-70">
+											<div class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
 												<span>{t('layout.picture_drawn', { age: ageText(t, frame.reading.observed_at) ?? t('common.just_now') })}</span>
 												{#if !aboutAJob(frame)}
 													<p>{t('layout.picture_no_job')}</p>
@@ -1188,134 +1202,136 @@
 													/>
 												{/each}
 											</svg>
-											<p class="text-[10px] opacity-60">{t('layout.sketch_caption')}</p>
+											<p class="font-ui text-xs text-wled-text-quiet">{t('layout.sketch_caption')}</p>
 										{/if}
 									</div>
 
 									<!-- The verdict, beside the picture rather than under the controls. -->
-									<div class="border-t px-3 py-2 text-xs {fit !== null && !fit.fits ? 'border-2' : ''}">
-										<div class="flex flex-wrap items-center gap-2">
+									<div class="border-t border-wled-line px-panel py-row font-ui text-xs {fit !== null && !fit.fits ? 'border-2 border-wled-danger' : ''}">
+										<div class="flex flex-wrap items-center gap-row">
 											<span class="font-medium">{t('layout.fit_heading')}</span>
 											{#if fit === null}
-												<Badge variant="outline" size="sm">{t('layout.fit_unknown_badge')}</Badge>
+												<Chip>{t('layout.fit_unknown_badge')}</Chip>
 											{:else if fit.fits}
-												<Badge variant="secondary" size="sm">{t('layout.fits')}</Badge>
+												<Chip tone="done">{t('layout.fits')}</Chip>
 											{:else}
-												<Badge variant="warning" size="sm">{t('layout.does_not_fit')}</Badge>
+												<Chip tone="idle">{t('layout.does_not_fit')}</Chip>
 											{/if}
 										</div>
 										<p
-											class="mt-1 {fit !== null && !fit.fits ? 'font-medium' : 'opacity-70'}"
+											class="mt-tight {fit !== null && !fit.fits ? 'font-medium text-wled-danger' : 'text-wled-text-quiet'}"
 											role={fit !== null && !fit.fits ? 'alert' : undefined}
 										>
 											{fit === null ? t('layout.fit_unknown') : fit.said}
 										</p>
 									</div>
-								</section>
+								</Panel>
 							</div>
 
-							<div class="flex flex-col gap-3">
+							<div class="flex flex-col gap-section lg:min-w-0 lg:flex-1">
 								<!-- Group 2: what the picture is made of. -->
-								<section class="overflow-hidden rounded border">
-									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-										<span class="text-sm font-medium">{t('layout.group_content')}</span>
-										<span class="ml-auto text-[11px] opacity-60">{t('layout.group_content_what')}</span>
-									</div>
+								<Panel title={t('layout.group_content')}>
+									{#snippet meta()}
+										<span class="font-ui text-xs text-wled-text-quiet">{t('layout.group_content_what')}</span>
+									{/snippet}
 
-									<div class="grid gap-3 px-3 py-3 md:grid-cols-3">
-										<div class="flex flex-col gap-2">
-											<label class="flex items-center gap-2 text-sm">
+									<div class="grid gap-section md:grid-cols-3">
+										<div class="flex flex-col gap-row">
+											<label class="flex items-center gap-row font-ui text-sm">
 												<input
 													type="checkbox"
-													class="h-4 w-4"
+													class="h-4 w-4 accent-wled-accent-fill"
 													checked={draft.bar}
 													onchange={(event) => edit(one, { bar: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.bar')}</span>
-												<span class="text-[10px] opacity-60">{one.bar_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												<span class="font-ui text-xs text-wled-text-quiet">{one.bar_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
 											</label>
 
-											<label class="flex flex-col gap-1 text-sm">
-												<span class="text-xs opacity-70">
-													{t('layout.bar_band')}
-													<span class="text-[10px]">{one.bar_band_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-												</span>
-												<select
-													class="rounded border px-2 py-1"
-													value={draft.bar_band}
-													disabled={!draft.bar}
-													onchange={(event) =>
-														edit(one, { bar_band: (event.currentTarget as HTMLSelectElement).value as 'top' | 'bottom' })}
-												>
-													{#each ['top', 'bottom'] as band (band)}
-														<option value={band}>{bandLabel(band as 'top' | 'bottom')}</option>
-													{/each}
-												</select>
-											</label>
+											<Field id="layout-band" label="{t('layout.bar_band')} · {one.bar_band_origin === 'store' ? t('layout.yours') : t('layout.default')}">
+												{#snippet children()}
+													<FieldSelect
+														id="layout-band"
+														value={draft.bar_band}
+														disabled={!draft.bar}
+														oninput={(value) => edit(one, { bar_band: value as 'top' | 'bottom' })}
+													>
+														{#snippet children()}
+															{#each ['top', 'bottom'] as band (band)}
+																<option value={band} selected={band === draft.bar_band}>{bandLabel(band as 'top' | 'bottom')}</option>
+															{/each}
+														{/snippet}
+													</FieldSelect>
+												{/snippet}
+											</Field>
 
-											<label class="flex flex-col gap-1 text-sm">
-												<span class="text-xs opacity-70">
-													{t('layout.bar_rows')}
-													<span class="text-[10px]">{one.bar_rows_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-												</span>
-												<input
-													type="number"
-													class="w-24 rounded border px-2 py-1"
-													min="1"
-													max="48"
-													value={draft.bar_rows}
-													disabled={!draft.bar}
-													onchange={(event) => edit(one, { bar_rows: Number((event.currentTarget as HTMLInputElement).value) })}
-												/>
-												<span class="text-[10px] opacity-60">{t('layout.bar_rows_note')}</span>
-											</label>
+											<Field
+												id="layout-rows"
+												label="{t('layout.bar_rows')} · {one.bar_rows_origin === 'store' ? t('layout.yours') : t('layout.default')}"
+												hint={t('layout.bar_rows_note')}
+											>
+												{#snippet children()}
+													<FieldInput
+														id="layout-rows"
+														class="w-24"
+														type="number"
+														min="1"
+														max="48"
+														value={String(draft.bar_rows)}
+														disabled={!draft.bar}
+														onchange={(event) => edit(one, { bar_rows: Number((event.currentTarget as HTMLInputElement).value) })}
+													/>
+												{/snippet}
+											</Field>
 										</div>
 
-										<div class="flex flex-col gap-2">
-											<label class="flex items-center gap-2 text-sm">
+										<div class="flex flex-col gap-row">
+											<label class="flex items-center gap-row font-ui text-sm">
 												<input
 													type="checkbox"
-													class="h-4 w-4"
+													class="h-4 w-4 accent-wled-accent-fill"
 													checked={draft.percent}
 													onchange={(event) => edit(one, { percent: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.percent')}</span>
-												<span class="text-[10px] opacity-60">{one.percent_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												<span class="font-ui text-xs text-wled-text-quiet">{one.percent_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
 											</label>
 
-											<label class="flex flex-col gap-1 text-sm">
-												<span class="text-xs opacity-70">
-													{t('layout.percent_scale')}
-													<span class="text-[10px]">{one.percent_scale_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-												</span>
-												<select
-													class="rounded border px-2 py-1"
-													value={String(draft.percent_scale)}
-													disabled={!draft.percent}
-													onchange={(event) =>
-														edit(one, { percent_scale: Number((event.currentTarget as HTMLSelectElement).value) as 3 | 4 | 5 })}
-												>
-													{#each SCALES as scale (scale)}
-														<option value={String(scale)}>{t('layout.scale', { scale })}</option>
-													{/each}
-												</select>
-											</label>
+											<Field
+												id="layout-scale"
+												label="{t('layout.percent_scale')} · {one.percent_scale_origin === 'store' ? t('layout.yours') : t('layout.default')}"
+											>
+												{#snippet children()}
+													<FieldSelect
+														id="layout-scale"
+														value={String(draft.percent_scale)}
+														disabled={!draft.percent}
+														oninput={(value) => edit(one, { percent_scale: Number(value) as 3 | 4 | 5 })}
+													>
+														{#snippet children()}
+															{#each SCALES as scale (scale)}
+																<option value={String(scale)} selected={scale === draft.percent_scale}>{t('layout.scale', { scale })}</option>
+															{/each}
+														{/snippet}
+													</FieldSelect>
+												{/snippet}
+											</Field>
 										</div>
 
-										<div class="flex flex-col gap-2">
-											<label class="flex items-center gap-2 text-sm">
+										<div class="flex flex-col gap-row">
+											<label class="flex items-center gap-row font-ui text-sm">
 												<input
 													type="checkbox"
-													class="h-4 w-4"
+													class="h-4 w-4 accent-wled-accent-fill"
 													checked={draft.name}
 													onchange={(event) => edit(one, { name: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.name')}</span>
-												<span class="text-[10px] opacity-60">{one.name_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												<span class="font-ui text-xs text-wled-text-quiet">{one.name_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
 											</label>
 										</div>
 									</div>
-								</section>
+								</Panel>
 
 								<!--
 									Group 3: how they share the row. Only when there is more than one of
@@ -1326,57 +1342,58 @@
 									go back exactly as they came.
 								-->
 								{#if partsOn(draft) > 1}
-									<section class="overflow-hidden rounded border" data-group="share">
-										<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-											<span class="text-sm font-medium">{t('layout.group_share')}</span>
-											<span class="ml-auto text-[11px] opacity-60">{t('layout.group_share_what')}</span>
-										</div>
+									<Panel title={t('layout.group_share')} data-group="share">
+										{#snippet meta()}
+											<span class="font-ui text-xs text-wled-text-quiet">{t('layout.group_share_what')}</span>
+										{/snippet}
 
-										<div class="flex flex-wrap items-end gap-3 px-3 py-3 text-sm">
-											<label class="flex flex-col gap-1">
-												<span class="text-xs opacity-70">
-													{t('layout.rotation')}
-													<span class="text-[10px]">{one.rotation_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-												</span>
-												<select
-													class="rounded border px-2 py-1"
-													value={draft.rotation}
-													onchange={(event) =>
-														edit(one, {
-															rotation: (event.currentTarget as HTMLSelectElement).value as 'take-turns' | 'side-by-side',
-														})}
-												>
-													{#each ROTATIONS as rotation (rotation)}
-														<option value={rotation}>{rotationLabel(rotation)}</option>
-													{/each}
-												</select>
-											</label>
+										<div class="flex flex-wrap items-end gap-section font-ui text-sm">
+											<Field
+												id="layout-rotation"
+												label="{t('layout.rotation')} · {one.rotation_origin === 'store' ? t('layout.yours') : t('layout.default')}"
+											>
+												{#snippet children()}
+													<FieldSelect
+														id="layout-rotation"
+														value={draft.rotation}
+														oninput={(value) => edit(one, { rotation: value as 'take-turns' | 'side-by-side' })}
+													>
+														{#snippet children()}
+															{#each ROTATIONS as rotation (rotation)}
+																<option value={rotation} selected={rotation === draft.rotation}>{rotationLabel(rotation)}</option>
+															{/each}
+														{/snippet}
+													</FieldSelect>
+												{/snippet}
+											</Field>
 
-											<label class="flex flex-col gap-1">
-												<span class="text-xs opacity-70">
-													{t('layout.rotate_seconds')}
-													<span class="text-[10px]">{one.rotate_seconds_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-												</span>
-												<input
-													type="number"
-													class="w-20 rounded border px-2 py-1"
-													min="1"
-													value={draft.rotate_seconds}
-													disabled={draft.rotation === 'side-by-side'}
-													onchange={(event) => edit(one, { rotate_seconds: Number((event.currentTarget as HTMLInputElement).value) })}
-												/>
-											</label>
+											<Field
+												id="layout-seconds"
+												label="{t('layout.rotate_seconds')} · {one.rotate_seconds_origin === 'store' ? t('layout.yours') : t('layout.default')}"
+											>
+												{#snippet children()}
+													<FieldInput
+														id="layout-seconds"
+														class="w-20"
+														type="number"
+														min="1"
+														value={String(draft.rotate_seconds)}
+														disabled={draft.rotation === 'side-by-side'}
+														onchange={(event) => edit(one, { rotate_seconds: Number((event.currentTarget as HTMLInputElement).value) })}
+													/>
+												{/snippet}
+											</Field>
 										</div>
 
 										{#if draft.rotation === 'side-by-side'}
-											<p class="border-t px-3 py-2 text-[11px] opacity-70">
+											<p class="mt-row border-t border-wled-line pt-row font-ui text-xs text-wled-text-quiet">
 												{one.rotation_note ?? t('layout.side_by_side_what')}
 												{#if !(draft.percent && draft.name)}
 													{' '}{t('layout.side_by_side_needs_both')}
 												{/if}
 											</p>
 										{/if}
-									</section>
+									</Panel>
 								{/if}
 
 								<!--
@@ -1387,28 +1404,27 @@
 									cannot fit, the refusal is in words here, naming the lines with no
 									room; the verdict beside the picture carries the arithmetic.
 								-->
-								<section class="overflow-hidden rounded border">
-									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-										<span class="text-sm font-medium">{t('layout.lines_heading')}</span>
-										<span class="ml-auto text-[11px] opacity-60">
+								<Panel title={t('layout.lines_heading')} pad="none">
+									{#snippet meta()}
+										<span class="font-ui text-xs text-wled-text-quiet">
 											{t('layout.lines_count', { on: linesOn(draft).length, rows: stackHeight(linesOn(draft).length) })}
 										</span>
-									</div>
+									{/snippet}
 
-									<div class="flex flex-col gap-2 px-3 py-3">
-										<p class="text-[11px] opacity-60">{t('layout.lines_note')}</p>
+									<div class="flex flex-col gap-row p-panel">
+										<p class="font-ui text-xs text-wled-text-quiet">{t('layout.lines_note')}</p>
 
-										<div class="grid gap-1 md:grid-cols-2">
+										<div class="grid gap-tight md:grid-cols-2">
 											{#each LINES as line (line.key)}
-												<label class="flex items-center gap-2 text-sm" title={t(line.what)}>
+												<label class="flex items-center gap-row font-ui text-sm" title={t(line.what)}>
 													<input
 														type="checkbox"
-														class="h-4 w-4"
+														class="h-4 w-4 accent-wled-accent-fill"
 														checked={draft[line.key]}
 														onchange={(event) => edit(one, { [line.key]: (event.currentTarget as HTMLInputElement).checked })}
 													/>
 													<span>{t(line.label)}</span>
-													<span class="text-[10px] opacity-60">
+													<span class="font-ui text-xs text-wled-text-quiet">
 														{(one[LINE_ORIGIN[line.key]] as Origin) === 'store' ? t('layout.yours') : t('layout.default')}
 													</span>
 												</label>
@@ -1416,11 +1432,11 @@
 										</div>
 
 										{#if draft.ends && one.zone === ''}
-											<p class="text-[11px]" role="note">{t('layout.line_ends_no_zone')}</p>
+											<p class="font-ui text-xs" role="note">{t('layout.line_ends_no_zone')}</p>
 										{/if}
 
 										{#if tally !== null && tally.missed.length > 0}
-											<p class="rounded border border-dashed px-2 py-1 text-xs" role="alert" data-refusal="lines">
+											<p class="font-ui text-xs text-wled-danger" role="alert" data-refusal="lines">
 												{t('layout.lines_refused', {
 													rows: tally.stack,
 													left: tally.left,
@@ -1429,9 +1445,9 @@
 											</p>
 										{/if}
 									</div>
-								</section>
+								</Panel>
 
-								<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
+								<p class="font-ui text-xs text-wled-text-quiet">{t('layout.side_by_side_quiet')}</p>
 							</div>
 						</div>
 					{:else if kind === 'strip'}
@@ -1441,41 +1457,43 @@
 							panel controls are absent because a strip is one dimension — and the page says
 							that, rather than leaving a person to read the absence as a fault.
 						-->
-						<div class="flex flex-col gap-2 rounded border px-3 py-3 text-sm">
-							<p>{t('layout.strip_what')}</p>
+						<Panel>
+							<div class="flex flex-col gap-row font-ui text-sm">
+								<p>{t('layout.strip_what')}</p>
 
-							{#if frame !== undefined && pictureOf(frame) !== ''}
-								<img
-									src={pictureOf(frame)}
-									alt={t('layout.strip_picture_alt', { light: frame.light.name })}
-									width={frame.image?.width ?? frame.width}
-									height={frame.image?.height ?? frame.height}
-									class="w-full max-w-[32rem] rounded border"
-									style="image-rendering: pixelated;"
-								/>
-							{/if}
+								{#if frame !== undefined && pictureOf(frame) !== ''}
+									<img
+										src={pictureOf(frame)}
+										alt={t('layout.strip_picture_alt', { light: frame.light.name })}
+										width={frame.image?.width ?? frame.width}
+										height={frame.image?.height ?? frame.height}
+										class="w-full max-w-128 rounded-panel border border-wled-line"
+										style="image-rendering: pixelated;"
+									/>
+								{/if}
 
-							<ul class="flex flex-col gap-1 text-xs opacity-80">
-								<li>{t('layout.strip_fill', { lit: frame?.frame.lit ?? 0, total: frame?.frame.total ?? 0 })}</li>
-								<li>{t('layout.strip_zero')}</li>
-								<li>{t('layout.strip_full')}</li>
-								<li>{brightnessOf(one)}</li>
-							</ul>
+								<ul class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
+									<li>{t('layout.strip_fill', { lit: frame?.frame.lit ?? 0, total: frame?.frame.total ?? 0 })}</li>
+									<li>{t('layout.strip_zero')}</li>
+									<li>{t('layout.strip_full')}</li>
+									<li>{brightnessOf(one)}</li>
+								</ul>
 
-							<p class="text-[11px] opacity-60">{t('layout.strip_fill_note')}</p>
-							<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
-							{#if one.overridden}
-								<p class="text-[11px] opacity-60">{t('layout.strip_row_yours')}</p>
-							{/if}
-						</div>
+								<p class="font-ui text-xs text-wled-text-quiet">{t('layout.strip_fill_note')}</p>
+								<p class="font-ui text-xs text-wled-text-quiet">{t('layout.side_by_side_quiet')}</p>
+								{#if one.overridden}
+									<p class="font-ui text-xs text-wled-text-quiet">{t('layout.strip_row_yours')}</p>
+								{/if}
+							</div>
+						</Panel>
 					{:else}
-						<p class="text-sm opacity-70">{t('layout.shape_unknown')}</p>
+						<p class="font-ui text-sm text-wled-text-quiet">{t('layout.shape_unknown')}</p>
 					{/if}
 				</article>
 			{/if}
 		{/if}
 
-		<div class="flex flex-col gap-1 text-xs opacity-70">
+		<div class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
 			<p>{t('layout.note_store')}</p>
 			<p>{t('layout.note_reset')}</p>
 			{#if (board.unknown_layouts ?? []).length > 0}

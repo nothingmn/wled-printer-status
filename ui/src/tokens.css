@@ -201,4 +201,13 @@
      action is readable. It is the one place this module's palette knowingly
      parts with the host's, and putting it back is this one line. */
   --wled-pixel-off: #000;
+
+  /* THE INK ON THAT MAT, and why it is a scale entry rather than a semantic one. A mat is black
+     in both themes, so its ink has to be light in both themes — and every semantic text token
+     the host publishes is dark in its light theme (`--foreground` is #1e1f24 there, which is
+     1.4:1 on black). The host's own dark scale is the one name that stays light whichever theme
+     is in force, and `--color-gray-dark-11` is the step its dark `--muted-foreground` is built
+     from. The literal after the comma is what it resolves to, for a page where the scale is
+     absent: the same value, 9.2:1 on the mat. */
+  --wled-pixel-off-ink: var(--color-gray-dark-11, #b2b4bd);
 }

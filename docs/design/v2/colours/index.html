@@ -3,45 +3,43 @@
 <head>
 <meta charset="utf-8">
 <title>Colours — what each state looks like</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
-    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  .wrap{padding:20px 22px 80px;max-width:1080px}
+    *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-4)}
+  header.app b{color:var(--wled-text);font-size:13px}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  .wrap{padding:var(--wled-space-5) var(--wled-space-5) 80px;max-width:1080px}
   h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
-  .sub{font-size:12px;color:var(--muted)}
-  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
-  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .sub{font-size:12px;color:var(--wled-text-quiet)}
+  .note{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-3) var(--wled-space-4);margin-top:var(--wled-space-4);font-size:12.5px;color:var(--wled-text);display:flex;gap:var(--wled-space-3)}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--wled-accent-quiet);color:var(--wled-accent-quiet-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:var(--wled-space-1)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--wled-space-4);margin-top:var(--wled-space-4)}
+  .card{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-weight:650;display:flex;gap:var(--wled-space-2);align-items:center}
   .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
-  .st{padding:12px 14px 13px}
-  .st .top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .st{padding:var(--wled-space-3) var(--wled-space-4) var(--wled-space-3)}
+  .st .top{display:flex;align-items:center;gap:var(--wled-space-2);margin-bottom:var(--wled-space-2)}
   .st .top b{font-size:13px}
-  .st .top .hex{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-left:auto}
-  input[type=color]{width:26px;height:24px;padding:0;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
-  .prev{display:flex;gap:10px;align-items:flex-start}
-  canvas{background:#000;border-radius:4px;image-rendering:pixelated;display:block}
-  .prev .lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;text-align:center}
-  .row2{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;flex-wrap:wrap}
-  .row2 label{color:#3b4250;min-width:40px}
-  select,input[type=text],input[type=number]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
-  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .warnline{font-size:11px;color:var(--bad);margin-top:6px}
-  .foot{padding:10px 14px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
-  .beh{padding:6px 14px 12px}
-  .beh div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px;align-items:center}
+  .st .top .hex{font-family:var(--wled-font-data);font-size:10.5px;color:var(--wled-text-quiet);margin-left:auto}
+  input[type=color]{width:26px;height:24px;padding:0;border:1px solid var(--wled-line);border-radius:var(--wled-radius);background:var(--wled-panel);cursor:pointer}
+  .prev{display:flex;gap:var(--wled-space-3);align-items:flex-start}
+  canvas{background:var(--wled-pixel-off);border-radius:var(--wled-radius);image-rendering:pixelated;display:block}
+  .prev .lbl{font-size:10px;color:var(--wled-text-quiet);text-transform:uppercase;letter-spacing:.4px;margin-top:var(--wled-space-1);text-align:center}
+  .row2{display:flex;align-items:center;gap:var(--wled-space-2);margin-top:var(--wled-space-3);font-size:12px;flex-wrap:wrap}
+  .row2 label{color:var(--wled-text);min-width:40px}
+  select,input[type=text],input[type=number]{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);border-radius:var(--wled-radius);background:var(--wled-panel);color:var(--wled-text)}
+  input[type=checkbox]{accent-color:var(--wled-accent);width:14px;height:14px;cursor:pointer}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .mono{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .warnline{font-size:11px;color:var(--wled-status-error-ink);margin-top:var(--wled-space-2)}
+  .foot{padding:var(--wled-space-3) var(--wled-space-4);background:var(--wled-sunken);border-top:1px solid var(--wled-line);font-size:11.5px;color:var(--wled-text-quiet)}
+  .beh{padding:var(--wled-space-2) var(--wled-space-4) var(--wled-space-3)}
+  .beh div{display:flex;justify-content:space-between;gap:var(--wled-space-4);padding:var(--wled-space-2) 0;border-bottom:1px solid var(--wled-line);font-size:12.5px;align-items:center}
   .beh div:last-child{border-bottom:none}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast{position:fixed;right:20px;bottom:20px;background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -70,7 +68,7 @@
       <div><span>At 0%, before the first percent</span><select><option>the waiting colour, whole light</option><option>empty</option></select></div>
       <div><span>At 100%</span><select><option>full, in the state colour</option><option>flash briefly, then full</option></select></div>
       <div><span>A job that stops reporting</span><select><option>hold the colour for finished or stopped</option><option>always dim to "can't reach"</option></select></div>
-      <div><span>The colour of what is not lit</span><input type="color" value="#000000"></div>
+      <div><span>The colour of what is not lit</span><input type="color" id="offMat"></div>
     </div>
     <div class="foot">Only <b>a job that stops reporting</b> differs from what ships today: a finished job keeps its green through a silence, a printing one dims to "can't reach".</div>
   </div>
@@ -78,11 +76,11 @@
   <div class="card" style="margin-top:14px">
     <h2>The limit on changeable words <span class="right">why languages are not free</span></h2>
     <div style="padding:6px 14px 12px">
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>What the font draws today</span><span class="hint">43 glyphs — A–Z, 0–9, <span class="mono">% . - _ /</span> and space</span></div>
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>Accented Latin — É, Ü, Å, Ø</span><span class="hint">feasible: about thirty more 5×7 glyphs</span></div>
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>Greek, Cyrillic</span><span class="hint">feasible, but a second alphabet rather than a tweak</span></div>
       <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
         <span>Chinese, Japanese, Korean</span><span class="hint">not at 5×7 — a legible glyph needs 12×12 and up</span></div>
@@ -93,7 +91,9 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
+document.getElementById('offMat').value=TOKEN.colourOf('--wled-pixel-off');
 const F={A:[0x0E,0x11,0x11,0x1F,0x11,0x11,0x11],B:[0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],C:[0x0F,0x10,0x10,0x10,0x10,0x10,0x0F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],G:[0x0F,0x10,0x10,0x17,0x11,0x11,0x0F],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],J:[0x01,0x01,0x01,0x01,0x01,0x11,0x0E],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],L:[0x10,0x10,0x10,0x10,0x10,0x10,0x1F],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],O:[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],P:[0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],Q:[0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],R:[0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],T:[0x1F,0x04,0x04,0x04,0x04,0x04,0x04],U:[0x11,0x11,0x11,0x11,0x11,0x11,0x0E],V:[0x11,0x11,0x11,0x11,0x11,0x0A,0x04],W:[0x11,0x11,0x11,0x15,0x15,0x1B,0x11],X:[0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],Y:[0x11,0x11,0x0A,0x04,0x04,0x04,0x04],Z:[0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
 '0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'2':[0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],'3':[0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'5':[0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E],'6':[0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],'7':[0x1F,0x01,0x02,0x04,0x08,0x08,0x08],'8':[0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],'9':[0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
 '%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],'.':[0,0,0,0,0,0x06,0x06],'-':[0,0,0,0x1F,0,0,0],'_':[0,0,0,0,0,0,0x1F],'/':[0x01,0x02,0x04,0x08,0x10,0,0],' ':[0,0,0,0,0,0,0]};
@@ -105,16 +105,16 @@ const tw=(s,sc)=>s.length*6*sc;
 const missing=s=>[...new Set([...s.toUpperCase()].filter(ch=>!F[ch]))];
 
 let STATES=[
- {k:'printing',    n:'printing',          c:'#00aa00', word:'PRINTING', won:true, hold:'forever', fill:0.41, note:'a job running — the word replaces the bar and digits'},
- {k:'paused',      n:'paused',            c:'#d2a500', word:'PAUSED',   won:true, hold:'forever', fill:0,    note:'a job on the bed, frozen'},
- {k:'attention',   n:'attention',         c:'#d2a500', word:'CHECK',    won:true, hold:'forever', fill:0,    note:'needs a person: filament, first layer'},
- {k:'finished',    n:'finished',          c:'#00aa00', word:'FINISHED', won:true, hold:'forever', fill:1,    note:'holds until the next job starts'},
- {k:'idle',        n:'idle',              c:'#d2a500', word:'IDLE',     won:true, hold:'forever', fill:0,    note:'nothing on the bed'},
- {k:'error',       n:'error',             c:'#c80000', word:'ERROR',    won:true, hold:'forever', fill:0,    note:'until it is cleared'},
- {k:'stopped',     n:'stopped',           c:'#505050', word:'STOPPED',  won:true, hold:'forever', fill:0,    note:'a job that ended badly'},
- {k:'unreachable', n:'light unreachable', c:'#460000', word:'OFFLINE',  won:true, hold:'forever', fill:0,    note:'the module cannot reach the light'},
- {k:'lost',        n:'printer lost',      c:'#460000', word:'NO PRINT', won:true, hold:'forever', fill:0,    note:'no reading from the printer'},
- {k:'unknown',     n:'unknown',           c:'#001546', word:'UNKNOWN',  won:true, hold:'forever', fill:0,    note:'a value this build cannot read'}
+ {k:'printing',    n:'printing',          c:TOKEN.colourOf('--mock-light-green'), word:'PRINTING', won:true, hold:'forever', fill:0.41, note:'a job running — the word replaces the bar and digits'},
+ {k:'paused',      n:'paused',            c:'var(--mock-light-amber)', word:'PAUSED',   won:true, hold:'forever', fill:0,    note:'a job on the bed, frozen'},
+ {k:'attention',   n:'attention',         c:'var(--mock-light-amber)', word:'CHECK',    won:true, hold:'forever', fill:0,    note:'needs a person: filament, first layer'},
+ {k:'finished',    n:'finished',          c:TOKEN.colourOf('--mock-light-green'), word:'FINISHED', won:true, hold:'forever', fill:1,    note:'holds until the next job starts'},
+ {k:'idle',        n:'idle',              c:'var(--mock-light-amber)', word:'IDLE',     won:true, hold:'forever', fill:0,    note:'nothing on the bed'},
+ {k:'error',       n:'error',             c:TOKEN.colourOf('--mock-light-red'), word:'ERROR',    won:true, hold:'forever', fill:0,    note:'until it is cleared'},
+ {k:'stopped',     n:'stopped',           c:TOKEN.colourOf('--mock-light-grey'), word:'STOPPED',  won:true, hold:'forever', fill:0,    note:'a job that ended badly'},
+ {k:'unreachable', n:'light unreachable', c:TOKEN.colourOf('--mock-light-lost'), word:'OFFLINE',  won:true, hold:'forever', fill:0,    note:'the module cannot reach the light'},
+ {k:'lost',        n:'printer lost',      c:TOKEN.colourOf('--mock-light-lost'), word:'NO PRINT', won:true, hold:'forever', fill:0,    note:'no reading from the printer'},
+ {k:'unknown',     n:'unknown',           c:TOKEN.colourOf('--mock-light-blue'), word:'UNKNOWN',  won:true, hold:'forever', fill:0,    note:'a value this build cannot read'}
 ];
 const hexRGB=h=>[parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)];
 
@@ -153,7 +153,7 @@ function render(){
 function paint(card,s){
   const rgb=hexRGB(s.c);
   const p=card.querySelector('.pv'), g=p.getContext('2d');
-  g.fillStyle='#000';g.fillRect(0,0,128,32);
+  g.fillStyle=TOKEN.colourOf('--wled-pixel-off');g.fillRect(0,0,128,32);
   const warn=card.querySelector('[data-warn]');
 
   if(s.won && s.word){
@@ -167,12 +167,12 @@ function paint(card,s){
     else warn.style.display='none';
   } else {
     g.fillStyle='rgb('+rgb.join(',')+')';g.fillRect(0,0,128,32);
-    if(s.fill>0 && s.fill<1){ g.fillStyle='#000';g.fillRect(Math.round(s.fill*128),0,128,32); }
+    if(s.fill>0 && s.fill<1){ g.fillStyle=TOKEN.colourOf('--wled-pixel-off');g.fillRect(Math.round(s.fill*128),0,128,32); }
     warn.style.display='none';
   }
 
   const st=card.querySelector('.sv'), sg=st.getContext('2d');
-  sg.fillStyle='#000';sg.fillRect(0,0,48,4);
+  sg.fillStyle=TOKEN.colourOf('--wled-pixel-off');sg.fillRect(0,0,48,4);
   sg.fillStyle='rgb('+rgb.join(',')+')';
   if(s.fill>0&&s.fill<1) sg.fillRect(0,0,Math.round(s.fill*48),4);
   else sg.fillRect(0,0,48,4);

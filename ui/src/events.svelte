@@ -33,9 +33,12 @@
 	// button (no route runs one moment on one light, and the preview routes paint a whole light, which
 	// an editor must not do), and a preset's body (the route carries slot and name only, and the body
 	// belongs to WLED's own interface).
+	//
+	// **The skin.** The moment table is a panel with no inner padding so its rows keep the compact
+	// rhythm; every select, text box and number box in a row is the field control, every stamp is a
+	// chip, and the actions are the button primitive (`link` for a discard, which is an action that
+	// must not compete with the row's own value).
 	import { onMount } from 'svelte';
-
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
 
 	import {
 		moduleApi,
@@ -53,6 +56,7 @@
 	import { heldHost } from './host';
 	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
 	import PrinterLink from './printer-link.svelte';
+	import { Button, Chip, Field, FieldInput, FieldSelect, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -147,6 +151,9 @@
 	 * but cannot be named here. It is left out rather than offered as a number that would never match.
 	 */
 	const namedPresets = $derived((presets?.presets ?? []).filter((one) => !one.unnamed && one.name.trim() !== ''));
+
+	/** Whether this light carries more than one printer, which is what the two table shapes turn on. */
+	const manyPrinters = $derived((board?.printers.length ?? 0) > 1);
 
 	/** How many of the light's slots carry no name, which is worth a line when there are any. */
 	const unnamedCount = $derived((presets?.presets ?? []).filter((one) => one.unnamed || one.name.trim() === '').length);
@@ -366,60 +373,73 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-wrap items-end gap-3">
-		<div class="flex flex-col gap-1">
-			<h1 class="text-lg font-semibold">{t('events.title')}</h1>
-			<p class="text-sm opacity-70">{t('events.intro')}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-wrap items-end gap-section">
+		<div class="flex flex-col gap-tight">
+			<h1 class="font-ui text-lg font-medium">{t('events.title')}</h1>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('events.intro')}</p>
 		</div>
 
-		<label class="ml-auto flex flex-col gap-1 text-sm">
-			<span class="text-xs opacity-70">{t('events.light')}</span>
-			<select
-				class="rounded border px-2 py-1"
-				value={chosen}
-				disabled={loading || lights.list.length === 0}
-				onchange={(event) => void openLight((event.currentTarget as HTMLSelectElement).value)}
-			>
-				{#each lights.list as one (addressOf(one))}
-					<option value={nameOf(one)}>{one.controller?.name ?? addressOf(one)}</option>
-				{/each}
-			</select>
-		</label>
+		<Field id="events-light" class="ml-auto" label={t('events.light')}>
+			{#snippet children()}
+				<FieldSelect
+					id="events-light"
+					value={chosen}
+					disabled={loading || lights.list.length === 0}
+					oninput={(value) => void openLight(value)}
+				>
+					{#snippet children()}
+						{#each lights.list as one (addressOf(one))}
+							<option value={nameOf(one)} selected={nameOf(one) === chosen}>
+								{one.controller?.name ?? addressOf(one)}
+							</option>
+						{/each}
+					{/snippet}
+				</FieldSelect>
+			{/snippet}
+		</Field>
 	</header>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 	{#if notice !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{notice}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('events.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('events.loading')}</p>
 	{:else if lights.list.length === 0}
-		<div class="rounded border px-4 py-6">
-			<p class="text-sm font-medium">{t('events.no_lights')}</p>
-		</div>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('events.no_lights')}</p>
+		</Panel>
 	{:else if board !== null}
-		<p class="rounded border px-3 py-2 text-sm">
-			{#if board.printers.length > 1}
-				<span class="font-medium">{t('events.many_printers', { count: board.printers.length })}</span>
-			{:else}
-				<span class="font-medium">{t('events.one_printer')}</span>
-			{/if}
-			{t('events.presets_are_theirs')}
-			{#if shapeOf(chosen) === 'strip'}
-				{t('events.strip_no_word')}
-			{:else if shapeOf(chosen) === ''}
-				{t('events.shape_unknown')}
-			{/if}
-		</p>
+		<Panel>
+			<p class="font-ui text-sm">
+				{#if manyPrinters}
+					<span class="font-medium">{t('events.many_printers', { count: board.printers.length })}</span>
+				{:else}
+					<span class="font-medium">{t('events.one_printer')}</span>
+				{/if}
+				{t('events.presets_are_theirs')}
+				{#if shapeOf(chosen) === 'strip'}
+					{t('events.strip_no_word')}
+				{:else if shapeOf(chosen) === ''}
+					{t('events.shape_unknown')}
+				{/if}
+			</p>
+		</Panel>
 
 		{#if !board.persisted}
-			<p class="rounded border px-3 py-2 text-sm" role="status">
-				{t('events.not_kept', { why: board.note ?? '' })}
-			</p>
+			<Panel>
+				<p class="font-ui text-sm" role="status">
+					{t('events.not_kept', { why: board.note ?? '' })}
+				</p>
+			</Panel>
 		{/if}
 
 		<!--
@@ -431,16 +451,17 @@
 		{#snippet controls(one: Moment, entry: MomentEntry)}
 			{@const draft = draftAt(one.moment, entry)}
 			{@const who = `${one.label} · ${entry.printer_name ?? entry.printer}`}
+			{@const key = rowKey(one.moment, entry.printer)}
 
-			<td class="px-3 py-2 align-top">
+			<td class="px-row py-row align-top">
 				<input
 					type="checkbox"
-					class="h-4 w-4 align-middle"
+					class="h-4 w-4 align-middle accent-wled-accent-fill"
 					checked={draft.enabled}
 					disabled={busy}
 					aria-label={t('events.on_for', { moment: who })}
 					onchange={(event) => {
-						drafts[rowKey(one.moment, entry.printer)] = {
+						drafts[key] = {
 							...draft,
 							enabled: (event.currentTarget as HTMLInputElement).checked,
 						};
@@ -449,74 +470,76 @@
 				/>
 			</td>
 
-			<td class="px-3 py-2 align-top">
-				<select
-					class="rounded border px-2 py-1 text-sm"
+			<td class="px-row py-row align-top">
+				<FieldSelect
 					value={draft.shows}
 					disabled={busy}
 					aria-label={t('events.shows_for', { moment: who })}
-					onchange={(event) =>
-						chooseShows(one.moment, entry, (event.currentTarget as HTMLSelectElement).value as Shows)}
+					oninput={(value) => chooseShows(one.moment, entry, value as Shows)}
 				>
-					{#each offers(entry) as shows (shows)}
-						<option value={shows}>{showsLabel(shows)}</option>
-					{/each}
-				</select>
+					{#snippet children()}
+						{#each offers(entry) as shows (shows)}
+							<option value={shows} selected={shows === draft.shows}>{showsLabel(shows)}</option>
+						{/each}
+					{/snippet}
+				</FieldSelect>
 			</td>
 
-			<td class="px-3 py-2 align-top">
+			<td class="px-row py-row align-top">
 				{#if draft.shows === 'Preset'}
-					<div class="flex flex-col gap-1">
+					<div class="flex flex-col gap-tight">
 						{#if canPick}
 							<!-- Picked from the light's own table, so the name is one the light can be asked for. -->
-							<select
-								class="rounded border px-2 py-1 text-sm"
+							<FieldSelect
 								value={draft.which}
 								disabled={busy}
 								aria-label={t('events.which_for', { moment: who })}
-								onchange={(event) => {
-									drafts[rowKey(one.moment, entry.printer)] = {
-										...draft,
-										which: (event.currentTarget as HTMLSelectElement).value,
-									};
+								oninput={(value) => {
+									drafts[key] = { ...draft, which: value };
 									void commit(one.moment, entry);
 								}}
 							>
-								<option value="">{t('events.pick_preset')}</option>
-								{#each namedPresets as preset (preset.slot)}
-									<option value={preset.name}>{preset.name}</option>
-								{/each}
-								{#if draft.which.trim() !== '' && !namedPresets.some((one) => one.name === draft.which.trim())}
-									<option value={draft.which}>{t('events.preset_not_on_light', { name: draft.which })}</option>
-								{/if}
-							</select>
-							<span class="text-[10px] opacity-60">
+								{#snippet children()}
+									<option value="">{t('events.pick_preset')}</option>
+									{#each namedPresets as preset (preset.slot)}
+										<option value={preset.name} selected={preset.name === draft.which}>{preset.name}</option>
+									{/each}
+									{#if draft.which.trim() !== '' && !namedPresets.some((one) => one.name === draft.which.trim())}
+										<option value={draft.which} selected>
+											{t('events.preset_not_on_light', { name: draft.which })}
+										</option>
+									{/if}
+								{/snippet}
+							</FieldSelect>
+							<span class="font-ui text-xs text-wled-text-quiet">
 								{t('events.presets_read', { count: namedPresets.length })}
 							</span>
 							{#if unnamedCount > 0}
-								<span class="text-[10px] opacity-60">{t('events.presets_unnamed_hidden', { count: unnamedCount })}</span>
+								<span class="font-ui text-xs text-wled-text-quiet">
+									{t('events.presets_unnamed_hidden', { count: unnamedCount })}
+								</span>
 							{/if}
 							{#if namedPresets.length === 0 && draft.which.trim() === ''}
-								<span class="text-[10px]" role="alert">{t('events.presets_none_yet')}</span>
+								<span class="font-ui text-xs text-wled-danger" role="alert">{t('events.presets_none_yet')}</span>
 							{/if}
 						{:else}
 							<!-- The list could not be read. The box still works, and the reason is beside it. -->
-							<input
+							<FieldInput
+								class="w-40"
 								type="text"
-								class="w-40 rounded border px-2 py-1 text-sm"
 								value={draft.which}
 								placeholder={t('events.preset_placeholder')}
 								disabled={busy}
 								aria-label={t('events.which_for', { moment: who })}
 								onchange={(event) => {
-									drafts[rowKey(one.moment, entry.printer)] = {
+									drafts[key] = {
 										...draft,
 										which: (event.currentTarget as HTMLInputElement).value,
 									};
 									void commit(one.moment, entry);
 								}}
 							/>
-							<span class="text-[10px] opacity-60">
+							<span class="font-ui text-xs text-wled-text-quiet">
 								{t('events.presets_typed', {
 									why: presetsWhy !== '' ? presetsWhy : (presets?.presets_unread ?? presets?.note ?? ''),
 								})}
@@ -524,60 +547,58 @@
 						{/if}
 					</div>
 				{:else if draft.shows === 'Word'}
-					<div class="flex flex-col gap-1">
-						<input
+					<div class="flex flex-col gap-tight">
+						<FieldInput
+							class="w-40"
 							type="text"
-							class="w-40 rounded border px-2 py-1 text-sm"
 							value={draft.which}
 							placeholder={t('events.word_placeholder')}
 							disabled={busy}
 							aria-label={t('events.which_for', { moment: who })}
 							onchange={(event) => {
-								drafts[rowKey(one.moment, entry.printer)] = {
+								drafts[key] = {
 									...draft,
 									which: (event.currentTarget as HTMLInputElement).value,
 								};
 								void commit(one.moment, entry);
 							}}
 						/>
-						<span class="text-[10px] opacity-60">{t('events.word_panel_only')}</span>
+						<span class="font-ui text-xs text-wled-text-quiet">{t('events.word_panel_only')}</span>
 						{#if wordTrouble(draft.which) !== ''}
-							<span class="text-[10px] opacity-80" role="alert">{wordTrouble(draft.which)}</span>
+							<span class="font-ui text-xs text-wled-danger" role="alert">{wordTrouble(draft.which)}</span>
 						{/if}
 					</div>
 				{:else if draft.shows === 'Colour'}
-					<select
-						class="rounded border px-2 py-1 text-sm"
+					<FieldSelect
 						value={draft.which}
 						disabled={busy}
 						aria-label={t('events.which_for', { moment: who })}
-						onchange={(event) => {
-							drafts[rowKey(one.moment, entry.printer)] = {
-								...draft,
-								which: (event.currentTarget as HTMLSelectElement).value,
-							};
+						oninput={(value) => {
+							drafts[key] = { ...draft, which: value };
 							void commit(one.moment, entry);
 						}}
 					>
-						{#each states as colour (colour.state)}
-							<option value={colour.state}>{colour.state}</option>
-						{/each}
-					</select>
+						{#snippet children()}
+							{#each states as colour (colour.state)}
+								<option value={colour.state} selected={colour.state === draft.which}>{colour.state}</option>
+							{/each}
+						{/snippet}
+					</FieldSelect>
 				{:else}
-					<span class="text-xs opacity-60">{t('events.nothing_names_nothing')}</span>
+					<span class="font-ui text-xs text-wled-text-quiet">{t('events.nothing_names_nothing')}</span>
 				{/if}
 			</td>
 
-			<td class="px-3 py-2 align-top">
-				<input
+			<td class="px-row py-row align-top">
+				<FieldInput
+					class="w-24 font-data"
 					type="text"
-					class="w-24 rounded border px-2 py-1 font-mono text-xs"
 					value={draft.for}
 					list="moment-lengths"
 					disabled={busy}
 					aria-label={t('events.for_for', { moment: who })}
 					onchange={(event) => {
-						drafts[rowKey(one.moment, entry.printer)] = {
+						drafts[key] = {
 							...draft,
 							for: (event.currentTarget as HTMLInputElement).value,
 						};
@@ -586,11 +607,11 @@
 				/>
 			</td>
 
-			<td class="px-3 py-2 text-right align-top">
-				<div class="flex flex-wrap items-center justify-end gap-1">
-					<Badge variant={entry.origin === 'store' ? 'secondary' : 'outline'} size="sm">
+			<td class="px-row py-row text-right align-top">
+				<div class="flex flex-wrap items-center justify-end gap-tight">
+					<Chip>
 						{entry.origin === 'store' ? t('events.yours') : t('events.default')}
-					</Badge>
+					</Chip>
 					{#if dirty(one.moment, entry) && complete(draft)}
 						<Button variant="ghost" size="sm" disabled={busy} onclick={() => void commit(one.moment, entry)}>
 							{t('events.save')}
@@ -610,42 +631,41 @@
 			</td>
 		{/snippet}
 
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-				<span class="text-sm font-medium">{t('events.moments')}</span>
-				<span class="ml-auto text-xs opacity-60">
-					{board.printers.length > 1 ? t('events.each_moment_then_printers') : t('events.one_row_per_moment')}
+		<Panel title={t('events.moments')} pad="none">
+			{#snippet meta()}
+				<span class="font-ui text-xs text-wled-text-quiet">
+					{manyPrinters ? t('events.each_moment_then_printers') : t('events.one_row_per_moment')}
 				</span>
-			</div>
+			{/snippet}
 
 			<div class="overflow-x-auto">
-				{#if board.printers.length > 1}
-					<table class="w-full min-w-[860px] text-left text-sm">
+				{#if manyPrinters}
+					<table class="w-full min-w-200 border-collapse text-left font-ui text-sm">
 						<thead>
-							<tr class="border-b text-xs uppercase tracking-wide opacity-60">
-								<th class="px-3 py-2 font-medium">{t('events.moment')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.printer_segment')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.on')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.shows')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.which')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.for')}</th>
-								<th class="px-3 py-2"></th>
+							<tr class="border-b border-wled-line text-xs uppercase tracking-label text-wled-text-quiet">
+								<th class="px-row py-row font-medium">{t('events.moment')}</th>
+								<th class="px-row py-row font-medium">{t('events.printer_segment')}</th>
+								<th class="px-row py-row font-medium">{t('events.on')}</th>
+								<th class="px-row py-row font-medium">{t('events.shows')}</th>
+								<th class="px-row py-row font-medium">{t('events.which')}</th>
+								<th class="px-row py-row font-medium">{t('events.for')}</th>
+								<th class="px-row py-row"></th>
 							</tr>
 						</thead>
 						<tbody>
 							{#each board.moments as one (one.moment)}
-								<tr class="border-b bg-black/[0.03] dark:bg-white/[0.06]">
-									<td colspan="7" class="px-3 py-2">
-										<span class="text-sm font-semibold">{one.label}</span>
-										<span class="ml-2 text-xs opacity-60">{one.meaning}</span>
-										<span class="ml-2 text-xs opacity-60">
+								<tr class="border-b border-wled-line bg-wled-sunken">
+									<td colspan="7" class="px-row py-row">
+										<span class="text-sm font-medium">{one.label}</span>
+										<span class="ml-row text-xs text-wled-text-quiet">{one.meaning}</span>
+										<span class="ml-row text-xs text-wled-text-quiet">
 											· {t('events.printer_count', { count: one.printer_count })}
 										</span>
 									</td>
 								</tr>
 								{#each one.entries as entry (entry.printer)}
-									<tr class="border-b">
-										<td colspan="2" class="px-3 py-2 pl-8 align-top">
+									<tr class="border-b border-wled-line">
+										<td colspan="2" class="px-row py-row pl-panel align-top">
 											<span class="font-medium"
 												>{#if entry.printer_name}<PrinterLink
 														id={entry.printer}
@@ -653,16 +673,18 @@
 														cls={NAME_LINK}
 													/>{:else}{entry.printer}{/if}</span
 												>
-											<span class="block font-mono text-[11px] opacity-60">
+											<span class="block font-data text-xs text-wled-text-quiet">
 												↳ {segmentOf(entry.segment)}
 											</span>
 										</td>
 										{@render controls(one, entry)}
 									</tr>
 									{#if (faults[rowKey(one.moment, entry.printer)] ?? '') !== ''}
-										<tr class="border-b">
-											<td colspan="7" class="px-3 py-2 pl-8 text-xs">
-												<span role="alert">{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}</span>
+										<tr class="border-b border-wled-line">
+											<td colspan="7" class="px-row py-row pl-panel text-xs">
+												<span class="text-wled-danger" role="alert">
+													{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}
+												</span>
 											</td>
 										</tr>
 									{/if}
@@ -672,31 +694,33 @@
 					</table>
 				{:else}
 					<!-- One printer: exactly the flat table §2.3 asks for, with no sub-rows. -->
-					<table class="w-full min-w-[760px] text-left text-sm">
+					<table class="w-full min-w-192 border-collapse text-left font-ui text-sm">
 						<thead>
-							<tr class="border-b text-xs uppercase tracking-wide opacity-60">
-								<th class="px-3 py-2 font-medium">{t('events.moment')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.on')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.shows')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.which')}</th>
-								<th class="px-3 py-2 font-medium">{t('events.for')}</th>
-								<th class="px-3 py-2"></th>
+							<tr class="border-b border-wled-line text-xs uppercase tracking-label text-wled-text-quiet">
+								<th class="px-row py-row font-medium">{t('events.moment')}</th>
+								<th class="px-row py-row font-medium">{t('events.on')}</th>
+								<th class="px-row py-row font-medium">{t('events.shows')}</th>
+								<th class="px-row py-row font-medium">{t('events.which')}</th>
+								<th class="px-row py-row font-medium">{t('events.for')}</th>
+								<th class="px-row py-row"></th>
 							</tr>
 						</thead>
 						<tbody>
 							{#each board.moments as one (one.moment)}
 								{#each one.entries as entry (entry.printer)}
-									<tr class="border-b last:border-b-0">
-										<td class="px-3 py-2 align-top">
+									<tr class="border-b border-wled-line last:border-b-0">
+										<td class="px-row py-row align-top">
 											<span class="font-medium">{one.label}</span>
-											<span class="block text-xs opacity-60">{one.meaning}</span>
+											<span class="block text-xs text-wled-text-quiet">{one.meaning}</span>
 										</td>
 										{@render controls(one, entry)}
 									</tr>
 									{#if (faults[rowKey(one.moment, entry.printer)] ?? '') !== ''}
-										<tr class="border-b last:border-b-0">
-											<td colspan="6" class="px-3 py-2 text-xs">
-												<span role="alert">{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}</span>
+										<tr class="border-b border-wled-line last:border-b-0">
+											<td colspan="6" class="px-row py-row text-xs">
+												<span class="text-wled-danger" role="alert">
+													{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}
+												</span>
 											</td>
 										</tr>
 									{/if}
@@ -707,10 +731,10 @@
 				{/if}
 			</div>
 
-			<div class="border-t bg-black/5 px-3 py-2 text-xs opacity-70 dark:bg-white/10">
+			<div class="border-t border-wled-line bg-wled-sunken px-panel py-row font-ui text-xs text-wled-text-quiet">
 				{t('events.footnote')}
 			</div>
-		</div>
+		</Panel>
 
 		<datalist id="moment-lengths">
 			{#each LENGTH_HINTS as hint (hint)}
@@ -718,7 +742,7 @@
 			{/each}
 		</datalist>
 
-		<div class="flex flex-col gap-1 text-xs opacity-70">
+		<div class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
 			<p>{t('events.for_forever')}</p>
 			<p>{t('events.preset_not_checked')}</p>
 			<p>{t('events.kept_without_light')}</p>
@@ -727,6 +751,6 @@
 			{/if}
 		</div>
 	{:else if reading}
-		<p class="text-sm opacity-70">{t('events.reading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('events.reading')}</p>
 	{/if}
 </section>

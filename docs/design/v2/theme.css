@@ -1,0 +1,224 @@
+/* The mockups' tokens — the same names and the same values the module paints with.
+ *
+ * WHY THIS FILE EXISTS. `docs/design/v2/<screen>/index.html` are the approved design record: a person
+ * opens one by double-clicking it, with nothing installed. They cannot read the host's CSS the way
+ * the module does (`ui/src/tokens.css` maps each module token to a host token and lets the host's
+ * theme resolve it), so the resolved values are written down here once and every mockup links this
+ * one file. Without it, the guide and the mockups would be telling the next reader two different
+ * things about what the product looks like.
+ *
+ * HOW IT STAYS IN STEP. Three rules, and the third is a check rather than a promise:
+ *
+ *   1. the **names** are `ui/src/tokens.css`'s names, unchanged — `--wled-canvas`, not `--bg`;
+ *   2. the **values** are what those tokens resolve to on the operator's install, read from the
+ *      running page in both themes rather than typed from memory (2026-11-19; the light column comes
+ *      from the host's `:root`, the dark column from its `.dark`);
+ *   3. `node docs/design/v2/check-theme.mjs` fails if a token exists in one file and not the other,
+ *      so a token added to the module and not here is a red check rather than a drift nobody sees.
+ *
+ * A mockup writes no colour of its own: if a screen needs a shade this file does not carry, the
+ * shade is a token that is missing, and it is added to `tokens.css` first.
+ *
+ * Both themes are here. The light values are the default, `prefers-color-scheme: dark` and the
+ * `.dark` class on `<html>` switch to the dark ones — the same two skins the host flips between,
+ * and the same rule the module follows: a theme flipped while the page is open is followed with no
+ * script at all.
+ */
+
+:root {
+	/* Surfaces. `--wled-bg` is the page the module sits on; `--wled-panel` is a box on it;
+	   `--wled-quiet` is the quieter fill *inside* a panel (a track, a disabled fill, a grouping
+	   strip); `--wled-sunken` is the page's own surface one step down, for a header row. */
+	--wled-canvas: #ffffff;
+	--wled-panel: #ffffff;
+	--wled-panel-ink: #1e1f24;
+	--wled-quiet: #eff0f3;
+	--wled-sunken: #f8f9fb;
+	--wled-hover: #eff0f3;
+
+	/* Hairlines. They separate; they never decorate. */
+	--wled-line: #e0e1e6;
+	--wled-line-field: #8b8d98;
+	--wled-hairline: 1px;
+
+	/* Text: primary, secondary, and the one grey for disabled. No fourth. */
+	--wled-text: #1e1f24;
+	--wled-text-quiet: #62636c;
+	--wled-text-off: #b9bbc6;
+	--wled-off: #fcfcfd;
+
+	/* The one accent: where you are, the progress fill, a link, the primary action. */
+	--wled-accent: #fd5000;
+	--wled-accent-ink: #fefcfb;
+	--wled-accent-text: #cf3c00;
+	--wled-accent-fill: #fd5000;
+	--wled-accent-fill-ink: #000000;
+	--wled-accent-quiet: #ffe9df;
+	--wled-accent-quiet-ink: #5c2a1a;
+	/* The three states a press passes through. A mockup is a still picture and does not draw them,
+	   but a token that exists in the module and not here is drift, so they are carried. */
+	--wled-accent-fill-hover: #ef4100;
+	--wled-accent-fill-press: #b04b2b;
+	--wled-accent-quiet-hover: #5f1d06;
+	--wled-progress: #fd5000;
+	--wled-focus: #fd5000;
+
+	/* Destructive: an outline and a text tone, not a saturated block. */
+	--wled-danger: #cc2e39;
+	--wled-danger-fill: #cc2e39;
+	--wled-danger-ink: #fffcfc;
+
+	/* Status: a soft fill under its own hue's darker text, which is what a chip is. */
+	--wled-status-printing: #edf2fe;
+	--wled-status-printing-ink: #1f305e;
+	--wled-status-done: #e4f7ed;
+	--wled-status-done-ink: #193b2d;
+	--wled-status-error: #feebea;
+	--wled-status-error-ink: #64181b;
+	--wled-status-idle: #fff6b9;
+	--wled-status-idle-ink: #443c21;
+	--wled-status-quiet: #eff0f3;
+	--wled-status-quiet-ink: #1e1f24;
+
+	/* Shape: almost square, and the host's own scale is what "almost" means. */
+	--wled-radius: 2px;
+	--wled-radius-xs: 0px;
+
+	/* Space: one unit, six steps — tight inside a chip, row inside a data row, panel for a
+	   panel's padding, section between sections, page around the module. */
+	--wled-space-1: 0.25rem;
+	--wled-space-2: 0.5rem;
+	--wled-space-3: 0.75rem;
+	--wled-space-4: 1rem;
+	--wled-space-5: 1.25rem;
+	--wled-space-6: 1.5rem;
+
+	/* Type: two families, two jobs. The host's own stacks. */
+	--wled-font-ui: 'Atlas Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+		'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+	--wled-font-data: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	--wled-track-label: 0.06em;
+
+	/* The unlit pixel. A pixel that is not lit is black in both themes: it is what the light
+	   itself shows, not a colour of the page. */
+	--wled-pixel-off: #000000;
+	--wled-pixel-off-ink: #b2b4bd;
+
+	/* What a light itself draws — Appendix A's colours, which a mockup paints onto its canvas.
+	   They are the light's, not the page's, and they live here for the same reason the module's
+	   do: one place a value is written down. */
+	--mock-light-green: #00aa00;
+	--mock-light-amber: #d2a500;
+	--mock-light-red: #c80000;
+	--mock-light-grey: #505050;
+	--mock-light-lost: #460000;
+	--mock-light-blue: #001546;
+}
+
+.dark {
+	--wled-canvas: #000000;
+	--wled-panel: #19191b;
+	--wled-panel-ink: #edeef0;
+	--wled-quiet: #222325;
+	--wled-sunken: #19191b;
+	--wled-hover: #222325;
+
+	--wled-line: #303136;
+	--wled-line-field: #6c6e79;
+
+	--wled-text: #edeef0;
+	--wled-text-quiet: #b2b4bd;
+	--wled-text-off: #5f606a;
+	--wled-off: #111113;
+
+	--wled-accent: #fd5000;
+	--wled-accent-ink: #edeef0;
+	--wled-accent-text: #fd5000;
+	--wled-accent-fill: #fd5000;
+	--wled-accent-fill-ink: #000000;
+	--wled-accent-quiet: #39180e;
+	--wled-accent-quiet-ink: #ffd6c8;
+	--wled-accent-fill-hover: #ef4100;
+	--wled-accent-fill-press: #b04b2b;
+	--wled-accent-quiet-hover: #5f1d06;
+	--wled-progress: #fd5000;
+	--wled-focus: #fe6737;
+
+	--wled-danger: #ff8f8b;
+	--wled-danger-fill: #e5484d;
+	--wled-danger-ink: #170f0e;
+
+	--wled-status-printing: #172448;
+	--wled-status-printing-ink: #93b4ff;
+	--wled-status-done: #102d21;
+	--wled-status-done-ink: #71c7a2;
+	--wled-status-error: #3b1212;
+	--wled-status-error-ink: #ff8f8b;
+	--wled-status-idle: #2a230a;
+	--wled-status-idle-ink: #fbd23c;
+	--wled-status-quiet: #222325;
+	--wled-status-quiet-ink: #b2b4bd;
+
+	--wled-pixel-off-ink: #b2b4bd;
+}
+
+/* A reader whose machine is in dark mode sees the dark skin, which is the same design — the same
+   relationships, only the surface and text values change. `:root:not(.light)` so a mockup that
+   pins the light skin (the `class="light"` on `<html>` a README may mention) still wins. */
+@media (prefers-color-scheme: dark) {
+	:root:not(.light) {
+		--wled-canvas: #000000;
+		--wled-panel: #19191b;
+		--wled-panel-ink: #edeef0;
+		--wled-quiet: #222325;
+		--wled-sunken: #19191b;
+		--wled-hover: #222325;
+
+		--wled-line: #303136;
+		--wled-line-field: #6c6e79;
+
+		--wled-text: #edeef0;
+		--wled-text-quiet: #b2b4bd;
+		--wled-text-off: #5f606a;
+		--wled-off: #111113;
+
+		--wled-accent: #fd5000;
+		--wled-accent-ink: #edeef0;
+		--wled-accent-text: #fd5000;
+		--wled-accent-fill: #fd5000;
+		--wled-accent-fill-ink: #000000;
+		--wled-accent-quiet: #39180e;
+		--wled-accent-quiet-ink: #ffd6c8;
+		--wled-progress: #fd5000;
+		--wled-focus: #fe6737;
+
+		--wled-danger: #ff8f8b;
+		--wled-danger-fill: #e5484d;
+		--wled-danger-ink: #170f0e;
+
+		--wled-status-printing: #172448;
+		--wled-status-printing-ink: #93b4ff;
+		--wled-status-done: #102d21;
+		--wled-status-done-ink: #71c7a2;
+		--wled-status-error: #3b1212;
+		--wled-status-error-ink: #ff8f8b;
+		--wled-status-idle: #2a230a;
+		--wled-status-idle-ink: #fbd23c;
+		--wled-status-quiet: #222325;
+		--wled-status-quiet-ink: #b2b4bd;
+
+		--wled-pixel-off-ink: #b2b4bd;
+	}
+}
+
+/* A mockup is a static page with no preflight, so a control with no colour rule of its own would
+   render the browser's `ButtonText` — black in a light page, and still black on a dark panel, which
+   is the one way these pages could carry unreadable text. Controls take the page's ink and face;
+   every mockup's own rules come after this file and still win. */
+button,
+input,
+select,
+textarea {
+	color: inherit;
+	font: inherit;
+}

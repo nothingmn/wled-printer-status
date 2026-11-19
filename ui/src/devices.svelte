@@ -78,9 +78,13 @@
 	// The rule that makes ignoring safe is the route's, and this screen says it in the same words: a
 	// light a binding drives cannot be ignored, and the button says so instead of failing. Un-ignoring
 	// is always available, from the Ignored bucket, and brings the light back everywhere.
+	//
+	// **The skin.** A card is the panel primitive, its facts are a definition grid, its segments and
+	// presets are panels with no inner padding, an answer is a chip, and every action is a button.
+	// The two tab strips compose the tab-bar classes the rail is drawn from (`tab-classes.ts`), because
+	// a nested `tablist` keeps its own ids, its `aria-controls` and the data hooks the operator's
+	// harness reads; what a tab looks like is still defined once, in the primitive layer.
 	import { onMount } from 'svelte';
-
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
 
 	import {
 		moduleApi,
@@ -93,7 +97,6 @@
 		type SnapshotDetailBody,
 		type SnapshotsBody,
 	} from './api';
-	import Disclosure from './disclosure.svelte';
 	import PrinterLink from './printer-link.svelte';
 	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
@@ -107,6 +110,7 @@
 		type LightBucket,
 		type LightFacts,
 	} from './lights.svelte';
+	import { Button, Chip, Disclosure, Field, FieldInput, Panel, TAB_BAR, TAB_CURRENT, TAB_RESTING } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -122,7 +126,7 @@
 	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** Its address, in the same heading, in the controller's own monospace and one step smaller. */
-	const ADDRESS_LINK = 'font-mono text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
+	const ADDRESS_LINK = 'font-data text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** One card's own answer from a route that names lights, keyed by the light's route name. */
 	const answerFor = <T extends { lights: { light: string; refused?: string; why?: string; answers?: string }[] }>(
@@ -640,51 +644,61 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-col gap-1">
-		<h1 class="text-lg font-semibold">{t('devices.title')}</h1>
-		<p class="text-sm opacity-70">{t('devices.intro')}</p>
-		<p class="text-xs opacity-70">{known.note === '' ? t('devices.discovery_note') : known.note}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-col gap-tight">
+		<h1 class="font-ui text-lg font-medium">{t('devices.title')}</h1>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('devices.intro')}</p>
+		<p class="font-ui text-xs text-wled-text-quiet">{known.note === '' ? t('devices.discovery_note') : known.note}</p>
 	</header>
 
 	<!-- Adding a light: a person types an address, and the module reads the light before it keeps
 	     it, so what comes back is what answered. Nothing is kept when something refuses. -->
-	<div class="flex flex-wrap items-end gap-2 rounded border px-3 py-2">
-		<label class="flex flex-col gap-1 text-xs" for="light-address">
-			<span class="font-medium">{t('devices.add_label')}</span>
-			<input
-				id="light-address"
-				class="w-64 rounded border px-2 py-1 font-mono text-sm"
-				placeholder={t('devices.add_placeholder')}
-				autocomplete="off"
-				spellcheck="false"
-				bind:value={typed}
-			/>
-		</label>
-		<Button variant="secondary" size="sm" disabled={adding || typed.trim() === ''} onclick={() => void addLight()}>
-			{adding ? t('devices.add_busy') : t('devices.add_button')}
-		</Button>
-		<span class="pb-1 text-[11px] opacity-60">{t('devices.add_hint')}</span>
-	</div>
+	<Panel>
+		<div class="flex flex-wrap items-end gap-section">
+			<Field id="light-address" label={t('devices.add_label')}>
+				{#snippet children()}
+					<FieldInput
+						id="light-address"
+						class="w-64 font-data"
+						placeholder={t('devices.add_placeholder')}
+						autocomplete="off"
+						spellcheck="false"
+						value={typed}
+						oninput={(value) => (typed = value)}
+					/>
+				{/snippet}
+			</Field>
+			<Button variant="secondary" disabled={adding || typed.trim() === ''} onclick={() => void addLight()}>
+				{adding ? t('devices.add_busy') : t('devices.add_button')}
+			</Button>
+			<span class="pb-tight font-ui text-xs text-wled-text-quiet">{t('devices.add_hint')}</span>
+		</div>
+	</Panel>
 
 	{#if added !== ''}
-		<p class="rounded border px-3 py-2 text-sm" role="status">{added}</p>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{added}</p>
+		</Panel>
 	{/if}
 
 	{#if addFailed !== ''}
-		<p class="rounded border px-3 py-2 text-sm" role="alert">{addFailed}</p>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{addFailed}</p>
+		</Panel>
 	{/if}
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('devices.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('devices.loading')}</p>
 	{:else if lights.list.length === 0}
-		<div class="rounded border px-4 py-6">
-			<p class="text-sm font-medium">{t('devices.no_lights')}</p>
-		</div>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('devices.no_lights')}</p>
+		</Panel>
 	{:else}
 		<!-- One link to a light's own interface. Both parts of the heading use it, so the new window,
 		     the rel that keeps it apart from this page, and the sentence a screen reader hears are
@@ -699,18 +713,18 @@
 		     carry their own names, and `left paren` between them is noise. -->
 		{#snippet addressInParens(one: LightFacts)}
 			<span class="whitespace-nowrap"
-				><span class="font-normal opacity-60" aria-hidden="true">{' ('}</span>{@render lightLink(
+				><span class="font-normal text-wled-text-quiet" aria-hidden="true">{' ('}</span>{@render lightLink(
 					one,
 					addressOf(one),
 					t('devices.open_address', { address: addressOf(one) }),
 					ADDRESS_LINK,
-				)}<span class="font-normal opacity-60" aria-hidden="true">{')'}</span
+				)}<span class="font-normal text-wled-text-quiet" aria-hidden="true">{')'}</span
 				></span
 			>
 		{/snippet}
 
-		<!-- The card, written once and drawn in whichever area its light belongs to. #each over a
-		     filtered list twice would be two copies of this markup, and two copies of a card drift. -->
+		<!-- The card, written once and drawn in whichever area its light belongs to. An each-block over
+		     a filtered list twice would be two copies of this markup, and two copies of a card drift. -->
 		{#snippet card(one: LightFacts)}
 			{@const light = nameOf(one)}
 			{@const kind = kindOf(one)}
@@ -719,467 +733,469 @@
 			{@const reachable = answers(one)}
 			{@const called = calledOf(one)}
 
-			<article class="flex flex-col gap-3 rounded border p-3" data-device={light}>
-				<!-- The light: the name it calls itself with its address in parentheses, and both are
-				     links to its own interface in a new window. A light that has not answered has no
-				     name to show, so the address stands alone — still a link — and says so. -->
-				<div class="flex flex-wrap items-center gap-2">
-					<h2 class="text-sm font-semibold">
-						{#if called !== ''}
-							{@render lightLink(one, called, t('devices.open_named', { name: called }), NAME_LINK)}{@render addressInParens(one)}
-						{:else}
-							{@render lightLink(one, addressOf(one), t('devices.open_address', { address: addressOf(one) }), ADDRESS_LINK)}
-							<span class="text-xs font-normal opacity-60">{t('devices.no_name_yet')}</span>
+			<Panel data-device={light}>
+				<div class="flex flex-col gap-section">
+					<!-- The light: the name it calls itself with its address in parentheses, and both are
+					     links to its own interface in a new window. A light that has not answered has no
+					     name to show, so the address stands alone — still a link — and says so. -->
+					<div class="flex flex-wrap items-center gap-row">
+						<h2 class="font-ui text-sm font-medium">
+							{#if called !== ''}
+								{@render lightLink(one, called, t('devices.open_named', { name: called }), NAME_LINK)}{@render addressInParens(one)}
+							{:else}
+								{@render lightLink(one, addressOf(one), t('devices.open_address', { address: addressOf(one) }), ADDRESS_LINK)}
+								<span class="text-xs font-normal text-wled-text-quiet">{t('devices.no_name_yet')}</span>
+							{/if}
+						</h2>
+						{#if one.bindings.length === 0}
+							<Chip>{t('devices.no_printer_badge')}</Chip>
 						{/if}
-					</h2>
-					{#if one.bindings.length === 0}
-						<Badge variant="outline" size="sm">{t('devices.no_printer_badge')}</Badge>
-					{/if}
-					{#if kind === 'panel'}
-						<Badge variant="outline" size="sm">{t('devices.shape_panel')}</Badge>
-					{:else if kind === 'strip'}
-						<Badge variant="outline" size="sm">{t('devices.shape_strip')}</Badge>
-					{:else}
-						<Badge variant="outline" size="sm">{t('devices.shape_unknown')}</Badge>
-					{/if}
-					<Badge variant={reachable ? 'secondary' : 'warning'} size="sm">
-						{reachable ? t('devices.answering') : t('devices.not_answering')}
-					</Badge>
-					{#if readAgeOf(one) !== ''}
-						<span class="text-[11px] opacity-60">{t('devices.read_at', { age: readAgeOf(one) })}</span>
-					{/if}
-				</div>
-
-				{#if !reachable}
-					<p class="text-xs" role="status">{t('devices.not_answering_why', { why: one.segmentsUnread !== '' ? one.segmentsUnread : (held?.presets_unread ?? '') })}</p>
-				{/if}
-
-				<!-- The hardware facts, with the source of each said out loud. -->
-				<dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs md:grid-cols-4">
-					<div class="flex flex-col">
-						<dt class="opacity-60">{t('devices.fact_called')}</dt>
-						<dd class="font-medium">
-							{#if calledOf(one) !== ''}
-								{calledOf(one)}
-							{:else}
-								<span class="opacity-60">{t('devices.fact_called_unknown')}</span>
-							{/if}
-						</dd>
+						{#if kind === 'panel'}
+							<Chip>{t('devices.shape_panel')}</Chip>
+						{:else if kind === 'strip'}
+							<Chip>{t('devices.shape_strip')}</Chip>
+						{:else}
+							<Chip>{t('devices.shape_unknown')}</Chip>
+						{/if}
+						<Chip tone={reachable ? 'quiet' : 'idle'}>
+							{reachable ? t('devices.answering') : t('devices.not_answering')}
+						</Chip>
+						{#if readAgeOf(one) !== ''}
+							<span class="font-ui text-xs text-wled-text-quiet">{t('devices.read_at', { age: readAgeOf(one) })}</span>
+						{/if}
 					</div>
-					<div class="flex flex-col">
-						<dt class="opacity-60">{t('devices.fact_firmware')}</dt>
-						<dd class="font-mono">
-							{#if firmwareOf(one) !== ''}
-								{firmwareOf(one)}
-							{:else}
-								<span class="opacity-60">{t('devices.fact_firmware_unknown')}</span>
-							{/if}
-						</dd>
-					</div>
-					<div class="flex flex-col">
-						<dt class="opacity-60">{t('devices.fact_pixels')}</dt>
-						<dd class="font-mono">
-							{#if pixelsOf(one) > 0}
-								{#if kind === 'panel'}
-									{t('devices.pixels_panel', { width: panelSize(one).width, height: panelSize(one).height, pixels: pixelsOf(one) })}
+
+					{#if !reachable}
+						<p class="font-ui text-xs" role="status">{t('devices.not_answering_why', { why: one.segmentsUnread !== '' ? one.segmentsUnread : (held?.presets_unread ?? '') })}</p>
+					{/if}
+
+					<!-- The hardware facts, with the source of each said out loud. -->
+					<dl class="grid grid-cols-2 gap-x-section gap-y-tight font-ui text-xs md:grid-cols-4">
+						<div class="flex flex-col">
+							<dt class="text-wled-text-quiet">{t('devices.fact_called')}</dt>
+							<dd class="font-medium">
+								{#if calledOf(one) !== ''}
+									{calledOf(one)}
 								{:else}
-									{t('devices.pixels_strip', { pixels: pixelsOf(one) })}
+									<span class="text-wled-text-quiet">{t('devices.fact_called_unknown')}</span>
 								{/if}
-							{:else}
-								<span class="opacity-60">{t('devices.fact_pixels_unknown')}</span>
-							{/if}
-						</dd>
-					</div>
-					<div class="flex flex-col">
-						<dt class="opacity-60">{t('devices.fact_segments')}</dt>
-						<dd class="font-mono">{one.segmentsKnown ? one.segments.length : t('devices.fact_segments_unknown')}</dd>
-					</div>
-				</dl>
+							</dd>
+						</div>
+						<div class="flex flex-col">
+							<dt class="text-wled-text-quiet">{t('devices.fact_firmware')}</dt>
+							<dd class="font-data">
+								{#if firmwareOf(one) !== ''}
+									{firmwareOf(one)}
+								{:else}
+									<span class="text-wled-text-quiet">{t('devices.fact_firmware_unknown')}</span>
+								{/if}
+							</dd>
+						</div>
+						<div class="flex flex-col">
+							<dt class="text-wled-text-quiet">{t('devices.fact_pixels')}</dt>
+							<dd class="font-data">
+								{#if pixelsOf(one) > 0}
+									{#if kind === 'panel'}
+										{t('devices.pixels_panel', { width: panelSize(one).width, height: panelSize(one).height, pixels: pixelsOf(one) })}
+									{:else}
+										{t('devices.pixels_strip', { pixels: pixelsOf(one) })}
+									{/if}
+								{:else}
+									<span class="text-wled-text-quiet">{t('devices.fact_pixels_unknown')}</span>
+								{/if}
+							</dd>
+						</div>
+						<div class="flex flex-col">
+							<dt class="text-wled-text-quiet">{t('devices.fact_segments')}</dt>
+							<dd class="font-data">{one.segmentsKnown ? one.segments.length : t('devices.fact_segments_unknown')}</dd>
+						</div>
+					</dl>
 
-				<p class="text-[11px] opacity-60">{t('devices.facts_source')}</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{t('devices.facts_source')}</p>
 
-				<!-- Its own segments: the list Bindings picks from, shown where it comes from. -->
-				<div class="overflow-hidden rounded border">
-					<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-1.5 dark:bg-white/10">
-						<span class="text-xs font-medium">{t('devices.segments_heading')}</span>
-						<span class="ml-auto text-[10px] opacity-60">{t('devices.segments_read_only')}</span>
-					</div>
-					{#if !one.segmentsKnown}
-						<p class="px-3 py-2 text-xs opacity-70">{t('devices.segments_unread', { why: one.segmentsUnread })}</p>
-					{:else if one.segments.length === 0}
-						<p class="px-3 py-2 text-xs opacity-70">{t('devices.segments_none')}</p>
-					{:else}
-						<table class="w-full text-left text-xs">
-							<thead>
-								<tr class="border-b uppercase tracking-wide opacity-60">
-									<th class="px-3 py-1 font-medium">{t('devices.segment_id')}</th>
-									<th class="px-3 py-1 font-medium">{t('devices.segment_name')}</th>
-									<th class="px-3 py-1 font-medium">{t('devices.segment_bounds')}</th>
-									<th class="px-3 py-1 font-medium">{t('devices.segment_printer')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each one.segments as segment (segment.id)}
-									{@const taker = binderOf(one, segment.id)}
-									<tr class="border-b last:border-b-0">
-										<td class="px-3 py-1 font-mono">{segment.id}</td>
-										<td class="px-3 py-1">{segment.name.trim() === '' ? t('devices.segment_unnamed') : segment.name}</td>
-										<td class="px-3 py-1 font-mono">{boundsOf(one, segment.id)}</td>
-										<td class="px-3 py-1">
-											{#if taker === undefined}
-												{t('devices.segment_free')}
-											{:else if taker.printer_name}
-												<PrinterLink id={taker.printer} name={taker.printer_name} cls={NAME_LINK} />
-											{:else}
-												{t('bindings.printer_gone')}
-											{/if}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					{/if}
-				</div>
-
-				<!-- Its own presets, read-only. -->
-				<div class="overflow-hidden rounded border">
-					<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-1.5 dark:bg-white/10">
-						<span class="text-xs font-medium">{t('devices.presets_heading')}</span>
-						{#if held?.presets_known === true}
-							<span class="ml-auto text-[10px] opacity-60">{t('devices.presets_count', { count: held.count })}</span>
-						{/if}
-					</div>
-
-					{#if (presetsFault[light] ?? '') !== ''}
-						<p class="px-3 py-2 text-xs opacity-70" role="status">
-							{t('devices.presets_not_served', { why: presetsFault[light] })}
-						</p>
-					{:else if held !== undefined && !held.presets_known}
-						<p class="px-3 py-2 text-xs opacity-70" role="status">
-							{t('devices.presets_unread', { why: held.presets_unread ?? held.note })}
-						</p>
-					{:else if held !== undefined}
-						{#if held.presets.length === 0}
-							<p class="px-3 py-2 text-xs opacity-70">{t('devices.presets_none')}</p>
+					<!-- Its own segments: the list Bindings picks from, shown where it comes from. -->
+					<Panel title={t('devices.segments_heading')} pad="none">
+						{#snippet meta()}
+							<span class="font-ui text-xs text-wled-text-quiet">{t('devices.segments_read_only')}</span>
+						{/snippet}
+						{#if !one.segmentsKnown}
+							<p class="px-panel py-panel font-ui text-xs text-wled-text-quiet">{t('devices.segments_unread', { why: one.segmentsUnread })}</p>
+						{:else if one.segments.length === 0}
+							<p class="px-panel py-panel font-ui text-xs text-wled-text-quiet">{t('devices.segments_none')}</p>
 						{:else}
-							<ul class="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2 font-mono text-[11px]">
-								{#each held.presets as preset (preset.slot)}
-									<li>
-										<span class="opacity-60">{preset.slot}</span>
-										<span class={preset.unnamed ? 'opacity-60' : ''}>{presetText(preset.name, preset.slot, preset.unnamed)}</span>
-									</li>
-								{/each}
-							</ul>
+							<table class="w-full border-collapse text-left font-ui text-xs">
+								<thead>
+									<tr class="border-b border-wled-line uppercase tracking-label text-wled-text-quiet">
+										<th class="px-row py-tight font-medium">{t('devices.segment_id')}</th>
+										<th class="px-row py-tight font-medium">{t('devices.segment_name')}</th>
+										<th class="px-row py-tight font-medium">{t('devices.segment_bounds')}</th>
+										<th class="px-row py-tight font-medium">{t('devices.segment_printer')}</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each one.segments as segment (segment.id)}
+										{@const taker = binderOf(one, segment.id)}
+										<tr class="border-b border-wled-line last:border-b-0">
+											<td class="px-row py-tight font-data">{segment.id}</td>
+											<td class="px-row py-tight">{segment.name.trim() === '' ? t('devices.segment_unnamed') : segment.name}</td>
+											<td class="px-row py-tight font-data">{boundsOf(one, segment.id)}</td>
+											<td class="px-row py-tight">
+												{#if taker === undefined}
+													{t('devices.segment_free')}
+												{:else if taker.printer_name}
+													<PrinterLink id={taker.printer} name={taker.printer_name} cls={NAME_LINK} />
+												{:else}
+													{t('bindings.printer_gone')}
+												{/if}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
 						{/if}
-						<p class="border-t px-3 py-1.5 text-[10px] opacity-60">{held.note}</p>
-					{/if}
+					</Panel>
 
-					<p class="border-t px-3 py-1.5 text-[10px] opacity-60">{t('devices.presets_read_only')}</p>
-				</div>
+					<!-- Its own presets, read-only. -->
+					<Panel title={t('devices.presets_heading')} pad="none">
+						{#snippet meta()}
+							{#if held?.presets_known === true}
+								<span class="font-ui text-xs text-wled-text-quiet">{t('devices.presets_count', { count: held.count })}</span>
+							{/if}
+						{/snippet}
 
-				<!-- The tests. They paint the light, so the sentence comes before the buttons. -->
-				<div class="flex flex-col gap-2 rounded border px-3 py-2">
-					<div class="flex flex-wrap items-center gap-2">
-						<span class="text-xs font-medium">{t('devices.tests_heading')}</span>
-						<span class="text-[10px] opacity-60">{t('devices.tests_before', { hold: HOLD_SECONDS })}</span>
-					</div>
+						{#if (presetsFault[light] ?? '') !== ''}
+							<p class="px-panel py-panel font-ui text-xs text-wled-text-quiet" role="status">
+								{t('devices.presets_not_served', { why: presetsFault[light] })}
+							</p>
+						{:else if held !== undefined && !held.presets_known}
+							<p class="px-panel py-panel font-ui text-xs text-wled-text-quiet" role="status">
+								{t('devices.presets_unread', { why: held.presets_unread ?? held.note })}
+							</p>
+						{:else if held !== undefined}
+							{#if held.presets.length === 0}
+								<p class="px-panel py-panel font-ui text-xs text-wled-text-quiet">{t('devices.presets_none')}</p>
+							{:else}
+								<ul class="flex flex-wrap gap-x-section gap-y-tight px-panel py-row font-data text-xs">
+									{#each held.presets as preset (preset.slot)}
+										<li>
+											<span class="text-wled-text-quiet">{preset.slot}</span>
+											<span class={preset.unnamed ? 'text-wled-text-quiet' : ''}>{presetText(preset.name, preset.slot, preset.unnamed)}</span>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<p class="border-t border-wled-line px-panel py-tight font-ui text-xs text-wled-text-quiet">{held.note}</p>
+						{/if}
 
-					{#if one.bindings.length === 0}
-						<p class="text-[11px] opacity-70">{t('devices.tests_need_printer')}</p>
-					{/if}
+						<p class="border-t border-wled-line px-panel py-tight font-ui text-xs text-wled-text-quiet">
+							{t('devices.presets_read_only')}
+						</p>
+					</Panel>
 
-					<div class="flex flex-wrap items-center gap-1">
-						{#each PATTERNS as pattern (pattern)}
+					<!-- The tests. They paint the light, so the sentence comes before the buttons. -->
+					<Panel title={t('devices.tests_heading')}>
+						<div class="flex flex-col gap-row">
+							<div class="flex flex-wrap items-center gap-row">
+								<span class="font-ui text-xs text-wled-text-quiet">{t('devices.tests_before', { hold: HOLD_SECONDS })}</span>
+							</div>
+
+							{#if one.bindings.length === 0}
+								<p class="font-ui text-xs text-wled-text-quiet">{t('devices.tests_need_printer')}</p>
+							{/if}
+
+							<div class="flex flex-wrap items-center gap-tight">
+								{#each PATTERNS as pattern (pattern)}
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={busy[light] === true || !reachable || one.bindings.length === 0}
+										onclick={() => void firePattern(one, pattern)}
+									>
+										{pattern}
+									</Button>
+								{/each}
+								<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable || one.bindings.length === 0} onclick={() => void fireFinished(one)}>
+									{t('devices.test_word')}
+								</Button>
+
+								<!-- `identify` is required by §2.6 and has no route in this build. -->
+								<Button variant="ghost" size="sm" disabled title={t('devices.identify_no_route')}>
+									{t('devices.test_identify')}
+								</Button>
+							</div>
+
+							<p class="font-ui text-xs text-wled-text-quiet">{t('devices.identify_no_route')}</p>
+
+							{#if !reachable}
+								<p class="font-ui text-xs" role="status">{t('devices.tests_disabled')}</p>
+							{/if}
+							{#if (testSaid[light] ?? '') !== ''}
+								<p class="font-ui text-xs" role="status">{testSaid[light]}</p>
+							{/if}
+						</div>
+					</Panel>
+
+					<!-- Snapshots: take one, list them, and restore from one. -->
+					<Panel title={t('devices.snapshots_heading')} pad="none">
+						{#snippet meta()}
+							<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable} onclick={() => void takeSnapshot(one)}>
+								{t('devices.snapshot_take')}
+							</Button>
+							{#if kept !== undefined}
+								<span class="font-ui text-xs text-wled-text-quiet">{t('devices.snapshots_count', { count: kept.count })}</span>
+							{/if}
+						{/snippet}
+
+						<div class="flex flex-col gap-row px-panel py-row">
+							<p class="font-ui text-xs text-wled-text-quiet">{t('devices.snapshots_when')}</p>
+
+							{#if (snapshotsFault[light] ?? '') !== ''}
+								<p class="font-ui text-xs text-wled-text-quiet" role="status">{t('devices.snapshots_unreadable', { why: snapshotsFault[light] })}</p>
+							{:else if kept !== undefined && !kept.persisted}
+								<p class="font-ui text-xs text-wled-text-quiet" role="status">{t('devices.snapshots_no_folder', { why: kept.note ?? '' })}</p>
+							{:else if kept !== undefined && kept.snapshots.length === 0}
+								<p class="font-ui text-xs text-wled-text-quiet">{t('devices.snapshots_none')}</p>
+							{/if}
+						</div>
+
+						{#if kept !== undefined}
+							{#each kept.snapshots as snapshot (snapshot.id)}
+								{@const detail = detailOf(light, snapshot.id)}
+								<div class="flex flex-col gap-tight border-t border-wled-line px-panel py-row font-ui text-xs">
+									<div class="flex flex-wrap items-center gap-row">
+										<span class="font-data">{snapshot.id}</span>
+										<span class="text-wled-text-quiet">{ageText(t, snapshot.taken_at) ?? snapshot.taken_at}</span>
+										<span class="font-data text-wled-text-quiet">{sizeText(snapshot.bytes)}</span>
+										<span class="text-wled-text-quiet">{t('devices.snapshot_presets', { count: snapshot.presets })}</span>
+										<div class="ml-auto flex items-center gap-tight">
+											<Button variant="link" size="sm" onclick={() => void openDetail(light, snapshot.id)}>
+												{t('devices.snapshot_what_restore')}
+											</Button>
+											<Button variant="ghost" size="sm" disabled={busy[light] === true || !reachable} onclick={() => askRestore(light, snapshot.id)}>
+												{t('devices.snapshot_restore')}
+											</Button>
+										</div>
+									</div>
+
+									<p class="text-wled-text-quiet">{t('devices.snapshot_not_clone', { members: snapshot.omits.map((one) => one.member).join(', ') })}</p>
+
+									{#if detail !== undefined}
+										<div class="flex flex-col gap-tight border-t border-wled-line pt-tight">
+											<p>
+												<span class="font-medium">{t('devices.restore_writes')}</span>
+												{detail.restore.sections.join(', ')}
+												{#if detail.restore.presets}· {t('devices.restore_presets_too')}{/if}
+											</p>
+											<p class="text-wled-text-quiet">
+												<span class="font-medium">{t('devices.restore_withheld')}</span>
+												{detail.restore.withheld.map((one) => one.section).join(', ')}
+											</p>
+											<p class="text-wled-text-quiet">{t('devices.restore_nw', { members: detail.restore.nw.members_removed.join(', ') })}</p>
+											{#if !detail.restorable}
+												<p class="text-wled-danger" role="alert">{t('devices.restore_unrestorable', { why: detail.unrestorable ?? '' })}</p>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/each}
+						{/if}
+
+						{#if (snapshotSaid[light] ?? '') !== ''}
+							<p class="border-t border-wled-line px-panel py-row font-ui text-xs" role="status">{snapshotSaid[light]}</p>
+						{/if}
+					</Panel>
+
+					<!-- Ignoring: offered on a light nothing is bound to, and off with the reason on one a
+					     binding drives — the route refuses that case in the same words, so the button and the
+					     refusal cannot disagree. Un-ignoring is always offered, from the Ignored bucket,
+					     because the way back has to be as easy as the way in. -->
+					<div class="flex flex-wrap items-center gap-row border-t border-wled-line pt-row">
+						{#if one.ignored}
 							<Button
 								variant="secondary"
 								size="sm"
-								disabled={busy[light] === true || !reachable || one.bindings.length === 0}
-								onclick={() => void firePattern(one, pattern)}
+								disabled={busy[light] === true}
+								onclick={() => void setIgnored(one, false)}
 							>
-								{pattern}
+								{t('devices.unignore_button')}
 							</Button>
-						{/each}
-						<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable || one.bindings.length === 0} onclick={() => void fireFinished(one)}>
-							{t('devices.test_word')}
-						</Button>
-
-						<!-- `identify` is required by §2.6 and has no route in this build. -->
-						<Button variant="ghost" size="sm" disabled title={t('devices.identify_no_route')}>
-							{t('devices.test_identify')}
-						</Button>
-					</div>
-
-					<p class="text-[10px] opacity-60">{t('devices.identify_no_route')}</p>
-
-					{#if !reachable}
-						<p class="text-[11px]" role="status">{t('devices.tests_disabled')}</p>
-					{/if}
-					{#if (testSaid[light] ?? '') !== ''}
-						<p class="text-[11px]" role="status">{testSaid[light]}</p>
-					{/if}
-				</div>
-
-				<!-- Snapshots: take one, list them, and restore from one. -->
-				<div class="flex flex-col gap-2 rounded border px-3 py-2">
-					<div class="flex flex-wrap items-center gap-2">
-						<span class="text-xs font-medium">{t('devices.snapshots_heading')}</span>
-						<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable} onclick={() => void takeSnapshot(one)}>
-							{t('devices.snapshot_take')}
-						</Button>
-						{#if kept !== undefined}
-							<span class="ml-auto text-[10px] opacity-60">{t('devices.snapshots_count', { count: kept.count })}</span>
+							<span class="font-ui text-xs text-wled-text-quiet">{t('devices.unignore_note')}</span>
+						{:else}
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy[light] === true || one.bindings.length > 0}
+								onclick={() => void setIgnored(one, true)}
+							>
+								{t('devices.ignore_button')}
+							</Button>
+							<span class="font-ui text-xs text-wled-text-quiet">
+								{one.bindings.length > 0
+									? t('devices.ignore_bound', { count: one.bindings.length })
+									: t('devices.ignore_note')}
+							</span>
 						{/if}
 					</div>
 
-					<p class="text-[10px] opacity-60">{t('devices.snapshots_when')}</p>
-
-					{#if (snapshotsFault[light] ?? '') !== ''}
-						<p class="text-[11px] opacity-70" role="status">{t('devices.snapshots_unreadable', { why: snapshotsFault[light] })}</p>
-					{:else if kept !== undefined && !kept.persisted}
-						<p class="text-[11px] opacity-70" role="status">{t('devices.snapshots_no_folder', { why: kept.note ?? '' })}</p>
-					{:else if kept !== undefined && kept.snapshots.length === 0}
-						<p class="text-[11px] opacity-70">{t('devices.snapshots_none')}</p>
+					{#if (ignoreSaid[light] ?? '') !== ''}
+						<p class="font-ui text-xs" role="status">{ignoreSaid[light]}</p>
 					{/if}
 
-					{#if kept !== undefined}
-						{#each kept.snapshots as snapshot (snapshot.id)}
-							{@const detail = detailOf(light, snapshot.id)}
-							<div class="flex flex-col gap-1 rounded border px-2 py-1.5 text-[11px]">
-								<div class="flex flex-wrap items-center gap-2">
-									<span class="font-mono">{snapshot.id}</span>
-									<span class="opacity-60">{ageText(t, snapshot.taken_at) ?? snapshot.taken_at}</span>
-									<span class="font-mono opacity-60">{sizeText(snapshot.bytes)}</span>
-									<span class="opacity-60">{t('devices.snapshot_presets', { count: snapshot.presets })}</span>
-									<div class="ml-auto flex items-center gap-1">
-										<Button variant="link" size="sm" onclick={() => void openDetail(light, snapshot.id)}>
-											{t('devices.snapshot_what_restore')}
-										</Button>
-										<Button variant="ghost" size="sm" disabled={busy[light] === true || !reachable} onclick={() => askRestore(light, snapshot.id)}>
-											{t('devices.snapshot_restore')}
-										</Button>
-									</div>
-								</div>
-
-								<p class="opacity-60">{t('devices.snapshot_not_clone', { members: snapshot.omits.map((one) => one.member).join(', ') })}</p>
-
-								{#if detail !== undefined}
-									<div class="flex flex-col gap-1 border-t pt-1">
-										<p>
-											<span class="font-medium">{t('devices.restore_writes')}</span>
-											{detail.restore.sections.join(', ')}
-											{#if detail.restore.presets}· {t('devices.restore_presets_too')}{/if}
-										</p>
-										<p class="opacity-70">
-											<span class="font-medium">{t('devices.restore_withheld')}</span>
-											{detail.restore.withheld.map((one) => one.section).join(', ')}
-										</p>
-										<p class="opacity-70">{t('devices.restore_nw', { members: detail.restore.nw.members_removed.join(', ') })}</p>
-										{#if !detail.restorable}
-											<p role="alert">{t('devices.restore_unrestorable', { why: detail.unrestorable ?? '' })}</p>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						{/each}
-					{/if}
-
-					{#if (snapshotSaid[light] ?? '') !== ''}
-						<p class="text-[11px]" role="status">{snapshotSaid[light]}</p>
-					{/if}
-				</div>
-
-				<!-- Ignoring: offered on a light nothing is bound to, and off with the reason on one a
-				     binding drives — the route refuses that case in the same words, so the button and the
-				     refusal cannot disagree. Un-ignoring is always offered, from the Ignored bucket,
-				     because the way back has to be as easy as the way in. -->
-				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
-					{#if one.ignored}
-						<Button
-							variant="secondary"
-							size="sm"
-							disabled={busy[light] === true}
-							onclick={() => void setIgnored(one, false)}
-						>
-							{t('devices.unignore_button')}
-						</Button>
-						<span class="text-[10px] opacity-60">{t('devices.unignore_note')}</span>
-					{:else}
+					<!-- Taking the light off the list. Off while a binding still writes to it, with the
+					     reason beside it, and the route refuses it too if it is called some other way. -->
+					<div class="flex flex-wrap items-center gap-row border-t border-wled-line pt-row">
 						<Button
 							variant="ghost"
 							size="sm"
 							disabled={busy[light] === true || one.bindings.length > 0}
-							onclick={() => void setIgnored(one, true)}
+							onclick={() => void takeOff(one)}
 						>
-							{t('devices.ignore_button')}
+							{t('devices.remove_button')}
 						</Button>
-						<span class="text-[10px] opacity-60">
-							{one.bindings.length > 0
-								? t('devices.ignore_bound', { count: one.bindings.length })
-								: t('devices.ignore_note')}
+						<span class="font-ui text-xs text-wled-text-quiet">
+							{one.bindings.length > 0 ? t('devices.remove_bound', { count: one.bindings.length }) : t('devices.remove_note')}
 						</span>
+					</div>
+
+					{#if (removeSaid[light] ?? '') !== ''}
+						<p class="font-ui text-xs text-wled-danger" role="alert">{removeSaid[light]}</p>
 					{/if}
 				</div>
+			</Panel>
+		{/snippet}
 
-				{#if (ignoreSaid[light] ?? '') !== ''}
-					<p class="text-[11px]" role="status">{ignoreSaid[light]}</p>
-				{/if}
+		<!-- The screen, level by level. **Lights** is this page; under it the three buckets; under a
+		     bucket, one tab per light. It replaces two stacked areas of cards, which is what he could not
+		     tell apart: "the page is very overloaded.. hard to clearly see the different between the
+		     lights and such".
 
-				<!-- Taking the light off the list. Off while a binding still writes to it, with the
-				     reason beside it, and the route refuses it too if it is called some other way. -->
-				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
-					<Button
-						variant="ghost"
-						size="sm"
-						disabled={busy[light] === true || one.bindings.length > 0}
-						onclick={() => void takeOff(one)}
+		     Every strip is `flex-nowrap` inside `overflow-x-auto` and every tab is `shrink-0`: a strip
+		     that grows **scrolls and never wraps**. Nineteen lights in a wrapped strip would rebuild the
+		     overload one level down, and his network answers with about nineteen. -->
+		<Panel pad="none">
+			<div
+				class="flex flex-nowrap gap-tight overflow-x-auto border-b border-wled-line px-row py-tight"
+				role="tablist"
+				aria-label={t('devices.buckets_label')}
+				data-strip="buckets"
+			>
+				{#each BUCKETS as one (one.id)}
+					{@const count = inBucket(lights.list, one.id).length}
+					<button
+						type="button"
+						role="tab"
+						id={`bucket-${one.id}`}
+						aria-selected={bucket === one.id}
+						aria-controls="bucket-panel"
+						data-bucket-tab={one.id}
+						class="{TAB_BAR} {bucket === one.id ? TAB_CURRENT : TAB_RESTING}"
+						onclick={() => {
+							bucket = one.id;
+							selected = '';
+						}}
 					>
-						{t('devices.remove_button')}
-					</Button>
-					<span class="text-[10px] opacity-60">
-						{one.bindings.length > 0 ? t('devices.remove_bound', { count: one.bindings.length }) : t('devices.remove_note')}
-					</span>
-				</div>
-
-				{#if (removeSaid[light] ?? '') !== ''}
-					<p class="text-[11px]" role="alert">{removeSaid[light]}</p>
-				{/if}
-			</article>
-	{/snippet}
-
-	<!-- The screen, level by level. **Lights** is this page; under it the three buckets; under a
-	     bucket, one tab per light. It replaces two stacked areas of cards, which is what he could not
-	     tell apart: "the page is very overloaded.. hard to clearly see the different between the
-	     lights and such".
-
-	     Every strip is `flex-nowrap` inside `overflow-x-auto` and every tab is `shrink-0`: a strip
-	     that grows **scrolls and never wraps**. Nineteen lights in a wrapped strip would rebuild the
-	     overload one level down, and his network answers with about nineteen. -->
-	<div class="overflow-hidden rounded border">
-		<div
-			class="flex flex-nowrap gap-1 overflow-x-auto border-b px-2 py-1"
-			role="tablist"
-			aria-label={t('devices.buckets_label')}
-			data-strip="buckets"
-		>
-			{#each BUCKETS as one (one.id)}
-				{@const count = inBucket(lights.list, one.id).length}
-				<button
-					type="button"
-					role="tab"
-					id={`bucket-${one.id}`}
-					aria-selected={bucket === one.id}
-					aria-controls="bucket-panel"
-					data-bucket-tab={one.id}
-					class={bucket === one.id
-						? 'flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-current px-3 py-1.5 text-sm font-medium'
-						: 'flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-1.5 text-sm opacity-70 hover:opacity-100'}
-					onclick={() => {
-						bucket = one.id;
-						selected = '';
-					}}
-				>
-					<span>{t(one.key)}</span>
-					<span class="text-xs font-normal opacity-60" data-bucket-count={one.id}>{count}</span>
-				</button>
-			{/each}
-		</div>
-
-		<div id="bucket-panel" role="tabpanel" aria-labelledby={`bucket-${bucket}`}>
-			<!-- What this bucket holds, in one line, so no tab has to carry an explanation. -->
-			<p class="border-b px-3 py-2 text-xs opacity-70" data-bucket-note={bucket}>{noteOf(bucket)}</p>
-
-			{#if lightsIn(bucket).length === 0}
-				<p class="px-3 py-4 text-sm opacity-70" data-bucket-empty={bucket}>{emptyOf(bucket)}</p>
-			{:else}
-				<!-- Level three: one tab per light, **keyed by address and labelled by name**. A rename
-				     in WLED changes a word on a tab and never moves the tab, and a light that has never
-				     answered is titled by its address, which is the only name it has. -->
-				<div
-					class="flex flex-nowrap gap-1 overflow-x-auto border-b px-2 py-1"
-					role="tablist"
-					aria-label={t('devices.lights_label')}
-					data-strip="lights"
-				>
-					{#each lightsIn(bucket) as one (addressOf(one))}
-						{@const open = currentIn(bucket)}
-						<button
-							type="button"
-							role="tab"
-							id={`light-${nameOf(one)}`}
-							aria-selected={open !== undefined && addressOf(open) === addressOf(one)}
-							aria-controls="light-panel"
-							data-light-tab={addressOf(one)}
-							title={titledOf(one)}
-							class={open !== undefined && addressOf(open) === addressOf(one)
-								? 'flex shrink-0 items-center whitespace-nowrap rounded-t border-b-2 border-current bg-black/5 px-3 py-1.5 text-sm font-medium dark:bg-white/10'
-								: 'flex shrink-0 items-center whitespace-nowrap rounded-t border-b-2 border-transparent px-3 py-1.5 text-sm opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10'}
-							onclick={() => (selected = addressOf(one))}
-						>
-							{titledOf(one)}
-						</button>
-					{/each}
-				</div>
-
-				{#each openIn(bucket) as open (addressOf(open))}
-					<div id="light-panel" role="tabpanel" class="p-3" data-light-panel={addressOf(open)}>
-						{@render card(open)}
-					</div>
+						<span>{t(one.key)}</span>
+						<span class="font-normal normal-case tracking-normal text-wled-text-quiet" data-bucket-count={one.id}>{count}</span>
+					</button>
 				{/each}
-			{/if}
-		</div>
-	</div>
-
-	<!-- §2.6's swap, once for the page rather than once per card: there is no replace route, and a
-	     paragraph explaining a feature that does not exist is an apology, not information about a
-	     light. It folds away in the same disclosure Bindings and Diagnostics use, and its summary
-	     line says both things a reader needs — what a swap would check, and that it is not built. -->
-	<Disclosure summary={t('devices.replace_heading')} hint={t('devices.replace_hint')}>
-		<div class="flex flex-col gap-1 px-3 py-2 text-[11px]">
-			<p>{t('devices.replace_none')}</p>
-			<p class="opacity-70">{t('devices.replace_bindings')}</p>
-			<p class="opacity-70">{t('devices.replace_out_of_scope')}</p>
-		</div>
-	</Disclosure>
-
-	<!-- The restore dialog. It stays on the page rather than in a modal: it is the warning. -->
-	{#if confirming !== null}
-		{@const detail = details[`${confirming.light}|${confirming.id}`]}
-		<div class="flex flex-col gap-2 rounded border p-3" role="dialog" aria-label={t('devices.restore_dialog')}>
-			<h2 class="text-sm font-semibold">{t('devices.restore_dialog_heading', { light: confirming.light, id: confirming.id })}</h2>
-			<p class="text-sm">{t('devices.restore_warning_destructive')}</p>
-			<p class="text-sm font-medium" role="alert">{t('devices.restore_never_fired')}</p>
-			<p class="text-xs opacity-80">{t('devices.restore_safety')}</p>
-			<p class="text-xs opacity-80">{t('devices.restore_nw_warning')}</p>
-
-			{#if detail !== undefined}
-				<p class="text-xs opacity-80">
-					<span class="font-medium">{t('devices.restore_writes')}</span>
-					{detail.restore.sections.join(', ')}
-				</p>
-				<p class="text-xs opacity-80">
-					<span class="font-medium">{t('devices.restore_withheld')}</span>
-					{detail.restore.withheld.map((one) => `${one.section} (${one.why})`).join('; ')}
-				</p>
-			{/if}
-
-			<label class="flex items-center gap-2 text-sm">
-				<input type="checkbox" class="h-4 w-4" bind:checked={understood} />
-				<span>{t('devices.restore_understand')}</span>
-			</label>
-
-			<div class="flex flex-wrap items-center gap-2">
-				<Button variant="secondary" size="sm" disabled={!understood || busy[confirming.light] === true} onclick={() => void runRestore()}>
-					{t('devices.restore_now')}
-				</Button>
-				<Button variant="link" size="sm" onclick={() => (confirming = null)}>{t('devices.restore_cancel')}</Button>
 			</div>
-		</div>
-	{/if}
 
-	<div class="flex flex-col gap-1 text-xs opacity-70">
-		<p>{t('devices.note_split')}</p>
-		<p>{t('devices.note_segments')}</p>
-		<p>{t('devices.note_presets')}</p>
-	</div>
+			<div id="bucket-panel" role="tabpanel" aria-labelledby={`bucket-${bucket}`}>
+				<!-- What this bucket holds, in one line, so no tab has to carry an explanation. -->
+				<p class="border-b border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet" data-bucket-note={bucket}>{noteOf(bucket)}</p>
+
+				{#if lightsIn(bucket).length === 0}
+					<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet" data-bucket-empty={bucket}>{emptyOf(bucket)}</p>
+				{:else}
+					<!-- Level three: one tab per light, **keyed by address and labelled by name**. A rename
+					     in WLED changes a word on a tab and never moves the tab, and a light that has never
+					     answered is titled by its address, which is the only name it has. -->
+					<div
+						class="flex flex-nowrap gap-tight overflow-x-auto border-b border-wled-line px-row py-tight"
+						role="tablist"
+						aria-label={t('devices.lights_label')}
+						data-strip="lights"
+					>
+						{#each lightsIn(bucket) as one (addressOf(one))}
+							{@const open = currentIn(bucket)}
+							<button
+								type="button"
+								role="tab"
+								id={`light-${nameOf(one)}`}
+								aria-selected={open !== undefined && addressOf(open) === addressOf(one)}
+								aria-controls="light-panel"
+								data-light-tab={addressOf(one)}
+								title={titledOf(one)}
+								class="{TAB_BAR} {open !== undefined && addressOf(open) === addressOf(one) ? TAB_CURRENT : TAB_RESTING}"
+								onclick={() => (selected = addressOf(one))}
+							>
+								{titledOf(one)}
+							</button>
+						{/each}
+					</div>
+
+					{#each openIn(bucket) as open (addressOf(open))}
+						<div id="light-panel" role="tabpanel" class="p-panel" data-light-panel={addressOf(open)}>
+							{@render card(open)}
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</Panel>
+
+		<!-- §2.6's swap, once for the page rather than once per card: there is no replace route, and a
+		     paragraph explaining a feature that does not exist is an apology, not information about a
+		     light. It folds away in the same disclosure Bindings and Diagnostics use, and its summary
+		     line says both things a reader needs — what a swap would check, and that it is not built. -->
+		<Disclosure summary={t('devices.replace_heading')} hint={t('devices.replace_hint')}>
+			<div class="flex flex-col gap-tight font-ui text-xs">
+				<p>{t('devices.replace_none')}</p>
+				<p class="text-wled-text-quiet">{t('devices.replace_bindings')}</p>
+				<p class="text-wled-text-quiet">{t('devices.replace_out_of_scope')}</p>
+			</div>
+		</Disclosure>
+
+		<!-- The restore dialog. It stays on the page rather than in a modal: it is the warning. -->
+		{#if confirming !== null}
+			{@const detail = details[`${confirming.light}|${confirming.id}`]}
+			<Panel role="dialog" aria-label={t('devices.restore_dialog')}>
+				<div class="flex flex-col gap-row">
+					<h2 class="font-ui text-sm font-medium">{t('devices.restore_dialog_heading', { light: confirming.light, id: confirming.id })}</h2>
+					<p class="font-ui text-sm">{t('devices.restore_warning_destructive')}</p>
+					<p class="font-ui text-sm font-medium text-wled-danger" role="alert">{t('devices.restore_never_fired')}</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{t('devices.restore_safety')}</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{t('devices.restore_nw_warning')}</p>
+
+					{#if detail !== undefined}
+						<p class="font-ui text-xs text-wled-text-quiet">
+							<span class="font-medium">{t('devices.restore_writes')}</span>
+							{detail.restore.sections.join(', ')}
+						</p>
+						<p class="font-ui text-xs text-wled-text-quiet">
+							<span class="font-medium">{t('devices.restore_withheld')}</span>
+							{detail.restore.withheld.map((one) => `${one.section} (${one.why})`).join('; ')}
+						</p>
+					{/if}
+
+					<label class="flex items-center gap-row font-ui text-sm">
+						<input type="checkbox" class="h-4 w-4 accent-wled-accent-fill" bind:checked={understood} />
+						<span>{t('devices.restore_understand')}</span>
+					</label>
+
+					<div class="flex flex-wrap items-center gap-row">
+						<Button variant="secondary" size="sm" disabled={!understood || busy[confirming.light] === true} onclick={() => void runRestore()}>
+							{t('devices.restore_now')}
+						</Button>
+						<Button variant="link" size="sm" onclick={() => (confirming = null)}>{t('devices.restore_cancel')}</Button>
+					</div>
+				</div>
+			</Panel>
+		{/if}
+
+		<div class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
+			<p>{t('devices.note_split')}</p>
+			<p>{t('devices.note_segments')}</p>
+			<p>{t('devices.note_presets')}</p>
+		</div>
 	{/if}
 </section>

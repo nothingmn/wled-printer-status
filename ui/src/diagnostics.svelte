@@ -28,24 +28,26 @@
 	//   - **The honest limits**, stated on the page rather than left for somebody to discover.
 	//
 	// The reason table and the limits are reference, not the present tense, so both sit behind
-	// a collapsed disclosure (disclosure.svelte): the screen opens on the four tiles and the
+	// a collapsed disclosure (the disclosure primitive): the screen opens on the four tiles and the
 	// picture, which is what it is for, and the prose is one press away.
 	//
 	// Two things that are deliberately not here: the mockup's `Copy a diagnostic bundle`, which its own
 	// design record marks `needs API` (there is no route, and a button that gathers nothing is worse
 	// than no button), and the light-side entries of the mockup's feed — §2.7 locks the timeline to
 	// "only what this module did", and changes made elsewhere on the controller are not followed.
+	//
+	// **The skin.** The three situations are the button primitive in its pressed and resting shapes
+	// (they were pills, which the guide keeps for nothing), the four tiles and the picture and the
+	// timeline are panels, a state or an outcome is a chip, and every second line is the quiet token.
 	import { onMount } from 'svelte';
 
-	import { Badge } from '@prusa/connect-ui/primitives';
-
 	import { moduleApi, type Frame } from './api';
-	import Disclosure from './disclosure.svelte';
 	import { ageText, cssColour, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
 	import { lights, loadLights } from './lights.svelte';
 	import { fateOf, refreshPauses } from './pause.svelte';
 	import PrinterLink from './printer-link.svelte';
+	import { Button, Chip, Disclosure, Field, FieldSelect, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -355,226 +357,228 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-wrap items-end gap-3">
-		<div class="flex flex-col gap-1">
-			<h1 class="text-lg font-semibold">{t('diagnostics.title')}</h1>
-			<p class="text-sm opacity-70">{t('diagnostics.intro')}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-wrap items-end gap-section">
+		<div class="flex flex-col gap-tight">
+			<h1 class="font-ui text-lg font-medium">{t('diagnostics.title')}</h1>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('diagnostics.intro')}</p>
 		</div>
 
-		<label class="ml-auto flex flex-col gap-1 text-sm">
-			<span class="text-xs opacity-70">{t('diagnostics.binding')}</span>
-			<select
-				class="rounded border px-2 py-1"
-				value={chosen}
-				disabled={loading || frames.length === 0}
-				onchange={(event) => (chosen = (event.currentTarget as HTMLSelectElement).value)}
-			>
-				{#each frames as frame (frame.binding)}
-					<option value={frame.binding}>{bindingText(frame)}</option>
-				{/each}
-			</select>
-		</label>
+		<Field id="diagnostics-binding" class="ml-auto" label={t('diagnostics.binding')}>
+			{#snippet children()}
+				<FieldSelect
+					id="diagnostics-binding"
+					value={chosen}
+					disabled={loading || frames.length === 0}
+					oninput={(value) => (chosen = value)}
+				>
+					{#snippet children()}
+						{#each frames as frame (frame.binding)}
+							<option value={frame.binding} selected={frame.binding === chosen}>{bindingText(frame)}</option>
+						{/each}
+					{/snippet}
+				</FieldSelect>
+			{/snippet}
+		</Field>
 	</header>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('diagnostics.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('diagnostics.loading')}</p>
 	{:else if selected === null}
-		<div class="rounded border px-4 py-6 text-sm">
-			<p class="font-medium">{t('diagnostics.nothing_yet')}</p>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('diagnostics.nothing_yet')}</p>
 			{#if waiting !== ''}
-				<p class="mt-1 text-xs opacity-70">{t('diagnostics.nothing_yet_why', { why: waiting })}</p>
+				<p class="mt-tight font-ui text-xs text-wled-text-quiet">{t('diagnostics.nothing_yet_why', { why: waiting })}</p>
 			{/if}
-		</div>
+		</Panel>
 	{:else}
 		{@const frame = selected}
 
 		<!-- The three situations: a lens on the same screen, never a second set of numbers. -->
-		<div class="flex flex-col gap-2">
-			<div class="flex flex-wrap items-center gap-1.5">
-				<span class="pr-1 text-xs font-medium uppercase tracking-wide opacity-60">
+		<div class="flex flex-col gap-row">
+			<div class="flex flex-wrap items-center gap-tight">
+				<span class="pr-tight font-ui text-xs font-medium uppercase tracking-label text-wled-text-quiet">
 					{t('diagnostics.situations_heading')}
 				</span>
 				{#each SITUATIONS as one (one)}
-					<button
-						type="button"
-						class={lens === one
-							? 'rounded-full border bg-black/5 px-3 py-1 text-xs font-semibold dark:bg-white/10'
-							: 'rounded-full border px-3 py-1 text-xs opacity-70 hover:opacity-100'}
+					<Button
+						variant={lens === one ? 'secondary' : 'ghost'}
+						size="sm"
 						aria-pressed={lens === one}
 						onclick={() => choose(one)}
 					>
 						{situationLabel(one)}
-					</button>
+					</Button>
 				{/each}
 				{#if inForce === lens}
-					<Badge variant="secondary" size="sm">{t('diagnostics.now_happening')}</Badge>
+					<Chip>{t('diagnostics.now_happening')}</Chip>
 				{/if}
 				{#if pausedFor !== ''}
-					<Badge variant="outline" size="sm">{t('diagnostics.paused_badge', { length: pausedFor })}</Badge>
+					<Chip>{t('diagnostics.paused_badge', { length: pausedFor })}</Chip>
 				{/if}
 			</div>
 
-			<p class="rounded border px-3 py-2 text-sm">
-				{#if inForce === lens}
-					<span class="font-medium">{t('diagnostics.now_body_same')}</span>
-				{:else if inForce === ''}
-					<span class="font-medium">
-						{t('diagnostics.now_body_none', { situation: situationLabel(lens) })}
-					</span>
-				{:else}
-					<span class="font-medium">
-						{t('diagnostics.now_body_other', { situation: situationLabel(inForce) })}
-					</span>
-				{/if}
-				{readingOf(lens)}
-			</p>
+			<Panel>
+				<p class="font-ui text-sm">
+					{#if inForce === lens}
+						<span class="font-medium">{t('diagnostics.now_body_same')}</span>
+					{:else if inForce === ''}
+						<span class="font-medium">
+							{t('diagnostics.now_body_none', { situation: situationLabel(lens) })}
+						</span>
+					{:else}
+						<span class="font-medium">
+							{t('diagnostics.now_body_other', { situation: situationLabel(inForce) })}
+						</span>
+					{/if}
+					{readingOf(lens)}
+				</p>
+			</Panel>
 		</div>
 
 		<!-- The four tiles: each answers one question, and all four come from GET /frames. -->
-		<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-			<div class={inLens(1) ? 'rounded border px-3 py-2 ring-1 ring-current' : 'rounded border px-3 py-2'}>
-				<p class="text-[10px] font-semibold uppercase tracking-wide opacity-60">
-					{t('diagnostics.tile_printer')}
-				</p>
-				<p class="font-mono text-sm font-semibold">
-					{frame.printer.state_known ? frame.printer.state : t('diagnostics.state_unknown')}
-				</p>
-				<p class="text-xs opacity-70">
-					<PrinterLink id={frame.printer.id} name={printerOf(frame)} cls={NAME_LINK} />
-					{#if frame.frame.percent >= 0}
-						· {t('diagnostics.percent', { percent: frame.frame.percent })}
-					{/if}
-				</p>
-				<p class="mt-0.5 flex flex-wrap items-center gap-1 text-xs">
-					<span class="opacity-70">
-						{frame.reading?.last_change
-							? t('diagnostics.reading_age', { age: ageText(t, frame.reading.last_change) ?? '' })
-							: t('diagnostics.no_reading')}
-					</span>
-					<Badge variant={frame.reading?.stale === true ? 'destructive' : 'secondary'} size="sm">
-						{frame.reading?.stale === true ? t('diagnostics.stale') : t('diagnostics.live')}
-					</Badge>
-				</p>
-			</div>
-
-			<div class={inLens(2) ? 'rounded border px-3 py-2 ring-1 ring-current' : 'rounded border px-3 py-2'}>
-				<p class="text-[10px] font-semibold uppercase tracking-wide opacity-60">
-					{t('diagnostics.tile_last_write')}
-				</p>
-				<p class="text-sm font-semibold">
-					{frame.last_send === null
-						? t('diagnostics.never_written')
-						: (ageText(t, frame.last_send.at) ?? t('diagnostics.never_written'))}
-				</p>
-				<p class="mt-0.5 flex flex-wrap items-center gap-1 text-xs">
-					{#if frame.last_send !== null}
-						<Badge variant={frame.last_send.ok ? 'secondary' : 'destructive'} size="sm">
-							{frame.last_send.ok ? t('diagnostics.landed') : t('diagnostics.did_not_land')}
-						</Badge>
-					{:else}
-						<span class="opacity-70">{t('diagnostics.no_write_yet')}</span>
-					{/if}
-				</p>
-				{#if frame.last_send !== null && !frame.last_send.ok && (frame.last_send.error ?? '') !== ''}
-					<p class="mt-0.5 break-words font-mono text-[10px] opacity-70">{frame.last_send.error}</p>
-				{/if}
-			</div>
-
-			<div class={inLens(3) ? 'rounded border px-3 py-2 ring-1 ring-current' : 'rounded border px-3 py-2'}>
-				<p class="text-[10px] font-semibold uppercase tracking-wide opacity-60">
-					{t('diagnostics.tile_why')}
-				</p>
-				<p class="flex items-center gap-1.5 font-mono text-sm font-semibold">
-					<span
-						class="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/20"
-						style={`background: ${cssColour(frame.frame.colour)}`}
-					></span>
-					{frame.frame.reason}
-				</p>
-				<p class="mt-0.5 text-xs opacity-80">
-					{meaningOf === null ? t('diagnostics.reason_unfamiliar') : t(meaningOf.key)}
-				</p>
-				{#if frame.frame.name !== ''}
-					<p class="mt-0.5 truncate text-[10px] opacity-60">
-						{t('diagnostics.job_name', { name: frame.frame.name })}
+		<div class="grid gap-row sm:grid-cols-2 lg:grid-cols-4">
+			<Panel class={inLens(1) ? 'ring-1 ring-wled-accent' : ''}>
+				<div class="flex flex-col gap-tight">
+					<p class="font-ui text-xs font-medium uppercase tracking-label text-wled-text-quiet">
+						{t('diagnostics.tile_printer')}
 					</p>
-				{/if}
-			</div>
+					<p class="font-data text-sm font-medium">
+						{frame.printer.state_known ? frame.printer.state : t('diagnostics.state_unknown')}
+					</p>
+					<p class="font-ui text-xs text-wled-text-quiet">
+						<PrinterLink id={frame.printer.id} name={printerOf(frame)} cls={NAME_LINK} />
+						{#if frame.frame.percent >= 0}
+							· {t('diagnostics.percent', { percent: frame.frame.percent })}
+						{/if}
+					</p>
+					<p class="flex flex-wrap items-center gap-tight font-ui text-xs text-wled-text-quiet">
+						<span>
+							{frame.reading?.last_change
+								? t('diagnostics.reading_age', { age: ageText(t, frame.reading.last_change) ?? '' })
+								: t('diagnostics.no_reading')}
+						</span>
+						<Chip tone={frame.reading?.stale === true ? 'error' : 'quiet'}>
+							{frame.reading?.stale === true ? t('diagnostics.stale') : t('diagnostics.live')}
+						</Chip>
+					</p>
+				</div>
+			</Panel>
 
-			<div class="rounded border px-3 py-2">
-				<p class="text-[10px] font-semibold uppercase tracking-wide opacity-60">
-					{t('diagnostics.tile_transport')}
-				</p>
-				<p class="text-sm font-semibold">
-					{pixelsNow ? t('diagnostics.transport_pixels') : t('diagnostics.transport_state')}
-				</p>
-				<p class="mt-0.5 text-xs opacity-80">
-					{pixelsNow ? t('diagnostics.transport_pixels_meaning') : t('diagnostics.transport_state_meaning')}
-				</p>
-				<p class="mt-0.5 text-[10px] opacity-60">{t('diagnostics.transport_rule')}</p>
-			</div>
+			<Panel class={inLens(2) ? 'ring-1 ring-wled-accent' : ''}>
+				<div class="flex flex-col gap-tight">
+					<p class="font-ui text-xs font-medium uppercase tracking-label text-wled-text-quiet">
+						{t('diagnostics.tile_last_write')}
+					</p>
+					<p class="font-ui text-sm font-medium">
+						{frame.last_send === null
+							? t('diagnostics.never_written')
+							: (ageText(t, frame.last_send.at) ?? t('diagnostics.never_written'))}
+					</p>
+					<p class="flex flex-wrap items-center gap-tight font-ui text-xs">
+						{#if frame.last_send !== null}
+							<Chip tone={frame.last_send.ok ? 'quiet' : 'error'}>
+								{frame.last_send.ok ? t('diagnostics.landed') : t('diagnostics.did_not_land')}
+							</Chip>
+						{:else}
+							<span class="text-wled-text-quiet">{t('diagnostics.no_write_yet')}</span>
+						{/if}
+					</p>
+					{#if frame.last_send !== null && !frame.last_send.ok && (frame.last_send.error ?? '') !== ''}
+						<p class="break-words font-data text-xs text-wled-text-quiet">{frame.last_send.error}</p>
+					{/if}
+				</div>
+			</Panel>
+
+			<Panel class={inLens(3) ? 'ring-1 ring-wled-accent' : ''}>
+				<div class="flex flex-col gap-tight">
+					<p class="font-ui text-xs font-medium uppercase tracking-label text-wled-text-quiet">
+						{t('diagnostics.tile_why')}
+					</p>
+					<p class="flex items-center gap-tight font-data text-sm font-medium">
+						<span
+							class="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-wled-line-field"
+							style={`background: ${cssColour(frame.frame.colour)}`}
+						></span>
+						{frame.frame.reason}
+					</p>
+					<p class="font-ui text-xs text-wled-text-quiet">
+						{meaningOf === null ? t('diagnostics.reason_unfamiliar') : t(meaningOf.key)}
+					</p>
+					{#if frame.frame.name !== ''}
+						<p class="truncate font-ui text-xs text-wled-text-quiet">
+							{t('diagnostics.job_name', { name: frame.frame.name })}
+						</p>
+					{/if}
+				</div>
+			</Panel>
+
+			<Panel>
+				<div class="flex flex-col gap-tight">
+					<p class="font-ui text-xs font-medium uppercase tracking-label text-wled-text-quiet">
+						{t('diagnostics.tile_transport')}
+					</p>
+					<p class="font-ui text-sm font-medium">
+						{pixelsNow ? t('diagnostics.transport_pixels') : t('diagnostics.transport_state')}
+					</p>
+					<p class="font-ui text-xs text-wled-text-quiet">
+						{pixelsNow ? t('diagnostics.transport_pixels_meaning') : t('diagnostics.transport_state_meaning')}
+					</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{t('diagnostics.transport_rule')}</p>
+				</div>
+			</Panel>
 		</div>
 
 		<!-- The frame itself, the module's own PNG: the same picture Overview draws, because the
 		     question this page answers is what is being sent right now. -->
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs dark:bg-white/10">
-				<span class="font-medium">{t('diagnostics.frame_heading')}</span>
-				<span class="opacity-60">{t('diagnostics.frame_route')}</span>
-			</div>
-			<div class="flex flex-col gap-2 px-3 py-3">
+		<Panel title={t('diagnostics.frame_heading')} hint={t('diagnostics.frame_route')}>
+			<div class="flex flex-col gap-row">
 				{#if (frame.image?.base64 ?? '') !== ''}
 					<img
 						src={`data:${frame.image?.media_type ?? 'image/png'};base64,${frame.image?.base64 ?? ''}`}
 						alt={t('diagnostics.frame_alt', { light: lightOf(frame), printer: printerOf(frame) })}
 						class={frame.kind === 'panel'
-							? 'block h-auto w-full max-w-[512px] rounded bg-black object-contain [image-rendering:pixelated]'
-							: 'block h-6 w-full max-w-[512px] rounded bg-black [image-rendering:pixelated]'}
+							? 'block h-auto w-full max-w-128 rounded-panel bg-wled-pixel-off object-contain [image-rendering:pixelated]'
+							: 'block h-6 w-full max-w-128 rounded-panel bg-wled-pixel-off [image-rendering:pixelated]'}
 					/>
 				{:else}
 					<div
-						class="flex h-16 w-full max-w-[512px] items-center justify-center rounded bg-black px-2 text-center text-xs text-white/60"
+						class="flex h-16 w-full max-w-128 items-center justify-center rounded-panel bg-wled-pixel-off px-row text-center font-ui text-xs text-wled-pixel-off-ink"
 					>
 						{t('diagnostics.frame_missing')}
 					</div>
 				{/if}
-				<p class="font-mono text-[11px] opacity-70">{fillText(frame)}</p>
+				<p class="font-data text-xs text-wled-text-quiet">{fillText(frame)}</p>
 				{#if frame.note}
-					<p class="text-xs opacity-80">{frame.note}</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{frame.note}</p>
 				{/if}
 				{#if pictureNote !== ''}
-					<p class="text-[11px] opacity-60">{pictureNote}</p>
+					<p class="font-ui text-xs text-wled-text-quiet">{pictureNote}</p>
 				{/if}
 			</div>
-		</div>
+		</Panel>
 
 		<!-- One merged timeline. It carries only what this module did, and it says what it cannot. -->
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs dark:bg-white/10">
-				<span class="font-medium">{t('diagnostics.timeline_heading')}</span>
-				<span class="opacity-60">{t('diagnostics.timeline_route')}</span>
-			</div>
-
+		<Panel title={t('diagnostics.timeline_heading')} hint={t('diagnostics.timeline_route')} pad="none">
 			{#if timeline.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('diagnostics.timeline_empty')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('diagnostics.timeline_empty')}</p>
 			{:else}
 				<ol>
 					{#each timeline as line, index (index)}
-						<li class="flex flex-wrap items-baseline gap-2 border-b px-3 py-2 text-sm last:border-b-0">
-							<span class="w-24 shrink-0 font-mono text-[11px] opacity-60">{line.when}</span>
-							<span
-								class="shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide opacity-80"
-							>
+						<li class="flex flex-wrap items-baseline gap-row border-b border-wled-line px-panel py-row font-ui text-sm last:border-b-0">
+							<span class="w-24 shrink-0 font-data text-xs text-wled-text-quiet">{line.when}</span>
+							<Chip>
 								{line.source === 'printer'
 									? t('diagnostics.source_printer')
 									: t('diagnostics.source_module')}
-							</span>
-							<span class={line.bad ? 'min-w-0 flex-1 text-red-700 dark:text-red-400' : 'min-w-0 flex-1'}>
+							</Chip>
+							<span class={line.bad ? 'min-w-0 flex-1 text-wled-danger' : 'min-w-0 flex-1'}>
 								{line.text}
 							</span>
 						</li>
@@ -582,45 +586,45 @@
 				</ol>
 			{/if}
 
-			<div class="flex flex-col gap-1 border-t bg-black/5 px-3 py-2 text-[11px] opacity-80 dark:bg-white/10">
+			<div class="flex flex-col gap-tight border-t border-wled-line bg-wled-sunken px-panel py-row font-ui text-xs text-wled-text-quiet">
 				<p>{t('diagnostics.timeline_limit')}</p>
 				<p>{t('diagnostics.timeline_no_history')}</p>
 			</div>
-		</div>
+		</Panel>
 
 		<!-- Every reason the module can give, with the current one marked. Folded away: the
 		     tiles and the picture are the present tense, and this table is the reference. -->
 		<Disclosure summary={t('diagnostics.reasons_heading')} hint={t('diagnostics.reasons_route')}>
-			<p class="border-b px-3 py-2 text-xs opacity-70">{t('diagnostics.reasons_intro')}</p>
-			<table class="w-full border-collapse">
+			<p class="border-b border-wled-line py-row font-ui text-xs text-wled-text-quiet">{t('diagnostics.reasons_intro')}</p>
+			<table class="w-full border-collapse font-ui text-sm">
 				<thead>
-					<tr class="border-b text-left text-[10px] uppercase tracking-wide opacity-60">
-						<th class="px-3 py-1.5 font-semibold">{t('diagnostics.reason_column')}</th>
-						<th class="px-3 py-1.5 font-semibold">{t('diagnostics.means_column')}</th>
+					<tr class="border-b border-wled-line text-left text-xs uppercase tracking-label text-wled-text-quiet">
+						<th class="py-row font-medium">{t('diagnostics.reason_column')}</th>
+						<th class="py-row font-medium">{t('diagnostics.means_column')}</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each REASONS as row (row.id)}
 						{@const here = row.id === frame.frame.reason}
-						<tr class={here ? 'border-b bg-black/5 last:border-b-0 dark:bg-white/10' : 'border-b last:border-b-0'}>
-							<td class="whitespace-nowrap px-3 py-1.5 font-mono text-xs">{row.id}</td>
-							<td class="px-3 py-1.5">
-								<span class="opacity-80">{t(row.key)}</span>
+						<tr class={here ? 'border-b border-wled-line bg-wled-sunken last:border-b-0' : 'border-b border-wled-line last:border-b-0'}>
+							<td class="whitespace-nowrap py-row font-data text-xs">{row.id}</td>
+							<td class="py-row">
+								<span class="text-wled-text-quiet">{t(row.key)}</span>
 								{#if here}
-									<span class="ml-1 inline-block align-middle">
-										<Badge variant="secondary" size="sm">{t('diagnostics.this_one')}</Badge>
+									<span class="ml-tight inline-block align-middle">
+										<Chip>{t('diagnostics.this_one')}</Chip>
 									</span>
 								{/if}
 							</td>
 						</tr>
 					{/each}
 					{#if meaningOf === null}
-						<tr class="bg-black/5 dark:bg-white/10">
-							<td class="whitespace-nowrap px-3 py-1.5 font-mono text-xs">{frame.frame.reason}</td>
-							<td class="px-3 py-1.5 opacity-80">
+						<tr class="bg-wled-sunken">
+							<td class="whitespace-nowrap py-row font-data text-xs">{frame.frame.reason}</td>
+							<td class="py-row text-wled-text-quiet">
 								{t('diagnostics.reason_unfamiliar')}
-								<span class="ml-1 inline-block align-middle">
-									<Badge variant="secondary" size="sm">{t('diagnostics.this_one')}</Badge>
+								<span class="ml-tight inline-block align-middle">
+									<Chip>{t('diagnostics.this_one')}</Chip>
 								</span>
 							</td>
 						</tr>
@@ -634,9 +638,9 @@
 		<Disclosure summary={t('diagnostics.limits_heading')}>
 			<ul>
 				{#each LIMITS as limit (limit.key)}
-					<li class="flex flex-wrap items-baseline justify-between gap-2 border-b px-3 py-2 last:border-b-0">
+					<li class="flex flex-wrap items-baseline justify-between gap-row border-b border-wled-line py-row last:border-b-0">
 						<span>{t(limit.key)}</span>
-						<span class="text-xs opacity-70">{t(limit.why)}</span>
+						<span class="font-ui text-xs text-wled-text-quiet">{t(limit.why)}</span>
 					</li>
 				{/each}
 			</ul>

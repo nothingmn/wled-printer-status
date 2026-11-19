@@ -39,9 +39,11 @@
 	// guess at it. What this page does not carry is the fill behaviour §2.4 also makes editable:
 	// there is no route for it (GET /states answers colour, word and hold and nothing else), so a
 	// control here would be a control that writes nothing.
+	//
+	// **The skin.** A row is a panel, drawn twice; its chip is the chip primitive, its reset and
+	// its word field and its hold are the button and the field primitives, and the second weight
+	// of the small print is the quiet token instead of an opacity that measured under AA.
 	import { onMount } from 'svelte';
-
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
 
 	import {
 		moduleApi,
@@ -55,6 +57,7 @@
 	import { missingGlyphs, fitsPanel } from './glyphs';
 	import { heldHost } from './host';
 	import StatePreview from './state-preview.svelte';
+	import { Button, Chip, Field, FieldInput, FieldSelect, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -331,6 +334,10 @@
 		return t('colours.hold_5m');
 	};
 
+	/** A field's label with the origin marker the row carries, so the two cannot drift apart. */
+	const labelOf = (key: string, origin: string | undefined): string =>
+		origin === 'store' ? `${t(key)} · ${t('colours.yours')}` : t(key);
+
 	onMount(() => {
 		void load();
 
@@ -342,28 +349,36 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-col gap-1">
-		<h1 class="text-lg font-semibold">{t('colours.title')}</h1>
-		<p class="text-sm opacity-70">{t('colours.intro')}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-col gap-tight">
+		<h1 class="font-ui text-lg font-medium">{t('colours.title')}</h1>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('colours.intro')}</p>
 	</header>
 
-	<p class="rounded border px-3 py-2 text-sm">{t('colours.note')}</p>
+	<Panel>
+		<p class="font-ui text-sm">{t('colours.note')}</p>
+	</Panel>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 	{#if notice !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{notice}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('colours.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('colours.loading')}</p>
 	{:else if board !== null}
 		{#if !board.persisted}
-			<p class="rounded border px-3 py-2 text-sm" role="status">
-				{t('colours.not_kept', { why: board.note ?? '' })}
-			</p>
+			<Panel>
+				<p class="font-ui text-sm" role="status">
+					{t('colours.not_kept', { why: board.note ?? '' })}
+				</p>
+			</Panel>
 		{/if}
 
 		<!--
@@ -378,121 +393,123 @@
 			{@const told = standing(row)}
 			{@const trouble = wordTrouble(draft.word)}
 
-			<article class="flex flex-col gap-2 rounded border p-3 {notShowing(row) ? 'border-dashed' : ''}">
-				<div class="flex flex-wrap items-center gap-2">
-					<input
-						type="color"
-						class="h-6 w-9 cursor-pointer rounded border bg-transparent p-0"
-						value={draft.colour}
-						disabled={busy}
-						aria-label={t('colours.colour_of', { state: row.state })}
-						onchange={(event) => {
-							drafts[row.state] = { ...draft, colour: (event.currentTarget as HTMLInputElement).value };
-							void commit(row);
-						}}
-					/>
-					<span class="text-sm font-semibold">{row.state}</span>
-					{#if row.kind === 'condition'}
-						<Badge variant="outline" size="sm">{t('colours.condition')}</Badge>
-						<span class="text-[10px] opacity-60">{asideOf(row.state)}</span>
-					{/if}
-					<span class="font-mono text-[10px] opacity-60">
-						{colour.r}, {colour.g}, {colour.b}
-						{#if row.colour_origin === 'store'}· {t('colours.yours')}{/if}
-					</span>
-					<div class="ml-auto flex flex-wrap items-center gap-1">
-						<Badge variant={row.overridden ? 'secondary' : 'outline'} size="sm">
-							{row.overridden ? t('colours.yours') : t('colours.default')}
-						</Badge>
-						{#if row.overridden}
-							<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(row)}>
-								{t('colours.reset')}
-							</Button>
-						{/if}
-					</div>
-				</div>
-
-				<StatePreview {colour} word={previewWord(row)} pending={row.word_shows === 'later'} />
-
-				<div class="flex flex-wrap items-end gap-3 text-sm">
-					<label class="flex flex-col gap-1">
-						<span class="text-xs opacity-70">
-							{t('colours.word')}
-							{#if row.word_origin === 'store'}· {t('colours.yours')}{/if}
-						</span>
+			<Panel class={notShowing(row) ? 'border-dashed' : ''}>
+				<div class="flex flex-col gap-row">
+					<div class="flex flex-wrap items-center gap-row">
 						<input
-							type="text"
-							class="w-40 rounded border px-2 py-1"
-							value={draft.word}
-							placeholder={t('colours.word_placeholder')}
+							type="color"
+							class="h-6 w-9 cursor-pointer rounded-control border border-wled-line-field bg-transparent p-0"
+							value={draft.colour}
 							disabled={busy}
+							aria-label={t('colours.colour_of', { state: row.state })}
 							onchange={(event) => {
-								drafts[row.state] = { ...draft, word: (event.currentTarget as HTMLInputElement).value };
+								drafts[row.state] = { ...draft, colour: (event.currentTarget as HTMLInputElement).value };
 								void commit(row);
 							}}
 						/>
-					</label>
-
-					<label class="flex flex-col gap-1">
-						<span class="text-xs opacity-70">
-							{t('colours.holds')}
-							{#if row.holds_origin === 'store'}· {t('colours.yours')}{/if}
+						<span class="font-ui text-sm font-medium">{row.state}</span>
+						{#if row.kind === 'condition'}
+							<Chip>{t('colours.condition')}</Chip>
+							<span class="font-ui text-xs text-wled-text-quiet">{asideOf(row.state)}</span>
+						{/if}
+						<span class="font-data text-xs text-wled-text-quiet">
+							{colour.r}, {colour.g}, {colour.b}
+							{#if row.colour_origin === 'store'}· {t('colours.yours')}{/if}
 						</span>
-						<select
-							class="rounded border px-2 py-1"
-							value={draft.holds}
-							disabled={busy || draft.word.trim() === ''}
-							onchange={(event) => {
-								drafts[row.state] = { ...draft, holds: (event.currentTarget as HTMLSelectElement).value as Holds };
-								void commit(row);
-							}}
-						>
-							{#each HOLDS as holds (holds)}
-								<option value={holds}>{holdsLabel(holds)}</option>
-							{/each}
-						</select>
-					</label>
-				</div>
+						<div class="ml-auto flex flex-wrap items-center gap-tight">
+							<Chip>
+								{row.overridden ? t('colours.yours') : t('colours.default')}
+							</Chip>
+							{#if row.overridden}
+								<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(row)}>
+									{t('colours.reset')}
+								</Button>
+							{/if}
+						</div>
+					</div>
 
-				{#if draft.word.trim() === ''}
-					<p class="text-[11px] opacity-60">{t('colours.holds_needs_word')}</p>
-				{:else if trouble !== ''}
-					<p class="text-[11px]" role="alert">{trouble}</p>
-				{/if}
+					<StatePreview {colour} word={previewWord(row)} pending={row.word_shows === 'later'} />
 
-				<div class="flex flex-wrap items-center gap-2 text-xs">
-					{#if told.badge !== ''}
-						<Badge variant={row.word_shows === 'showing' ? 'secondary' : 'warning'} size="sm">{told.badge}</Badge>
+					<div class="flex flex-wrap items-end gap-section font-ui text-sm">
+						<Field id={`word-${row.state}`} label={labelOf('colours.word', row.word_origin)}>
+							{#snippet children()}
+								<FieldInput
+									id={`word-${row.state}`}
+									class="w-40"
+									type="text"
+									value={draft.word}
+									placeholder={t('colours.word_placeholder')}
+									disabled={busy}
+									onchange={(event) => {
+										drafts[row.state] = { ...draft, word: (event.currentTarget as HTMLInputElement).value };
+										void commit(row);
+									}}
+								/>
+							{/snippet}
+						</Field>
+
+						<Field id={`holds-${row.state}`} label={labelOf('colours.holds', row.holds_origin)}>
+							{#snippet children()}
+								<FieldSelect
+									id={`holds-${row.state}`}
+									value={draft.holds}
+									disabled={busy || draft.word.trim() === ''}
+									oninput={(value) => {
+										drafts[row.state] = { ...draft, holds: value as Holds };
+										void commit(row);
+									}}
+								>
+									{#snippet children()}
+										{#each HOLDS as holds (holds)}
+											<option value={holds} selected={holds === draft.holds}>{holdsLabel(holds)}</option>
+										{/each}
+									{/snippet}
+								</FieldSelect>
+							{/snippet}
+						</Field>
+					</div>
+
+					{#if draft.word.trim() === ''}
+						<p class="font-ui text-xs text-wled-text-quiet">{t('colours.holds_needs_word')}</p>
+					{:else if trouble !== ''}
+						<p class="font-ui text-xs text-wled-danger" role="alert">{trouble}</p>
 					{/if}
-					<span class="opacity-70">{told.line}</span>
+
+					<div class="flex flex-wrap items-center gap-row font-ui text-xs">
+						{#if told.badge !== ''}
+							<Chip tone={row.word_shows === 'showing' ? 'quiet' : 'idle'}>{told.badge}</Chip>
+						{/if}
+						<span class="text-wled-text-quiet">{told.line}</span>
+					</div>
+
+					<p class="font-ui text-xs text-wled-text-quiet">{row.meaning}</p>
+
+					{#if (faults[row.state] ?? '') !== ''}
+						<p class="font-ui text-xs text-wled-danger" role="alert">{t('colours.refused')} {faults[row.state]}</p>
+					{/if}
 				</div>
-
-				<p class="text-[11px] opacity-60">{row.meaning}</p>
-
-				{#if (faults[row.state] ?? '') !== ''}
-					<p class="text-[11px]" role="alert">{t('colours.refused')} {faults[row.state]}</p>
-				{/if}
-			</article>
+			</Panel>
 		{/snippet}
 
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-				<span class="text-sm font-medium">{t('colours.rows_heading')}</span>
-				<span class="ml-auto text-xs opacity-60">
+		<Panel title={t('colours.rows_heading')} pad="none">
+			{#snippet meta()}
+				<span class="font-ui text-xs text-wled-text-quiet">
 					{t('colours.counts', { states: reportedCount, conditions: conditionCount })}
 				</span>
-			</div>
+			{/snippet}
 
-			<div class="grid gap-3 p-3 md:grid-cols-2">
+			<div class="grid gap-section p-panel md:grid-cols-2">
 				{#each rows as row (row.state)}
 					{@render card(row)}
 				{/each}
 			</div>
 
-			<p class="border-t px-3 py-2 text-xs opacity-70">{t('colours.busy_ready_note')}</p>
-		</div>
+			<p class="border-t border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet">
+				{t('colours.busy_ready_note')}
+			</p>
+		</Panel>
 
-		<div class="flex flex-col gap-1 text-xs opacity-70">
+		<div class="flex flex-col gap-tight font-ui text-xs text-wled-text-quiet">
 			<p>{t('colours.conditions_note')}</p>
 			<p>{t('colours.font_note')}</p>
 			<p>{t('colours.kept_note')}</p>

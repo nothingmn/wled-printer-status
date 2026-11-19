@@ -19,7 +19,7 @@
 	let { value = '', oninput, class: className = '', ...rest }: Props = $props();
 
 	const control =
-		'h-9 w-full min-w-0 rounded-control border border-wled-line-field bg-transparent px-2 font-ui text-sm text-wled-text outline-none placeholder:text-wled-text-quiet focus-visible:ring-2 focus-visible:ring-wled-focus focus-visible:ring-offset-2 focus-visible:ring-offset-wled-canvas disabled:text-wled-text-off aria-invalid:border-wled-danger';
+		'h-9 min-w-0 rounded-control border border-wled-line-field bg-transparent px-2 font-ui text-sm text-wled-text outline-none placeholder:text-wled-text-quiet focus-visible:ring-2 focus-visible:ring-wled-focus focus-visible:ring-offset-2 focus-visible:ring-offset-wled-canvas disabled:text-wled-text-off aria-invalid:border-wled-danger';
 </script>
 
 <input

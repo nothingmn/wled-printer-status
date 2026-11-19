@@ -3,50 +3,49 @@
 <head>
 <meta charset="utf-8">
 <title>Layout — a panel and a strip</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  header.app .right{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:11.5px;color:#8b93a1}
-  header.app select{font:inherit;font-size:11.5px;padding:3px 7px;border-radius:6px;background:#1e222a;border:1px solid #2a2f39;color:#e9ecf1}
-  .wrap{padding:20px 22px 80px;max-width:1080px}
+    *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-4)}
+  header.app b{color:var(--wled-text);font-size:13px}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  header.app .right{margin-left:auto;display:flex;gap:var(--wled-space-2);align-items:center;font-size:11.5px;color:var(--wled-text-quiet)}
+  header.app select{font:inherit;font-size:11.5px;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius);background:var(--wled-panel);border:1px solid var(--wled-line);color:var(--wled-line)}
+  .wrap{padding:var(--wled-space-5) var(--wled-space-5) 80px;max-width:1080px}
   h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
-  .sub{font-size:12px;color:var(--muted)}
-  .defs{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
-  .def{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:11.5px;color:#3b4250}
-  .def b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:2px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
-  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .sub{font-size:12px;color:var(--wled-text-quiet)}
+  .defs{display:flex;gap:var(--wled-space-3);margin-top:var(--wled-space-3);flex-wrap:wrap}
+  .def{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-2) var(--wled-space-3);font-size:11.5px;color:var(--wled-text)}
+  .def b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--wled-text-quiet);margin-bottom:var(--wled-space-1)}
+  .card{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);margin-top:var(--wled-space-4);overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-weight:650;display:flex;gap:var(--wled-space-2);align-items:center}
   .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
-  .stage{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;padding:14px}
+  .stage{display:flex;gap:var(--wled-space-5);flex-wrap:wrap;align-items:flex-start;padding:var(--wled-space-4)}
   .left{flex:none}.right{flex:1;min-width:320px}
-  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block}
-  .cap{font-size:11px;color:var(--muted);margin-top:7px}
-  .widget{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  canvas{background:var(--wled-pixel-off);border-radius:var(--wled-radius);image-rendering:pixelated;display:block}
+  .cap{font-size:11px;color:var(--wled-text-quiet);margin-top:var(--wled-space-2)}
+  .widget{display:flex;align-items:center;gap:var(--wled-space-2);padding:var(--wled-space-2) 0;border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .widget:last-child{border-bottom:none}
-  .widget .nm{width:140px;color:#3b4250}
-  .widget .ctl{margin-left:auto;display:flex;gap:7px;align-items:center}
-  .widget.off .nm{color:#a8aeb8}
-  .widget.na .nm{color:#a8aeb8}
-  select,input[type=number]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
-  select:disabled,input:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
-  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
-  button{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
-  button:hover{border-color:#c6ccd4;background:#fafbfc}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
-  .build{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:#8a5a00;background:#fdf3e3;border:1px solid #f0dcb4;padding:1px 5px;border-radius:4px;font-weight:700}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .fit{font-size:11.5px;padding:5px 9px;border-radius:7px;background:var(--okbg);color:var(--ok);border:1px solid #cdead8;display:inline-block}
-  .fit.bad{background:#fdecec;color:#b91c1c;border-color:#f2cece}
-  pre{font-family:var(--mono);font-size:11px;background:#0f1115;color:#c8ccd4;padding:11px 13px;border-radius:8px;overflow:auto;margin:0}
-  .foot{padding:10px 14px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .widget .nm{width:140px;color:var(--wled-text)}
+  .widget .ctl{margin-left:auto;display:flex;gap:var(--wled-space-2);align-items:center}
+  .widget.off .nm{color:var(--wled-text-quiet)}
+  .widget.na .nm{color:var(--wled-text-quiet)}
+  select,input[type=number]{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);border-radius:var(--wled-radius);background:var(--wled-panel);color:var(--wled-text)}
+  select:disabled,input:disabled{color:var(--wled-text-quiet);background:var(--wled-sunken);border-color:var(--wled-sunken)}
+  input[type=checkbox]{accent-color:var(--wled-accent);width:14px;height:14px;cursor:pointer}
+  button{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius);cursor:pointer;white-space:nowrap}
+  button:hover{border-color:var(--wled-line-field);background:var(--wled-sunken)}
+  button.primary{background:var(--wled-accent);border-color:var(--wled-accent);color:var(--wled-accent-fill-ink)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid var(--wled-status-quiet);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  .build{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--wled-status-idle-ink);background:var(--wled-status-idle);border:1px solid var(--wled-status-idle);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .fit{font-size:11.5px;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius);background:var(--wled-status-done);color:var(--wled-status-done-ink);border:1px solid var(--wled-status-done);display:inline-block}
+  .fit.bad{background:var(--wled-status-error);color:var(--wled-status-error-ink);border-color:var(--wled-status-error)}
+  pre{font-family:var(--wled-font-data);font-size:11px;background:var(--wled-canvas);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-3);border-radius:var(--wled-radius);overflow:auto;margin:0}
+  .foot{padding:var(--wled-space-3) var(--wled-space-4);background:var(--wled-sunken);border-top:1px solid var(--wled-line);font-size:11.5px;color:var(--wled-text-quiet)}
+  .toast{position:fixed;right:20px;bottom:20px;background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -185,9 +184,9 @@
     <div class="card">
       <h2>Why so little <span class="right">not a limitation we chose</span></h2>
       <div style="padding:6px 14px 12px">
-        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
           <span>Text</span><span class="hint">needs a second dimension — impossible on a strip</span></div>
-        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
           <span>A bar band</span><span class="hint">the whole strip is the bar; there is nowhere else to put it</span></div>
         <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
           <span>Brightness</span><span class="hint">only if the whole strip is taken; a borrowed zone never gets it</span></div>
@@ -198,6 +197,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
 const F={A:[0x0E,0x11,0x11,0x1F,0x11,0x11,0x11],B:[0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],C:[0x0F,0x10,0x10,0x10,0x10,0x10,0x0F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],G:[0x0F,0x10,0x10,0x17,0x11,0x11,0x0F],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],J:[0x01,0x01,0x01,0x01,0x01,0x11,0x0E],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],L:[0x10,0x10,0x10,0x10,0x10,0x10,0x1F],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],O:[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],P:[0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],Q:[0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],R:[0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],T:[0x1F,0x04,0x04,0x04,0x04,0x04,0x04],U:[0x11,0x11,0x11,0x11,0x11,0x11,0x0E],V:[0x11,0x11,0x11,0x11,0x11,0x0A,0x04],W:[0x11,0x11,0x11,0x15,0x15,0x1B,0x11],X:[0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],Y:[0x11,0x11,0x0A,0x04,0x04,0x04,0x04],Z:[0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
 '0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'2':[0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],'3':[0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'5':[0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E],'6':[0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],'7':[0x1F,0x01,0x02,0x04,0x08,0x08,0x08],'8':[0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],'9':[0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
@@ -214,7 +214,7 @@ const on=id=>{const e=document.getElementById(id);return e?e.checked:false;};
 
 function draw(){
   const c=document.getElementById('panel');if(!c)return;
-  const g=c.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,W,H);
+  const g=c.getContext('2d');g.fillStyle=TOKEN.colourOf('--wled-pixel-off');g.fillRect(0,0,W,H);
 
   const barOn=on('bar'), rows=Math.max(1,Math.min(48,parseInt(val('rows'))||12)), band=val('band');
   const barH=barOn?rows:0, barY=band==='top'?0:H-barH;
@@ -274,7 +274,7 @@ function draw(){
 
 function drawStrip(){
   const c=document.getElementById('strip');if(!c)return;
-  const g=c.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,48,8);
+  const g=c.getContext('2d');g.fillStyle=TOKEN.colourOf('--wled-pixel-off');g.fillRect(0,0,48,8);
   const lit=Math.round(PCT/100*48), dir=val('direction');
   g.fillStyle='rgb('+COLOUR.join(',')+')';
   for(let i=0;i<lit;i++){const x=dir==='right'?(48-1-i):i;g.fillRect(x,1,1,6);}

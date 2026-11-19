@@ -23,9 +23,13 @@
 	// It is refreshed while it is open, because a page that answers "at this moment" and
 	// then stops is a page that lies after ten seconds. The refresh keeps the last good
 	// frames when a read fails, so a blink does not blank the wall.
+	//
+	// **The skin.** Every shape here is a primitive: the frames list and the two gap lists
+	// are panels, a printer's pause and its write age are chips, the pause and the bind are
+	// buttons, and the second weight of text is the quiet token rather than an opacity. The
+	// separator between the summary's clauses used to be `opacity-40`, which measures 3.3:1
+	// against the canvas — under AA — and is now the tone the guide allows for it.
 	import { onMount } from 'svelte';
-
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
 
 	import { moduleApi, type BindingRequest, type Frame, type PausedBinding, type Printer } from './api';
 	import { ageText, describe, lengthText, lightName, segmentText } from './format';
@@ -49,6 +53,7 @@
 		resumeOne,
 	} from './pause.svelte';
 	import PrinterLink from './printer-link.svelte';
+	import { Button, Chip, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -341,24 +346,24 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-col gap-1">
-		<h1 class="text-lg font-semibold">{t('overview.title')}</h1>
-		<p class="text-sm">
+<section class="flex flex-col gap-section">
+	<header class="flex flex-col gap-tight">
+		<h1 class="font-ui text-lg font-medium">{t('overview.title')}</h1>
+		<p class="font-ui text-sm">
 			{#if everythingPaused()}
 				<span class="font-medium">{t('overview.everything_paused')}</span>
-				<span class="opacity-70">{t('overview.everything_paused_body')}</span>
+				<span class="text-wled-text-quiet">{t('overview.everything_paused_body')}</span>
 			{:else}
 				<span class="font-medium">{t('overview.summary_lights', { count: groups.length })}</span>
 				{t('overview.summary_showing', { count: frames.length })}
-				<span class="opacity-40">·</span>
+				<span class="text-wled-text-quiet" aria-hidden="true">·</span>
 				{#if troubles.length === 0}
 					<span class="font-medium">{t('overview.nothing_needs_you')}</span>
 				{:else}
 					<span class="font-medium">{troubles.join(' · ')}</span>
 				{/if}
 				{#if pausedCount > 0}
-					<span class="opacity-40">·</span>
+					<span class="text-wled-text-quiet" aria-hidden="true">·</span>
 					<span class="font-medium">{t('overview.paused_count', { count: pausedCount })}</span>
 				{/if}
 			{/if}
@@ -366,64 +371,72 @@
 	</header>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 
 	{#if notice !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{notice}</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('overview.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('overview.loading')}</p>
 	{:else if groups.length === 0}
 		<!-- §2.1 and §3: the first run says one sentence about what to do first, not an
 		     empty grid, and a module that has just started says what it is waiting for. -->
-		<div class="rounded border px-4 py-6">
-			<p class="text-sm font-medium">{t('overview.first_run')}</p>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('overview.first_run')}</p>
 			{#if waiting !== ''}
-				<p class="mt-1 text-xs opacity-70">{t('overview.no_picture_yet', { why: waiting })}</p>
+				<p class="mt-tight font-ui text-xs text-wled-text-quiet">
+					{t('overview.no_picture_yet', { why: waiting })}
+				</p>
 			{/if}
-		</div>
+		</Panel>
 	{:else}
-		<div class="overflow-hidden rounded border">
+		<Panel pad="none">
 			{#each groups as group (group.light)}
-				<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-					<span class="text-sm font-semibold">{group.light}</span>
-					<span class="font-mono text-xs opacity-60">{group.address}</span>
+				<div class="flex flex-wrap items-center gap-row border-b border-wled-line bg-wled-sunken px-panel py-row">
+					<span class="font-ui text-sm font-medium">{group.light}</span>
+					<span class="font-data text-xs text-wled-text-quiet">{group.address}</span>
 					{#if group.frames.length > 1}
-						<Badge variant="secondary" size="sm">
+						<Chip>
 							{t('overview.printers_on_light', { count: group.frames.length })}
-						</Badge>
+						</Chip>
 					{/if}
 				</div>
 				{#each group.frames as frame (frame.binding)}
 					{@const fate = fateOf({ light: keyOf(frame), segment: frame.light.segment })}
 					{@const paused = fate?.paused === true}
 					<div
-						class="grid items-start gap-3 border-b px-3 py-3 last:border-b-0 sm:grid-cols-[190px_1fr_auto] sm:items-center sm:gap-4"
+						class="flex flex-col gap-row border-b border-wled-line px-panel py-row last:border-b-0 sm:flex-row sm:items-center sm:gap-panel"
 					>
-						<div class="min-w-0">
+						<div class="min-w-0 sm:w-48 sm:shrink-0">
 							{#if (frame.image?.base64 ?? '') !== ''}
 								<img
 									src={`data:${frame.image?.media_type ?? 'image/png'};base64,${frame.image?.base64 ?? ''}`}
 									alt={t('overview.thumbnail_alt', { light: group.light, printer: printerOf(frame) })}
 									class={frame.kind === 'panel'
-										? 'block h-auto w-full max-w-[190px] rounded bg-black object-contain [image-rendering:pixelated]'
-										: 'block h-3 w-full max-w-[190px] rounded bg-black [image-rendering:pixelated]'}
+										? 'block h-auto w-full max-w-48 rounded-panel bg-wled-pixel-off object-contain [image-rendering:pixelated]'
+										: 'block h-3 w-full max-w-48 rounded-panel bg-wled-pixel-off [image-rendering:pixelated]'}
 								/>
 							{:else}
-								<div class="flex h-10 w-full max-w-[190px] items-center justify-center rounded bg-black px-2 text-center text-[10px] text-white/60">
+								<div
+									class="flex h-10 w-full max-w-48 items-center justify-center rounded-panel bg-wled-pixel-off px-row text-center font-ui text-xs text-wled-pixel-off-ink"
+								>
 									{t('overview.picture_missing')}
 								</div>
 							{/if}
 						</div>
 
-						<div class="min-w-0 text-sm">
+						<div class="min-w-0 flex-1 font-ui text-sm">
 							<div class="font-medium">
 								<PrinterLink id={frame.printer.id} name={printerOf(frame)} cls={NAME_LINK} />
-								<span class="font-normal opacity-60">· {segmentOf(frame)}</span>
+								<span class="font-normal text-wled-text-quiet">· {segmentOf(frame)}</span>
 							</div>
-							<div class="text-xs opacity-70">
+							<div class="text-xs text-wled-text-quiet">
 								{#if frame.printer.state_known}
 									{frame.printer.state}
 								{:else}
@@ -437,25 +450,25 @@
 								{/if}
 							</div>
 							{#if frame.note}
-								<div class="text-xs opacity-70">{frame.note}</div>
+								<div class="text-xs text-wled-text-quiet">{frame.note}</div>
 							{/if}
 						</div>
 
-						<div class="flex flex-col items-start gap-1 sm:items-end">
+						<div class="flex flex-col items-start gap-tight sm:items-end">
 							{#if paused}
-								<Badge variant="secondary">
+								<Chip>
 									{fate?.due_to === 'global'
 										? t('overview.paused_with_everything')
 										: t('overview.paused_for', { length: pausedForOf(fate) })}
-								</Badge>
+								</Chip>
 							{:else}
-								<Badge variant={frame.last_send?.ok === false ? 'destructive' : 'outline'}>
+								<Chip tone={frame.last_send?.ok === false ? 'error' : 'quiet'}>
 									{frame.last_send === null
 										? t('overview.no_write_yet')
 										: ageText(t, frame.last_send.at) === null
 											? t('overview.written')
 											: t('overview.wrote_ago', { age: ageText(t, frame.last_send.at) ?? '' })}
-								</Badge>
+								</Chip>
 							{/if}
 
 							{#if paused && fate?.due_to === 'binding'}
@@ -475,7 +488,7 @@
 							{/if}
 
 							{#if open === frame.binding}
-								<div class="flex flex-wrap justify-end gap-1">
+								<div class="flex flex-wrap justify-end gap-tight">
 									{#each LENGTHS as length (length.id)}
 										<Button variant="ghost" size="sm" disabled={working} onclick={() => void stopRow(frame, length.id)}>
 											{t(length.key)}
@@ -487,11 +500,11 @@
 					</div>
 				{/each}
 			{/each}
-		</div>
+		</Panel>
 	{/if}
 
 	{#if pictureNote !== '' && frames.length > 0}
-		<p class="text-xs opacity-60">{pictureNote}</p>
+		<p class="font-ui text-xs text-wled-text-quiet">{pictureNote}</p>
 	{/if}
 
 	<!-- §2.1's quick bind, and his rule of 2026-11-19: the section is always drawn, and it
@@ -500,20 +513,21 @@
 	     the list he then went looking for; a side with nothing in it now says so in one
 	     line, and the lights are listed plainly when there is no printer to pick, so the
 	     section never draws a control that cannot act. -->
-	<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
+	<h2 class="font-ui text-sm font-medium">{t('overview.quick_bind_heading')}</h2>
 
-	<div class="grid gap-3 md:grid-cols-2">
-		<div class="overflow-hidden rounded border">
-			<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-				<span>{t('overview.printers_heading')}</span>
-				<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: freePrinters.length })}</span>
-			</div>
+	<div class="grid gap-section md:grid-cols-2">
+		<Panel title={t('overview.printers_heading')} pad="none">
+			{#snippet meta()}
+				<span class="font-ui text-xs font-normal text-wled-text-quiet">
+					{t('overview.printers_count', { count: freePrinters.length })}
+				</span>
+			{/snippet}
 			{#if loading}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.loading')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.loading')}</p>
 			{:else if printers.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.no_printers')}</p>
 			{:else if freePrinters.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_printers')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.no_free_printers')}</p>
 			{:else}
 				<!-- The name here stays plain text: this row *is* the control that picks a printer,
 				     and an anchor inside a button is invalid HTML and would swallow the press. Where a
@@ -524,60 +538,62 @@
 					<button
 						type="button"
 						class={picked === printer.id
-							? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
-							: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
+							? 'flex w-full items-center gap-row border-b border-wled-line bg-wled-sunken px-panel py-row text-left font-ui text-sm last:border-b-0'
+							: 'flex w-full items-center gap-row border-b border-wled-line px-panel py-row text-left font-ui text-sm last:border-b-0 hover:bg-wled-hover'}
 						aria-pressed={picked === printer.id}
 						onclick={() => (picked = picked === printer.id ? null : printer.id)}
 					>
 						<span class="font-medium">{printer.name}</span>
 						{#if printer.model}
-							<span class="text-xs opacity-60">{printer.model}</span>
+							<span class="text-xs text-wled-text-quiet">{printer.model}</span>
 						{/if}
 						{#if picked === printer.id}
-							<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
+							<span class="ml-auto text-xs text-wled-text-quiet">{t('overview.picked')}</span>
 						{/if}
 					</button>
 				{/each}
 			{/if}
-		</div>
+		</Panel>
 
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-				<span>{t('overview.lights_heading')}</span>
-				<span class="font-normal opacity-60">{t('overview.lights_count', { count: freeLights.length })}</span>
+		<Panel title={t('overview.lights_heading')} pad="none">
+			{#snippet meta()}
+				<span class="font-ui text-xs font-normal text-wled-text-quiet">
+					{t('overview.lights_count', { count: freeLights.length })}
+				</span>
 				{#if canBind}
 					<Button
 						variant="secondary"
 						size="sm"
-						class="ml-auto"
 						disabled={picked === null || working}
 						onclick={() => void bindEvery()}
 					>
 						{t('overview.bind_them_all', { count: freeLights.length })}
 					</Button>
 				{/if}
-			</div>
+			{/snippet}
 			{#if !lights.loaded}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.loading')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.loading')}</p>
 			{:else if lights.failure !== ''}
-				<p class="px-3 py-3 text-sm" role="alert">{t('overview.lights_unreadable', { why: lights.failure })}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-danger" role="alert">
+					{t('overview.lights_unreadable', { why: lights.failure })}
+				</p>
 			{:else if lights.list.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_lights')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.no_lights')}</p>
 			{:else if offeredLights.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_offered_lights')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.no_offered_lights')}</p>
 			{:else if freeLights.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_lights')}</p>
+				<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('overview.no_free_lights')}</p>
 			{:else}
 				{#each freeLights as one (addressOf(one))}
-					<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
+					<div class="flex flex-wrap items-center gap-row border-b border-wled-line px-panel py-row font-ui text-sm last:border-b-0">
 						<span class="font-medium">{namedOf(one)}</span>
 						{#if namedOf(one) !== (one.controller?.name ?? '')}
-							<span class="font-mono text-xs opacity-60">{one.controller?.address}</span>
+							<span class="font-data text-xs text-wled-text-quiet">{one.controller?.address}</span>
 						{/if}
 						{#if canBind}
 							<span class="ml-auto">
 								<Button
-									variant="default"
+									variant="primary"
 									size="sm"
 									disabled={picked === null || working}
 									onclick={() => void bind(one)}
@@ -589,22 +605,23 @@
 					</div>
 				{/each}
 			{/if}
-			<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
-		</div>
+			<p class="border-t border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet">
+				{t('overview.lights_source')}
+			</p>
+		</Panel>
 	</div>
 
 	{#if canBind}
-		<div class="rounded border px-3 py-3 text-sm">
-			<p class="text-xs font-medium uppercase tracking-wide opacity-60">{t('overview.defaults_heading')}</p>
-			<ul class="mt-1 list-disc pl-5 text-sm">
+		<Panel title={t('overview.defaults_heading')}>
+			<ul class="list-disc pl-panel font-ui text-sm">
 				<li>{t('overview.defaults_whole')}</li>
 				<li>{t('overview.defaults_brightness')}</li>
 				<li>{t('overview.defaults_colours')}</li>
 				<li>{t('overview.defaults_shape')}</li>
 				<li>{t('overview.defaults_events')}</li>
 			</ul>
-		</div>
+		</Panel>
 
-		<p class="text-xs opacity-60">{t('overview.footnote')}</p>
+		<p class="font-ui text-xs text-wled-text-quiet">{t('overview.footnote')}</p>
 	{/if}
 </section>

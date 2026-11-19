@@ -18,6 +18,7 @@
 	//
 	// The bar scrolls sideways rather than wrapping, because it is used from a
 	// phone (§3 of the requirements).
+	import { TAB_CURRENT, TAB_RESTING, TAB_UPRIGHT } from './tab-classes';
 
 	interface Item {
 		/** Stable, and only ever compared. */
@@ -41,13 +42,13 @@
 	let { label, items, active, orientation = 'tabs', onSelect, class: className = '' }: Props = $props();
 
 	const base =
-		'inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-row whitespace-nowrap border-b-2 px-1 pb-2 font-ui text-xs font-medium uppercase tracking-label transition-colors outline-none focus-visible:ring-2 focus-visible:ring-wled-focus focus-visible:ring-offset-2 focus-visible:ring-offset-wled-canvas';
+		'inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-row whitespace-nowrap border-b-2 px-row pb-row font-ui text-xs font-medium uppercase tracking-label outline-none focus-visible:ring-2 focus-visible:ring-wled-focus focus-visible:ring-offset-2 focus-visible:ring-offset-wled-canvas';
 
 	/** The strip stands up into a column from `md`, and the rule moves with it. */
-	const upright = 'md:min-h-0 md:border-b-0 md:border-l-2 md:py-1.5 md:pl-2';
+	const upright = TAB_UPRIGHT;
 
-	const current = 'border-wled-accent text-wled-text';
-	const resting = 'border-transparent text-wled-text-quiet hover:text-wled-text';
+	const current = TAB_CURRENT;
+	const resting = TAB_RESTING;
 </script>
 
 <nav aria-label={label} class={className}>

@@ -30,9 +30,9 @@
 	//     says where, and refuses one already on this light.
 	//   - **Nothing is invisible**: printers with no light of their own are listed with the
 	//     button that starts their binding.
-	//   - **The refusals are behind a disclosure** (disclosure.svelte), collapsed, because a
-	//     page whose job is the bindings should open on them rather than on the paragraph
-	//     explaining which ones it will turn down.
+	//   - **The refusals are behind a disclosure** (the disclosure primitive), collapsed,
+	//     because a page whose job is the bindings should open on them rather than on the
+	//     paragraph explaining which ones it will turn down.
 	//
 	// The one list this screen cannot draw is the one the requirements call *discovered
 	// lights*: nothing in this build sweeps the network for lights, and a light only becomes
@@ -41,9 +41,13 @@
 	// says exactly that and points at the one way to add a light that exists. That gap is
 	// reported rather than papered over: a list that is always empty because it has no
 	// source is a lie dressed as a feature.
+	//
+	// **The skin.** Each light is a panel whose heading carries the light's name, its answer
+	// as a chip and its room in one line; the table under it is the panel's body with no
+	// padding, so the rows keep the compact rhythm the guide asks of data and the alignment
+	// that makes a list of them readable. Every button, chip, panel and disclosure is the
+	// primitive; nothing here writes a colour, a radius or a spacing value.
 	import { onMount } from 'svelte';
-
-	import { Badge, Button } from '@prusa/connect-ui/primitives';
 
 	import {
 		moduleApi,
@@ -54,7 +58,6 @@
 		type Printer,
 	} from './api';
 	import BindingDialog from './binding-dialog.svelte';
-	import Disclosure from './disclosure.svelte';
 	import { ageText, describe, segmentText } from './format';
 	import { heldHost } from './host';
 	import {
@@ -68,6 +71,7 @@
 	} from './lights.svelte';
 	import { everythingPaused, fateOf, pauseOne, refreshPauses, resumeOne } from './pause.svelte';
 	import PrinterLink from './printer-link.svelte';
+	import { Button, Chip, Disclosure, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -257,64 +261,73 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4">
-	<header class="flex flex-wrap items-end gap-3">
-		<div class="flex flex-col gap-1">
-			<h1 class="text-lg font-semibold">{t('bindings.title')}</h1>
-			<p class="text-sm opacity-70">{t('bindings.intro')}</p>
+<section class="flex flex-col gap-section">
+	<header class="flex flex-wrap items-end gap-section">
+		<div class="flex flex-col gap-tight">
+			<h1 class="font-ui text-lg font-medium">{t('bindings.title')}</h1>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('bindings.intro')}</p>
 		</div>
 		<div class="ml-auto">
-			<Button disabled={loading || printers.length === 0} onclick={() => start({})}>{t('bindings.add')}</Button>
+			<Button variant="primary" disabled={loading || printers.length === 0} onclick={() => start({})}>
+				{t('bindings.add')}
+			</Button>
 		</div>
 	</header>
 
-	<p class="rounded border px-3 py-2 text-sm">{t('bindings.segment_rule')}</p>
+	<Panel>
+		<p class="font-ui text-sm">{t('bindings.segment_rule')}</p>
+	</Panel>
 
 	{#if failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">{failure}</p>
+		</Panel>
 	{/if}
 	{#if notice !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+		<Panel>
+			<p class="font-ui text-sm" role="status">{notice}</p>
+		</Panel>
 	{/if}
 	{#if lights.failure !== ''}
-		<div class="rounded border px-3 py-2 text-sm" role="alert">
-			{t('bindings.lights_failed')}: {lights.failure}
-		</div>
+		<Panel>
+			<p class="font-ui text-sm text-wled-danger" role="alert">
+				{t('bindings.lights_failed')}: {lights.failure}
+			</p>
+		</Panel>
 	{/if}
 
 	{#if loading}
-		<p class="text-sm opacity-70">{t('bindings.loading')}</p>
+		<p class="font-ui text-sm text-wled-text-quiet">{t('bindings.loading')}</p>
 	{:else if lights.list.length === 0}
-		<div class="rounded border px-4 py-6">
-			<p class="text-sm font-medium">{t('bindings.empty_heading')}</p>
-			<p class="text-sm opacity-70">{t('bindings.empty_body')}</p>
-		</div>
+		<Panel>
+			<p class="font-ui text-sm font-medium">{t('bindings.empty_heading')}</p>
+			<p class="font-ui text-sm text-wled-text-quiet">{t('bindings.empty_body')}</p>
+		</Panel>
 	{:else}
 		{#each offeredLights as one (addressOf(one))}
 			{@const reach = reachOf(one)}
 			{@const free = freeSegments(one).length}
 			{@const room = free > 0 || one.bindings.length === 0}
-			<div class="overflow-hidden rounded border">
-				<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-					<span class="text-sm font-semibold">{one.controller?.name}</span>
-					<span class="font-mono text-xs opacity-60">{addressOf(one)}</span>
-					<Badge variant={reach.ok ? 'secondary' : 'destructive'} size="sm">{reach.said}</Badge>
-					<span class="ml-auto text-xs opacity-70">{roomLine(one)}</span>
-				</div>
+			<Panel title={one.controller?.name ?? addressOf(one)} pad="none">
+				{#snippet meta()}
+					<span class="font-data text-xs text-wled-text-quiet">{addressOf(one)}</span>
+					<Chip tone={reach.ok ? 'quiet' : 'error'}>{reach.said}</Chip>
+					<span class="font-ui text-xs text-wled-text-quiet">{roomLine(one)}</span>
+				{/snippet}
 
 				{#if rowsOf(one).length === 0}
-					<p class="px-3 py-3 text-sm opacity-70">{t('bindings.no_printer_here')}</p>
+					<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('bindings.no_printer_here')}</p>
 				{:else}
 					<div class="overflow-x-auto">
-						<table class="w-full min-w-[620px] text-left text-sm">
+						<table class="w-full min-w-160 border-collapse text-left font-ui text-sm">
 							<thead>
-								<tr class="border-b text-xs uppercase tracking-wide opacity-60">
-									<th class="px-3 py-2 font-medium">{t('bindings.printer')}</th>
-									<th class="px-3 py-2 font-medium">{t('bindings.segment')}</th>
-									<th class="px-3 py-2 font-medium">{t('bindings.brightness')}</th>
-									<th class="px-3 py-2 font-medium">{t('bindings.last_updated')}</th>
-									<th class="px-3 py-2 font-medium">{t('bindings.enabled')}</th>
-									<th class="px-3 py-2 text-right font-medium">{t('bindings.actions')}</th>
+								<tr class="border-b border-wled-line text-xs uppercase tracking-label text-wled-text-quiet">
+									<th class="px-row py-row font-medium">{t('bindings.printer')}</th>
+									<th class="px-row py-row font-medium">{t('bindings.segment')}</th>
+									<th class="px-row py-row font-medium">{t('bindings.brightness')}</th>
+									<th class="px-row py-row font-medium">{t('bindings.last_updated')}</th>
+									<th class="px-row py-row font-medium">{t('bindings.enabled')}</th>
+									<th class="px-row py-row text-right font-medium">{t('bindings.actions')}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -322,8 +335,8 @@
 									{@const fate = fateOf({ light: binding.light, segment: binding.segment })}
 									{@const paused = fate?.paused === true}
 									{@const send = sendOf(binding)}
-									<tr class="border-b align-middle last:border-b-0">
-										<td class="px-3 py-2">
+									<tr class="border-b border-wled-line align-middle last:border-b-0">
+										<td class="px-row py-row">
 											<div class="font-medium">
 												{#if binding.printer_name}
 													<PrinterLink id={binding.printer} name={binding.printer_name} cls={NAME_LINK} />
@@ -331,7 +344,7 @@
 													{t('bindings.printer_gone')}
 												{/if}
 											</div>
-											<div class="text-xs opacity-60">
+											<div class="text-xs text-wled-text-quiet">
 												{#if !printers.some((held) => held.id === binding.printer)}
 													{t('bindings.printer_missing')}
 												{:else if paused}
@@ -345,20 +358,20 @@
 												{/if}
 											</div>
 										</td>
-										<td class="px-3 py-2">
-											<span class="font-mono text-xs">{segmentOf(one, binding.segment)}</span>
+										<td class="px-row py-row">
+											<span class="font-data text-xs">{segmentOf(one, binding.segment)}</span>
 											{#if !one.segmentsKnown}
-												<span class="text-xs opacity-60">· {t('bindings.segments_unread_short')}</span>
+												<span class="text-xs text-wled-text-quiet">· {t('bindings.segments_unread_short')}</span>
 											{/if}
 										</td>
-										<td class="px-3 py-2">
+										<td class="px-row py-row">
 											{#if binding.brightness !== undefined}
-												<span class="font-mono text-xs">{binding.brightness}</span>
+												<span class="font-data text-xs">{binding.brightness}</span>
 											{:else}
-												<span class="text-xs opacity-60">{t('bindings.brightness_borrowed_short')}</span>
+												<span class="text-xs text-wled-text-quiet">{t('bindings.brightness_borrowed_short')}</span>
 											{/if}
 										</td>
-										<td class="px-3 py-2 text-xs opacity-70">
+										<td class="px-row py-row text-xs text-wled-text-quiet">
 											{#if send !== undefined && send !== null}
 												{send.ok
 													? t('bindings.last_wrote', { age: ageText(t, send.at) ?? t('common.just_now') })
@@ -371,18 +384,18 @@
 												})}
 											{/if}
 										</td>
-										<td class="px-3 py-2">
+										<td class="px-row py-row">
 											<input
 												type="checkbox"
-												class="h-4 w-4 align-middle"
+												class="h-4 w-4 align-middle accent-wled-accent-fill"
 												checked={!paused}
 												disabled={busy || everythingPaused()}
 												aria-label={t('bindings.writing_switch', { printer: binding.printer_name ?? binding.printer })}
 												onchange={(event) => void switching(binding, (event.currentTarget as HTMLInputElement).checked)}
 											/>
 										</td>
-										<td class="px-3 py-2 text-right">
-											<div class="flex justify-end gap-1">
+										<td class="px-row py-row text-right">
+											<div class="flex justify-end gap-tight">
 												<Button variant="ghost" size="sm" disabled={busy} onclick={() => start({ editing: binding })}>
 													{t('bindings.change')}
 												</Button>
@@ -398,8 +411,8 @@
 					</div>
 				{/if}
 
-				<div class="flex flex-wrap items-center gap-2 border-t bg-black/5 px-3 py-2 dark:bg-white/10">
-					<span class="text-xs opacity-70">{roomLine(one)}</span>
+				<div class="flex flex-wrap items-center gap-row border-t border-wled-line bg-wled-sunken px-panel py-row">
+					<span class="font-ui text-xs text-wled-text-quiet">{roomLine(one)}</span>
 					<Button
 						variant="secondary"
 						size="sm"
@@ -410,35 +423,31 @@
 						{t('bindings.bind_here')}
 					</Button>
 				</div>
-			</div>
+			</Panel>
 		{/each}
 	{/if}
 
 	<!-- §2.2's own list, and the honest version of it: there is no sweep to fill it from. -->
-	<div class="overflow-hidden rounded border">
-		<div class="border-b bg-black/5 px-3 py-2 text-sm font-medium dark:bg-white/10">
-			{t('bindings.discovered_heading')}
-		</div>
-		<p class="px-3 py-3 text-sm opacity-70">{t('bindings.discovered_note')}</p>
-		<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.discovered_how')}</p>
-	</div>
+	<Panel title={t('bindings.discovered_heading')} pad="none">
+		<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('bindings.discovered_note')}</p>
+		<p class="border-t border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet">
+			{t('bindings.discovered_how')}
+		</p>
+	</Panel>
 
-	<div class="overflow-hidden rounded border">
-		<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
-			<span class="text-sm font-medium">{t('bindings.unbound_heading')}</span>
-			<Badge variant="secondary" size="sm" class="ml-auto">
-				{t('bindings.unbound_count', { count: unbound.length })}
-			</Badge>
-		</div>
+	<Panel title={t('bindings.unbound_heading')} pad="none">
+		{#snippet meta()}
+			<Chip>{t('bindings.unbound_count', { count: unbound.length })}</Chip>
+		{/snippet}
 		{#if unbound.length === 0}
-			<p class="px-3 py-3 text-sm opacity-70">{t('bindings.unbound_empty')}</p>
+			<p class="px-panel py-panel font-ui text-sm text-wled-text-quiet">{t('bindings.unbound_empty')}</p>
 		{:else}
 			{#each unbound as printer (printer.id)}
-				<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
+				<div class="flex flex-wrap items-center gap-row border-b border-wled-line px-panel py-row font-ui text-sm last:border-b-0">
 					<span class="font-medium"><PrinterLink id={printer.id} name={printer.name} cls={NAME_LINK} /></span>
-					{#if printer.model}<span class="text-xs opacity-60">{printer.model}</span>{/if}
+					{#if printer.model}<span class="text-xs text-wled-text-quiet">{printer.model}</span>{/if}
 					{#if !printer.connected}
-						<Badge variant="warning" size="sm">{t('bindings.printer_offline')}</Badge>
+						<Chip tone="idle">{t('bindings.printer_offline')}</Chip>
 					{/if}
 					<Button
 						variant="secondary"
@@ -453,36 +462,40 @@
 			{/each}
 		{/if}
 		{#if unbound.length > 0 && withRoom.length === 0}
-			<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.no_light_with_room')}</p>
+			<p class="border-t border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet">
+				{t('bindings.no_light_with_room')}
+			</p>
 		{/if}
-		<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.unbound_note')}</p>
-	</div>
+		<p class="border-t border-wled-line px-panel py-row font-ui text-xs text-wled-text-quiet">
+			{t('bindings.unbound_note')}
+		</p>
+	</Panel>
 
 	<!-- The refusals are read once and then never again, so they are folded away: the page
 	     opens on the bindings themselves, which is what it is for. -->
 	<Disclosure summary={t('bindings.refused_heading')}>
-		<ul class="divide-y">
-			<li class="flex flex-wrap justify-between gap-2 px-3 py-2">
+		<ul>
+			<li class="flex flex-wrap justify-between gap-row border-b border-wled-line py-row">
 				<span>{t('bindings.refused_second')}</span>
-				<span class="text-xs opacity-60">{t('bindings.refused_second_why')}</span>
+				<span class="text-xs text-wled-text-quiet">{t('bindings.refused_second_why')}</span>
 			</li>
-			<li class="flex flex-wrap justify-between gap-2 px-3 py-2">
+			<li class="flex flex-wrap justify-between gap-row border-b border-wled-line py-row">
 				<span>{t('bindings.refused_brightness')}</span>
-				<span class="text-xs opacity-60">{t('bindings.refused_brightness_why')}</span>
+				<span class="text-xs text-wled-text-quiet">{t('bindings.refused_brightness_why')}</span>
 			</li>
-			<li class="flex flex-wrap justify-between gap-2 px-3 py-2">
+			<li class="flex flex-wrap justify-between gap-row border-b border-wled-line py-row">
 				<span>{t('bindings.refused_segment')}</span>
-				<span class="text-xs opacity-60">{t('bindings.refused_segment_why')}</span>
+				<span class="text-xs text-wled-text-quiet">{t('bindings.refused_segment_why')}</span>
 			</li>
-			<li class="flex flex-wrap justify-between gap-2 px-3 py-2">
+			<li class="flex flex-wrap justify-between gap-row border-b border-wled-line py-row">
 				<span>{t('bindings.refused_light')}</span>
-				<span class="text-xs opacity-60">{t('bindings.refused_light_why')}</span>
+				<span class="text-xs text-wled-text-quiet">{t('bindings.refused_light_why')}</span>
 			</li>
 		</ul>
-		<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.no_test')}</p>
+		<p class="border-t border-wled-line py-row text-xs text-wled-text-quiet">{t('bindings.no_test')}</p>
 	</Disclosure>
 
-	<p class="text-xs opacity-60">{t('bindings.not_saved')}</p>
+	<p class="font-ui text-xs text-wled-text-quiet">{t('bindings.not_saved')}</p>
 </section>
 
 {#if panel !== null}

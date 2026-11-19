@@ -3,73 +3,71 @@
 <head>
 <meta charset="utf-8">
 <title>Bindings — a printer on a light</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
-    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  .wrap{padding:20px 22px 80px;max-width:1020px}
+    *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-4)}
+  header.app b{color:var(--wled-text);font-size:13px}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  .wrap{padding:var(--wled-space-5) var(--wled-space-5) 80px;max-width:1020px}
   h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
-  .sub{font-size:12px;color:var(--muted)}
-  .top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .sub{font-size:12px;color:var(--wled-text-quiet)}
+  .top{display:flex;align-items:flex-end;gap:var(--wled-space-3);flex-wrap:wrap}
   .top .spacer{flex:1}
-  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
-  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
-  .card>.lh{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);background:#fbfbfc}
+  .note{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-3) var(--wled-space-4);margin-top:var(--wled-space-4);font-size:12.5px;color:var(--wled-text);display:flex;gap:var(--wled-space-3)}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--wled-accent-quiet);color:var(--wled-accent-quiet-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:var(--wled-space-1)}
+  .card{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);margin-top:var(--wled-space-4);overflow:hidden}
+  .card>.lh{display:flex;align-items:center;gap:var(--wled-space-3);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-sunken)}
   .card>.lh b{font-size:13px}
-  .card>.lh .addr{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .card>.lh .right{margin-left:auto;display:flex;gap:7px;align-items:center}
+  .card>.lh .addr{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .card>.lh .right{margin-left:auto;display:flex;gap:var(--wled-space-2);align-items:center}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
-  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fff}
-  td{padding:9px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--wled-text-quiet);font-weight:650;padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-panel)}
+  td{padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);vertical-align:middle}
   tr:last-child td{border-bottom:none}
-  .empty{padding:14px;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:10px}
-  .footnote{padding:9px 14px;border-top:1px solid var(--line);background:#fafbfc;font-size:11.5px;color:var(--muted)}
-  .found{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .empty{padding:var(--wled-space-4);font-size:12.5px;color:var(--wled-text-quiet);display:flex;align-items:center;gap:var(--wled-space-3)}
+  .footnote{padding:var(--wled-space-2) var(--wled-space-4);border-top:1px solid var(--wled-line);background:var(--wled-sunken);font-size:11.5px;color:var(--wled-text-quiet)}
+  .found{display:flex;align-items:center;gap:var(--wled-space-3);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .found:last-child{border-bottom:none}
-  .found .addr{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .found .new{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  .found .addr{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .found .new{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--wled-status-done-ink);background:var(--wled-status-done);border:1px solid var(--wled-status-done);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
   .found .right{margin-left:auto}
-  .addrow{padding:10px 14px;border-top:1px solid var(--line);background:#fafbfc}
-  select,input[type=number],input[type=text]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
-  select:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
-  input:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
-  select:focus,input:focus{outline:2px solid var(--accent2);border-color:var(--accent)}
-  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
-  button{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
-  button:hover{border-color:#c6ccd4;background:#fafbfc}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.danger{color:var(--bad);border-color:#f0d6d6}
-  button.danger:hover{background:var(--badbg)}
-  button.tiny{padding:2px 7px;font-size:11px}
-  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600}
-  .chip.amber{background:var(--warnbg);color:var(--warn)}
-  .chip.grey{background:#f1f2f4;color:var(--muted)}
-  .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block}
-  .dot.warn{background:var(--warn)}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .segchip{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:4px}
-  .rules{padding:6px 14px 12px}
-  .rules div{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .addrow{padding:var(--wled-space-3) var(--wled-space-4);border-top:1px solid var(--wled-line);background:var(--wled-sunken)}
+  select,input[type=number],input[type=text]{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);border-radius:var(--wled-radius);background:var(--wled-panel);color:var(--wled-text)}
+  select:disabled{color:var(--wled-text-quiet);background:var(--wled-sunken);border-color:var(--wled-sunken)}
+  input:disabled{color:var(--wled-text-quiet);background:var(--wled-sunken);border-color:var(--wled-sunken)}
+  select:focus,input:focus{outline:2px solid var(--wled-accent-quiet);border-color:var(--wled-accent)}
+  input[type=checkbox]{accent-color:var(--wled-accent);width:14px;height:14px;cursor:pointer}
+  button{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius);cursor:pointer;white-space:nowrap}
+  button:hover{border-color:var(--wled-line-field);background:var(--wled-sunken)}
+  button.primary{background:var(--wled-accent);border-color:var(--wled-accent);color:var(--wled-accent-fill-ink)}
+  button.danger{color:var(--wled-status-error-ink);border-color:var(--wled-status-error)}
+  button.danger:hover{background:var(--wled-status-error)}
+  button.tiny{padding:var(--wled-space-1) var(--wled-space-2);font-size:11px}
+  .chip{display:inline-flex;align-items:center;gap:var(--wled-space-1);font-size:11px;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius-xs);background:var(--wled-status-done);color:var(--wled-status-done-ink);font-weight:600}
+  .chip.amber{background:var(--wled-status-idle);color:var(--wled-status-idle-ink)}
+  .chip.grey{background:var(--wled-sunken);color:var(--wled-text-quiet)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--wled-status-done-ink);display:inline-block}
+  .dot.warn{background:var(--wled-status-idle-ink)}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .mono{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .segchip{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet);margin-left:var(--wled-space-1)}
+  .rules{padding:var(--wled-space-2) var(--wled-space-4) var(--wled-space-3)}
+  .rules div{display:flex;justify-content:space-between;gap:var(--wled-space-4);padding:var(--wled-space-2) 0;border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .rules div:last-child{border-bottom:none}
-  .veil{position:fixed;inset:0;background:rgba(12,14,18,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .veil{position:fixed;inset:0;background:rgba(12,14,18,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:var(--wled-space-5)}
   .veil.on{display:flex}
-  .modal{background:#fff;border-radius:12px;width:min(560px,100%);max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.28)}
-  .modal header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center}
+  .modal{background:var(--wled-panel);border-radius:var(--wled-radius);width:min(560px,100%);max-height:88vh;overflow:auto;}
+  .modal header{padding:var(--wled-space-4) var(--wled-space-4);border-bottom:1px solid var(--wled-line);display:flex;align-items:center}
   .modal header h3{font-size:14px;font-weight:650}
-  .modal header .x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--muted);cursor:pointer}
-  .mbody{padding:14px 18px}
-  .mrow{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;padding:8px 0;font-size:12.5px}
-  .mrow>label{color:#3b4250}
-  .modal footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;background:#fafbfc}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .modal header .x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--wled-text-quiet);cursor:pointer}
+  .mbody{padding:var(--wled-space-4) var(--wled-space-4)}
+  .mrow{display:grid;grid-template-columns:130px 1fr;gap:var(--wled-space-3);align-items:center;padding:var(--wled-space-2) 0;font-size:12.5px}
+  .mrow>label{color:var(--wled-text)}
+  .modal footer{padding:var(--wled-space-3) var(--wled-space-4);border-top:1px solid var(--wled-line);display:flex;gap:var(--wled-space-2);justify-content:flex-end;background:var(--wled-sunken)}
+  .toast{position:fixed;right:20px;bottom:20px;background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -122,6 +120,7 @@
 <div class="veil" id="veil" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
 /* ---------- the lights, as the module reads them ---------- */
 const LIGHTS=[
@@ -170,7 +169,7 @@ function renderUnboundPrinters(){
   unbound.forEach(p=>{
     const row=document.createElement('div');row.className='found';
     row.innerHTML='<span class="dot warn"></span><b>'+p+'</b><span class="hint">· from Prusa Connect</span>'+
-      '<span class="new" style="background:#f1f2f4;color:#6b7280;border-color:#e2e5ea">no light</span><span class="right"></span>';
+      '<span class="new" style="background:var(--wled-sunken);color:var(--wled-text-quiet);border-color:var(--wled-line)">no light</span><span class="right"></span>';
     const btn=document.createElement('button');btn.className='tiny primary';btn.textContent='+ add a binding';
     btn.onclick=()=>openAdd(null,p);
     row.querySelector('.right').appendChild(btn);

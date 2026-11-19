@@ -3,68 +3,66 @@
 <head>
 <meta charset="utf-8">
 <title>Diagnostics — why the light is doing that</title>
+<link rel="stylesheet" href="../theme.css">
 <style>
-  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
-    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
-    --blue:#1d4ed8;--bluebg:#eaefff;--purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
-  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
-  header.app b{color:#fff;font-size:13px}
-  header.app .crumb{font-size:12px;color:#8b93a1}
-  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
-  .wrap{padding:20px 22px 80px;max-width:1060px}
-  .top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+    *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--wled-canvas);color:var(--wled-text);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:var(--wled-sunken);color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-5);display:flex;align-items:center;gap:var(--wled-space-4)}
+  header.app b{color:var(--wled-text);font-size:13px}
+  header.app .crumb{font-size:12px;color:var(--wled-text-quiet)}
+  header.app .crumb i{color:var(--wled-text-quiet);font-style:normal;padding:0 var(--wled-space-1)}
+  .wrap{padding:var(--wled-space-5) var(--wled-space-5) 80px;max-width:1060px}
+  .top{display:flex;align-items:flex-end;gap:var(--wled-space-3);flex-wrap:wrap}
   .top .spacer{flex:1}
   h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
-  .sub{font-size:12px;color:var(--muted)}
-  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
-  .chips button{font:inherit;font-size:12px;padding:5px 11px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer}
-  .chips button:hover{border-color:#c6ccd4}
-  .chips button.on{background:var(--ink);border-color:var(--ink);color:#fff}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
-  .tile{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
-  .tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650}
-  .tile .v{font-size:17px;font-weight:640;margin-top:3px;letter-spacing:-.3px}
-  .tile .s{font-size:11px;color:var(--muted);margin-top:2px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
-  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .sub{font-size:12px;color:var(--wled-text-quiet)}
+  .chips{display:flex;gap:var(--wled-space-2);flex-wrap:wrap;margin-top:var(--wled-space-3)}
+  .chips button{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-3);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius-xs);cursor:pointer}
+  .chips button:hover{border-color:var(--wled-line-field)}
+  .chips button.on{background:var(--wled-accent-quiet);border-color:var(--wled-accent-quiet-ink);color:var(--wled-accent-quiet-ink)}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--wled-space-3);margin-top:var(--wled-space-4)}
+  .tile{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);padding:var(--wled-space-3) var(--wled-space-4)}
+  .tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.55px;color:var(--wled-text-quiet);font-weight:650}
+  .tile .v{font-size:17px;font-weight:640;margin-top:var(--wled-space-1);letter-spacing:-.3px}
+  .tile .s{font-size:11px;color:var(--wled-text-quiet);margin-top:var(--wled-space-1)}
+  .card{background:var(--wled-panel);border:1px solid var(--wled-line);border-radius:var(--wled-radius);margin-top:var(--wled-space-4);overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--wled-text-quiet);padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-weight:650;display:flex;gap:var(--wled-space-2);align-items:center}
   .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
-  .body{padding:13px 15px}
-  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block}
-  .cap{font-size:11px;color:var(--muted);margin-top:7px}
+  .body{padding:var(--wled-space-3) var(--wled-space-4)}
+  canvas{background:var(--wled-pixel-off);border-radius:var(--wled-radius);image-rendering:pixelated;display:block}
+  .cap{font-size:11px;color:var(--wled-text-quiet);margin-top:var(--wled-space-2)}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
-  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fafbfc}
-  td{padding:7px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--wled-text-quiet);font-weight:650;padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-sunken)}
+  td{padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);vertical-align:middle}
   tr:last-child td{border-bottom:none}
-  tr.this td{background:var(--accent2)}
-  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600}
-  .chip.amber{background:var(--warnbg);color:var(--warn)}
-  .chip.red{background:var(--badbg);color:var(--bad)}
-  .chip.grey{background:#f1f2f4;color:var(--muted)}
-  .hint{font-size:11.5px;color:var(--muted)}
-  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
-  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
-  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
-  button.act{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer}
+  tr.this td{background:var(--wled-accent-quiet)}
+  .chip{display:inline-flex;align-items:center;gap:var(--wled-space-1);font-size:11px;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius-xs);background:var(--wled-status-done);color:var(--wled-status-done-ink);font-weight:600}
+  .chip.amber{background:var(--wled-status-idle);color:var(--wled-status-idle-ink)}
+  .chip.red{background:var(--wled-status-error);color:var(--wled-status-error-ink)}
+  .chip.grey{background:var(--wled-sunken);color:var(--wled-text-quiet)}
+  .hint{font-size:11.5px;color:var(--wled-text-quiet)}
+  .mono{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid var(--wled-status-quiet);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--wled-status-done-ink);background:var(--wled-status-done);border:1px solid var(--wled-status-done);padding:var(--wled-space-1) var(--wled-space-1);border-radius:var(--wled-radius);font-weight:700}
+  button.act{font:inherit;font-size:12px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius);cursor:pointer}
   /* the merged timeline */
   .feed{max-height:340px;overflow:auto}
-  .ev{display:grid;grid-template-columns:64px 74px 1fr;gap:10px;align-items:start;padding:7px 15px;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .ev{display:grid;grid-template-columns:64px 74px 1fr;gap:var(--wled-space-3);align-items:start;padding:var(--wled-space-2) var(--wled-space-4);border-bottom:1px solid var(--wled-line);font-size:12.5px}
   .ev:last-child{border-bottom:none}
-  .ev .t{font-family:var(--mono);font-size:11px;color:var(--muted);padding-top:2px}
-  .ev .src{font-size:9px;letter-spacing:.35px;text-transform:uppercase;font-weight:700;padding:2px 6px;border-radius:4px;text-align:center;white-space:nowrap}
-  .ev .src.printer{color:var(--ok);background:var(--okbg);border:1px solid #cdead8}
-  .ev .src.module{color:var(--blue);background:var(--bluebg);border:1px solid #d5ddfb}
-  .ev .src.light{color:var(--warn);background:var(--warnbg);border:1px solid #f0dcb4}
-  .ev .src.settings{color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff}
+  .ev .t{font-family:var(--wled-font-data);font-size:11px;color:var(--wled-text-quiet);padding-top:var(--wled-space-1)}
+  .ev .src{font-size:9px;letter-spacing:.35px;text-transform:uppercase;font-weight:700;padding:var(--wled-space-1) var(--wled-space-2);border-radius:var(--wled-radius);text-align:center;white-space:nowrap}
+  .ev .src.printer{color:var(--wled-status-done-ink);background:var(--wled-status-done);border:1px solid var(--wled-status-done)}
+  .ev .src.module{color:var(--wled-status-printing-ink);background:var(--wled-status-printing);border:1px solid var(--wled-status-printing-ink)}
+  .ev .src.light{color:var(--wled-status-idle-ink);background:var(--wled-status-idle);border:1px solid var(--wled-status-idle)}
+  .ev .src.settings{color:var(--purple);background:var(--purplebg);border:1px solid var(--wled-status-quiet)}
   .ev .what b{font-weight:600}
-  .ev .what .who{color:var(--muted)}
-  .ev .what .bad{color:var(--bad)}
+  .ev .what .who{color:var(--wled-text-quiet)}
+  .ev .what .bad{color:var(--wled-status-error-ink)}
   .ev.dim{opacity:.45}
-  .filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px 15px;border-bottom:1px solid var(--line);background:#fafbfc}
-  .filters button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer;color:var(--muted)}
-  .filters button.on{background:var(--ink);border-color:var(--ink);color:#fff}
-  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .filters{display:flex;gap:var(--wled-space-2);flex-wrap:wrap;padding:var(--wled-space-3) var(--wled-space-4);border-bottom:1px solid var(--wled-line);background:var(--wled-sunken)}
+  .filters button{font:inherit;font-size:11.5px;padding:var(--wled-space-1) var(--wled-space-2);border:1px solid var(--wled-line);background:var(--wled-panel);border-radius:var(--wled-radius-xs);cursor:pointer;color:var(--wled-text-quiet)}
+  .filters button.on{background:var(--wled-accent-quiet);border-color:var(--wled-accent-quiet-ink);color:var(--wled-accent-quiet-ink)}
+  .toast{position:fixed;right:20px;bottom:20px;background:var(--wled-text);color:var(--wled-canvas);font-size:12px;padding:var(--wled-space-2) var(--wled-space-3);border-radius:var(--wled-radius);opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
   .toast.on{opacity:1;transform:none}
 </style>
 </head>
@@ -99,7 +97,7 @@
     <h2>Everything that happened <span class="right">the printer, and what we wrote to the light</span></h2>
     <div class="filters" id="filters"></div>
     <div class="feed" id="feed"></div>
-    <div class="body" style="border-top:1px solid var(--line);background:#fafbfc">
+    <div class="body" style="border-top:1px solid var(--wled-line);background:var(--wled-sunken)">
       <span class="hint"><b>Only what this module did.</b> Every line is either something the printer reported that made us act, or something we wrote to the light — a frame, a word, a brightness, a failure and its widening retries. Changes made elsewhere are not followed: this is a record of our own actions, not a general audit. Progress is never logged — a printing job is one line at its start and none during it.</span>
     </div>
   </div>
@@ -114,11 +112,11 @@
   <div class="card">
     <h2>The honest limits <span class="right">read these before doubting the light</span></h2>
     <div class="body" style="padding:6px 14px 12px">
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>A word on a strip</span><span class="hint">impossible — no second dimension</span></div>
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>A printer that goes quiet mid-job</span><span class="hint">shown as "don't trust this", never as progress</span></div>
-      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--wled-line);font-size:12.5px">
         <span>A light-side change</span><span class="hint">seen at the next read, so up to one poll late</span></div>
       <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
         <span>The controller's own pixels</span><span class="hint">cannot be read back on this firmware — a picture is checked by eye</span></div>
@@ -128,6 +126,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="../tokens.js"></script>
 <script>
 const F={F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],' ':[0,0,0,0,0,0,0]};
 function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
@@ -197,7 +196,7 @@ function render(){
       '<div class="s">'+S.transport.split(' · ')[1]+'</div></div>';
 
   const c=document.getElementById('frame'), g=c.getContext('2d');
-  g.fillStyle='#000';g.fillRect(0,0,256,64);
+  g.fillStyle=TOKEN.colourOf('--wled-pixel-off');g.fillRect(0,0,256,64);
   const rgb=S.colour;
   if(S.reason==='progress'){
     g.fillStyle='rgb('+rgb.join(',')+')';g.fillRect(0,52,Math.round(S.pct/100*256),12);
@@ -221,7 +220,7 @@ function render(){
   }).join('');
 
   document.getElementById('reasons').innerHTML=REASONS.map(r=>
-    '<tr'+(r[0]===S.reason?' class="this"':'')+'><td class="mono" style="font-size:11.5px;color:var(--ink)">'+r[0]+'</td><td class="hint">'+r[1]+(r[0]===S.reason?' <span class="live">this one</span>':'')+'</td></tr>').join('');
+    '<tr'+(r[0]===S.reason?' class="this"':'')+'><td class="mono" style="font-size:11.5px;color:var(--wled-text)">'+r[0]+'</td><td class="hint">'+r[1]+(r[0]===S.reason?' <span class="live">this one</span>':'')+'</td></tr>').join('');
 }
 let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),2600);}
 render();

@@ -51,19 +51,19 @@
 	 * longest thing in any row it sits in, and `break-all` is what keeps it inside that row.
 	 */
 	const ADDRESS_LINK =
-		'break-all font-mono text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
+		'break-all font-data text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
 </script>
 
 <span
 	><a href={url} target="_blank" rel="noopener" aria-label={t('printer.open_in_connect', { printer: name })} class={cls}
 		>{name}</a
-	><span class="font-normal opacity-60" aria-hidden="true">{' ('}</span
+	><span class="font-normal text-wled-text-quiet" aria-hidden="true">{' ('}</span
 	><a
 		href={url}
 		target="_blank"
 		rel="noopener"
 		aria-label={t('printer.open_address', { address: url })}
 		class={ADDRESS_LINK}>{url}</a
-	><span class="opacity-60" aria-hidden="true">{')'}</span
+	><span class="text-wled-text-quiet" aria-hidden="true">{')'}</span
 	></span
 >
