@@ -343,6 +343,24 @@ type writer struct {
 	// proof, because a datagram cannot be read back. See pixels.go.
 	handedBack bool
 
+	// overwritten says that a picture which is not a frame took the light, so that `last` — the
+	// frame the strip did take, and the moment it took it — is not read as a description of the
+	// wall.
+	//
+	// A held word does exactly that: it puts the panel on the establishing body and pushes its
+	// pixels over DDP, and the steady frame it stands in front of stops being what anybody can see
+	// without the frame being written again. Suppressing that write as "already shown" because the
+	// frame equals the last one *was* a panel left on the establishing body — black, with the word's
+	// name still on segment 0 — until the next write that was not suppressed, and how long that took
+	// was nothing but where the sixty-second heartbeat happened to be in its cycle. Measured on the
+	// operator's panel: on the stroke once, and thirteen and fifteen seconds late twice.
+	//
+	// It is set where the picture is put up and cleared where a frame lands, so the flag means what
+	// a reader wants it to mean: `last` is a frame this writer delivered, and this says whether the
+	// light is showing it. See hold.go's holdWord and the event path in run, which clears `last`
+	// outright for the same reason.
+	overwritten bool
+
 	// layout is the operator's arrangement of the panel: a bar in a band, the percentage, the job's
 	// name. The zero value draws nothing of its own, so a writer built without one behaves exactly
 	// as this module did before the setting existed — which is what every test that does not ask
@@ -894,7 +912,12 @@ func (w *writer) run(ctx context.Context) {
 			frame, forced = last, true
 		}
 
-		if !forced && last != nil && samePicture(*last, *frame) {
+		// An unchanged picture is not written again — unless a picture that is not a frame has
+		// taken the light since `last` was delivered, which is the held word's doing and the
+		// reason this is not a comparison of two frames alone: the frame the word stands in
+		// front of is exactly the frame `last` holds, so "already shown" would be a panel left
+		// on the word's establishing body with nothing coming to paint it until the heartbeat.
+		if !forced && last != nil && !w.overwritten && samePicture(*last, *frame) {
 			continue
 		}
 
@@ -923,6 +946,10 @@ func (w *writer) run(ctx context.Context) {
 
 		failures, retryAt = 0, time.Time{}
 		last, lastOK = frame, w.now()
+
+		// What the light is showing is a frame this writer delivered, so the frame after it may
+		// be suppressed as already shown again.
+		w.overwritten = false
 
 		// The frame that takes the light back from a held word is written; now the controller is
 		// read once to prove it left realtime. A JSON state write does not end live mode by

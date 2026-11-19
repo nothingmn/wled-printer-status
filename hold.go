@@ -342,6 +342,13 @@ func (w *writer) holdWord(ctx context.Context, wanted show) error {
 	// not on the light.
 	w.composed = nil
 
+	// The light is showing this word and not the frame the writer last delivered, so the picture
+	// the word hands back to has to be written when the hold runs out rather than suppressed as
+	// "already shown" — see overwritten in drive.go, and the event path there, which clears what
+	// the writer remembers for the same reason. The word *is* the establishing body plus pixels:
+	// the frame behind it stops being visible the moment this lands.
+	w.overwritten = true
+
 	ev := event{word: wanted.word, colour: wanted.colour}
 
 	frame, err := w.paintReported(ctx, ev)
