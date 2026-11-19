@@ -785,6 +785,98 @@ word itself is still exactly as the operator left it, unlooked at, and `AGENTS.m
 here is the hand-back's other half — the name does not survive the event on this firmware, and clearing it
 costs no request.
 
+**Twelfth run, 2026-11-19 01:34Z, from `87fb786`.** The change that stops a finished panel
+flapping into the stale red while its printer cools, and the nine tests behind it. Built from
+`git archive HEAD` for the reason run six gives; release `/config/config.d/wled-release-87fb786`,
+whose `linux_amd64` digest is
+`c477de39ad7eae516c37ce785d40e78bf9f087ae545080d2565e0f69014a65f4` and is what the installed binary
+reads back. `ui/` is unchanged between `e8bc059` and this commit (`git diff --stat e8bc059..HEAD --
+ui/` is empty), so the browser half is the bundle that release installed, carried over rather than
+rebuilt, and it is listed in `checksums.txt` like every other file: ten files, which `module add`
+counted back. The settings file was not touched.
+
+```console
+$ docker exec -u 10001 prusa_connect sh -c \
+    "cd /config/config.d/wled-release-87fb786 && sha256sum -c checksums.txt"
+module.yaml: OK   README.md: OK   CHANGELOG.md: OK   LICENSE: OK
+ui/index.js: OK   ui/locales/en.json: OK
+wled-printer-status_linux_amd64: OK  … (four platforms)
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-87fb786 \
+    -settings /config/config.d/wled-settings.json -approve
+  checksums   10 files verified against checksums.txt
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+$ docker restart prusa_connect        # 01:34:42Z
+prusa_connect                         # Up 20 seconds (healthy) at 01:35:03Z
+$ curl -s localhost:8080/api/v1/readiness
+{"ready":true,"serving":4,"declared":4,"blocked":[],…}   # 01:34:45.890Z
+… the module's files are serving … draws=true
+… watching printer 07e893bb-… and driving http://10.0.0.136 at the brightness of brightness_schedule …
+… the light's brightness is 128, the 00:00-23:59 window of America/Denver, where it is 18:34 MST
+… the controller drives 16384 LEDs
+… the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+**What it was there to fix, and what the old build was doing.** The MK4 had finished its print and
+its bed was still cooling, so a value moved every minute or two, which restarted the change clock;
+30 s later the reading was stale again, and every one of those dips was painted as a light that had
+lost contact. The log from the build this one replaced, and `/status` read a minute later:
+
+```console
+01:06:59Z  the reading from the printer Hermes MK4 is live again
+01:07:38Z  the reading from the printer Hermes MK4 is stale
+01:08:55Z  the reading from the printer Hermes MK4 is live again
+01:10:23Z  the reading from the printer Hermes MK4 is stale
+… and so on through 01:27:56Z …
+$ curl -s …/status                              # 01:29:35Z
+"state":"FINISHED", "age_seconds":128.317, "stale":true,
+"frame":{"colour":{"r":70,"g":0,"b":0},"lit":0,"total":16384,"reason":"stale"}
+```
+
+**The same printer, after the restart, read on both sides of one of those former flaps.** The tree
+moved for the last time at `01:37:29.135Z`; the reading crossed the 30 s horizon at about
+`01:38:00Z`, which is the moment the old build painted `70,0,0`:
+
+```console
+01:37:51Z  /status  FINISHED  age=22.0     stale=false  frame 0,170,0  lit 0/16384  not-a-live-job
+01:38:00Z            the reading ages past 30 s — the old build's dip into the stale red
+01:38:16Z  /status  FINISHED  age=47.0     stale=true   frame 0,170,0  lit 0/16384  not-a-live-job
+01:40:31Z  /status  FINISHED  age=181.999  stale=true   frame 0,170,0  lit 0/16384  not-a-live-job
+```
+
+And the panel's own answer, read at `01:40:31Z` while the reading was 182 s stale — not the
+module's claim about it:
+
+```console
+$ curl -s http://10.0.0.136/json/state            # 01:40:31Z
+bri 128  on true  mainseg 0
+seg0 start 0 stop 256 on true col [0,170,0] n None fx 0
+seg1 start 253 stop 256 on false
+$ … /status  "last_send":{"at":"2026-11-19T01:39:45.227585555Z","ok":true}
+```
+
+Segment 0 covers columns 0–256 in `[0,170,0]` — the whole panel in the finished green — and the
+write that put it there was the heartbeat repaint at `01:39:45.228Z`, while the reading was already
+stale. From `01:38:00Z` to the last sample the reading did not recover, and the light did not move.
+
+**The log said it once.** Between the restart and `01:40:31Z` the reading entered staleness at
+`01:35:16Z`, came back three times as the bed moved, and entered it again at about `01:38:00Z`;
+one line exists for all of that, and no `live again` line at all:
+
+```console
+$ docker logs prusa_connect 2>&1 | grep -a "the reading from the printer Hermes MK4"
+01:35:16.133Z  the reading from the printer Hermes MK4 is stale
+```
+
+**What this run does not prove.** The live case — no print was started to put a *printing* job's
+reading into staleness, so that half of the rule is proved by
+`TestALiveJobIsStillDowngradedBySilence` and the tests beside it and not by this device. The word on
+the panel is still unlooked at: no preview was fired, no DDP frame pushed, and `10.0.0.253` was not
+written to.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
