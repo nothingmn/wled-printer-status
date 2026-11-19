@@ -45,10 +45,14 @@
 	import { heldHost } from './host';
 	import { lights, loadLights } from './lights.svelte';
 	import { fateOf, refreshPauses } from './pause.svelte';
+	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
 	const t = host.t;
+
+	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** The three situations §2.7 switches between. */
 	type Situation = 'printing' | 'finished' | 'lost';
@@ -441,7 +445,7 @@
 					{frame.printer.state_known ? frame.printer.state : t('diagnostics.state_unknown')}
 				</p>
 				<p class="text-xs opacity-70">
-					{printerOf(frame)}
+					<PrinterLink id={frame.printer.id} name={printerOf(frame)} cls={NAME_LINK} />
 					{#if frame.frame.percent >= 0}
 						· {t('diagnostics.percent', { percent: frame.frame.percent })}
 					{/if}

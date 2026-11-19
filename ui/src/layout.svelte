@@ -93,10 +93,14 @@
 	import { ageText, describe, segmentText } from './format';
 	import { heldHost } from './host';
 	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
+	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
 	const t = host.t;
+
+	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** One of the seven optional lines: its key on the route, in the store, and in a draft. */
 	type LineKey = 'remaining' | 'ends' | 'temperatures' | 'elapsed' | 'material' | 'printer_name' | 'layer';
@@ -1005,6 +1009,9 @@
 				binding whose arrangement does not fit says so here, without being opened.
 			-->
 			<div class="flex flex-col gap-1">
+				<!-- The chips below are the control that picks a binding, so their printer names stay
+				     plain text: an anchor inside a button is invalid HTML and would swallow the press.
+				     The card's own heading is where the printer is shown, and there it is a link. -->
 				<div class="flex flex-wrap gap-1" role="group" aria-label={t('layout.bindings_heading')}>
 					{#each rows as one (one.id)}
 						{@const shown = showing !== undefined && showing.id === one.id}
@@ -1040,7 +1047,9 @@
 				<article class="flex flex-col gap-3" data-binding={one.id} data-kind={kind}>
 					<!-- Which binding this is, and the one reset that puts all of it back. -->
 					<div class="flex flex-wrap items-center gap-2 rounded border px-3 py-2">
-						<span class="text-sm font-semibold">{printerOf(one)}</span>
+						<span class="text-sm font-semibold"
+							><PrinterLink id={one.printer} name={printerOf(one)} cls={NAME_LINK} /></span
+						>
 						<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
 						{#if kind === 'panel'}
 							<Badge variant="outline" size="sm">{t('layout.panel_chip', { width: frame?.width ?? 0, height })}</Badge>

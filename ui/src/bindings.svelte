@@ -11,6 +11,16 @@
 	//     /bindings/{id}/pause): the module has no `enabled` field on a binding, and a pause
 	//     is the one thing that stops it writing. Off means paused until it is switched back
 	//     on, which is said on the page rather than left to be discovered.
+	//   - **When it last wrote comes from GET /frames**, which is the same answer Overview
+	//     draws its own "wrote 4 minutes ago" from: one write time per binding, keyed by the
+	//     binding's own id, because that is the one name a frame and a row cannot disagree
+	//     about. It used to be read from GET /status and matched on the controller and
+	//     segment, so a /status answer this screen could not match -- or could not read at
+	//     all, since a failed read was swallowed into an empty answer -- came out as "nothing
+	//     written yet", which is a fact about the binding rather than about the read.
+	//   - **"Never written" is only said when it is true.** A row whose write time could not
+	//     be read says so, with the reason, which is a different sentence from a binding that
+	//     has genuinely never been written to.
 	//   - **Segments come from the light**, never typed: every list is
 	//     GET /controllers/{name}'s own `segments`. A taken segment is greyed out with the
 	//     printer that has it, a free count is carried per light, and the add button goes
@@ -39,10 +49,9 @@
 		moduleApi,
 		type Binding,
 		type BindingRequest,
+		type Frame,
 		type LastSend,
 		type Printer,
-		type StatusBody,
-		type StatusEntry,
 	} from './api';
 	import BindingDialog from './binding-dialog.svelte';
 	import Disclosure from './disclosure.svelte';
@@ -57,14 +66,20 @@
 		type LightFacts,
 	} from './lights.svelte';
 	import { everythingPaused, fateOf, pauseOne, refreshPauses, resumeOne } from './pause.svelte';
+	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
 	const t = host.t;
 
+	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
+
 	let printers = $state<Printer[]>([]);
-	/** Every binding's last write, keyed `controller|segment`, which is what names one. */
+	/** Every binding's last write, keyed by the binding's own id, as GET /frames answers it. */
 	let sends = $state<Record<string, LastSend | null>>({});
+	/** Why the write times could not be read, and empty when they could. */
+	let writeUnread = $state('');
 	let failure = $state('');
 	let notice = $state('');
 	let loading = $state(true);
@@ -73,11 +88,12 @@
 	/** The panel, while it is open: the seed it starts from, and the binding it changes. */
 	let panel = $state<{ light: string; printer: string; editing: Binding | null } | null>(null);
 
-	const key = (controller: string, segment: number): string => `${controller}|${segment}`;
-
-	/** The last write to one binding's light, and null before any was tried. */
-	const sendOf = (binding: Binding): LastSend | null =>
-		sends[key(binding.controller, binding.segment)] ?? null;
+	/**
+	 * One binding's last write: a send, `null` for a binding that has genuinely never been
+	 * written to, and `undefined` when nothing said either way -- which is the only case the
+	 * page is allowed to answer "could not read".
+	 */
+	const sendOf = (binding: Binding): LastSend | null | undefined => sends[binding.id];
 
 	/** Every binding on one light, in the operator's order. */
 	const rowsOf = (one: LightFacts): Binding[] =>
@@ -109,7 +125,7 @@
 	const reachOf = (one: LightFacts): { ok: boolean; said: string } => {
 		const writes = rowsOf(one)
 			.map(sendOf)
-			.filter((held): held is LastSend => held !== null);
+			.filter((held): held is LastSend => held !== null && held !== undefined);
 
 		if (writes.length === 0) {
 			return one.segmentsKnown
@@ -139,22 +155,23 @@
 		failure = '';
 
 		try {
-			const [fleet, status] = await Promise.all([
+			const [fleet, pictures] = await Promise.all([
 				api.listPrinters(),
-				// A module that has published nothing yet is not a failure of this screen.
-				api.readStatus().catch(() => ({}) as StatusBody),
+				// The same route Overview reads its own write time from. A module that has not
+				// drawn a picture yet answers 503, which is a fact about the moment and not a
+				// failure of this screen: it is carried as "could not read", never as "never
+				// written", because those are two different things to say to somebody.
+				api.listFrames().catch((problem: unknown) => {
+					writeUnread = describe(problem);
+
+					return { frames: [] as Frame[], count: 0, note: '' };
+				}),
 				loadLights(),
 			]);
 
 			printers = fleet.printers;
-
-			const entries: StatusEntry[] =
-				status.bindings ??
-				(status.controller !== undefined && status.segment !== undefined
-					? [{ controller: status.controller, segment: status.segment, last_send: status.last_send ?? null }]
-					: []);
-
-			sends = Object.fromEntries(entries.map((one) => [key(one.controller, one.segment), one.last_send]));
+			sends = Object.fromEntries(pictures.frames.map((one) => [one.binding, one.last_send]));
+			if (pictures.frames.length > 0) writeUnread = '';
 		} catch (problem) {
 			failure = `${t('bindings.load_failed')}: ${describe(problem)}`;
 		} finally {
@@ -283,7 +300,7 @@
 									<th class="px-3 py-2 font-medium">{t('bindings.printer')}</th>
 									<th class="px-3 py-2 font-medium">{t('bindings.segment')}</th>
 									<th class="px-3 py-2 font-medium">{t('bindings.brightness')}</th>
-									<th class="px-3 py-2 font-medium">{t('bindings.writing')}</th>
+									<th class="px-3 py-2 font-medium">{t('bindings.last_updated')}</th>
 									<th class="px-3 py-2 font-medium">{t('bindings.enabled')}</th>
 									<th class="px-3 py-2 text-right font-medium">{t('bindings.actions')}</th>
 								</tr>
@@ -295,7 +312,13 @@
 									{@const send = sendOf(binding)}
 									<tr class="border-b align-middle last:border-b-0">
 										<td class="px-3 py-2">
-											<div class="font-medium">{binding.printer_name ?? t('bindings.printer_gone')}</div>
+											<div class="font-medium">
+												{#if binding.printer_name}
+													<PrinterLink id={binding.printer} name={binding.printer_name} cls={NAME_LINK} />
+												{:else}
+													{t('bindings.printer_gone')}
+												{/if}
+											</div>
 											<div class="text-xs opacity-60">
 												{#if !printers.some((held) => held.id === binding.printer)}
 													{t('bindings.printer_missing')}
@@ -324,11 +347,17 @@
 											{/if}
 										</td>
 										<td class="px-3 py-2 text-xs opacity-70">
-											{send === null
-												? t('bindings.never_wrote')
-												: send.ok
+											{#if send !== undefined && send !== null}
+												{send.ok
 													? t('bindings.last_wrote', { age: ageText(t, send.at) ?? t('common.just_now') })
 													: t('bindings.write_failed', { why: send.error ?? t('bindings.no_answer') })}
+											{:else if send === null}
+												{t('bindings.never_wrote')}
+											{:else}
+												{t('bindings.write_unread', {
+													why: writeUnread !== '' ? writeUnread : t('bindings.write_no_frame'),
+												})}
+											{/if}
 										</td>
 										<td class="px-3 py-2">
 											<input
@@ -394,7 +423,7 @@
 		{:else}
 			{#each unbound as printer (printer.id)}
 				<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
-					<span class="font-medium">{printer.name}</span>
+					<span class="font-medium"><PrinterLink id={printer.id} name={printer.name} cls={NAME_LINK} /></span>
 					{#if printer.model}<span class="text-xs opacity-60">{printer.model}</span>{/if}
 					{#if !printer.connected}
 						<Badge variant="warning" size="sm">{t('bindings.printer_offline')}</Badge>

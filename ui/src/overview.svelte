@@ -39,10 +39,14 @@
 		refreshPauses,
 		resumeOne,
 	} from './pause.svelte';
+	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
 	const t = host.t;
+
+	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** Every picture, one per binding, as GET /frames last answered. */
 	let frames = $state<Frame[]>([]);
@@ -395,7 +399,7 @@
 
 						<div class="min-w-0 text-sm">
 							<div class="font-medium">
-								{printerOf(frame)}
+								<PrinterLink id={frame.printer.id} name={printerOf(frame)} cls={NAME_LINK} />
 								<span class="font-normal opacity-60">· {segmentOf(frame)}</span>
 							</div>
 							<div class="text-xs opacity-70">
@@ -490,6 +494,10 @@
 			{:else if freePrinters.length === 0}
 				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_printers')}</p>
 			{:else}
+				<!-- The name here stays plain text: this row *is* the control that picks a printer,
+				     and an anchor inside a button is invalid HTML and would swallow the press. The
+				     printer's own page is linked everywhere the printer is shown, which is the
+				     Overview row and the Bindings row. -->
 				{#each freePrinters as printer (printer.id)}
 					<button
 						type="button"

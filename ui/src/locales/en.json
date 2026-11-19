@@ -7,6 +7,8 @@
   "common.whole_light": "Whole light",
   "common.segment_number": "Segment {count}",
 
+  "printer.open_in_connect": "{printer} — open this printer's page in Prusa Connect in a new window",
+
   "screen.right_now": "Overview",
   "screen.bindings": "Bindings",
   "screen.events": "Events",
@@ -102,7 +104,7 @@
   "bindings.printer": "Printer",
   "bindings.segment": "Segment",
   "bindings.brightness": "Brightness",
-  "bindings.writing": "Writing",
+  "bindings.last_updated": "Last Updated",
   "bindings.enabled": "On",
   "bindings.actions": "Actions",
   "bindings.brightness_note": "written once at start, 0 to 255; empty means the module's own default of 128",
@@ -141,6 +143,8 @@
   "bindings.never_wrote": "nothing written yet",
   "bindings.last_wrote": "wrote {age}",
   "bindings.write_failed": "the last write failed: {why}",
+  "bindings.write_unread": "could not read when it last wrote — {why}",
+  "bindings.write_no_frame": "the module has drawn no picture for this binding yet",
   "bindings.free_count": "{free} of {total} segments free",
   "bindings.whole_taken": "every segment taken by {printer} — 0 of {total} free",
   "bindings.bind_here": "+ bind a printer here",

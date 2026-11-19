@@ -26,9 +26,28 @@ the top, and `version:` in `module.yaml` is the newest released heading below it
   with a count beside each, in the same shape the Overview's gap lists use; each area stays drawn when
   it is empty and says so in one line. A light with a printer on one of its zones has a binding and
   belongs in the second area, not the first.
+- **Every printer's name is a link to that printer's own page in Prusa Connect, in a new window.** The
+  rows on Overview, the rows and the printers-with-no-light list on Bindings, the per-printer rows on
+  Events, the printer tile on Diagnostics, a card's heading on Layout and a light's segment table on
+  Lights all open `…/printers/<device id>` from the Connect instance the module is being looked at
+  through — the same address the app's own printer rows use. The address is built from the page the
+  module is drawn on, so one bundle is right at an address, at a name, and under a proxy that keeps a
+  path prefix; no install's address is written into the module. Each link carries an accessible name
+  that says what opens and that it opens in a new window. A name inside a control that picks something
+  — the Overview's printer picker and the binding chips on Layout — stays plain text, because a link
+  inside a button cannot be pressed and would make the picker stop working.
 
 ### Fixed
 
+- **Bindings says when each light was last written to, under a column headed *Last Updated*.** The
+  column used to read *Writing*, and a row whose write time the screen could not read — or could not
+  match to its own row — read "nothing written yet" for a binding the module was writing to every
+  minute, which is a statement about the binding rather than about the read. The column now shows each
+  binding's own last write, from the same answer the Overview's "wrote 4 minutes ago" comes from, keyed
+  on the binding's own id, which is the one name the row and the frame cannot disagree about. A row
+  whose write time genuinely cannot be read now says so with the reason, so *nothing written yet* is
+  only said for a binding that has never been written to; a light that has stopped answering still
+  says so in its own heading.
 - **The paragraph about replacing a light appears once for the page, not on every card.** There is no
   replace route, so the paragraph explains a feature that does not exist — and repeated per light it
   was an apology rather than information about the light. It is now one line for the whole screen,

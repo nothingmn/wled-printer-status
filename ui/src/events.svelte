@@ -52,10 +52,14 @@
 	import { fitsPanel, missingGlyphs } from './glyphs';
 	import { heldHost } from './host';
 	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
+	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
 	const t = host.t;
+
+	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** What one row is being edited towards: the entry the route would be sent. */
 	interface Draft {
@@ -642,7 +646,13 @@
 								{#each one.entries as entry (entry.printer)}
 									<tr class="border-b">
 										<td colspan="2" class="px-3 py-2 pl-8 align-top">
-											<span class="font-medium">{entry.printer_name ?? entry.printer}</span>
+											<span class="font-medium"
+												>{#if entry.printer_name}<PrinterLink
+														id={entry.printer}
+														name={entry.printer_name}
+														cls={NAME_LINK}
+													/>{:else}{entry.printer}{/if}</span
+												>
 											<span class="block font-mono text-[11px] opacity-60">
 												↳ {segmentOf(entry.segment)}
 											</span>

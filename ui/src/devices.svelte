@@ -59,6 +59,7 @@
 
 	import {
 		moduleApi,
+		type Binding,
 		type Frame,
 		type KnownLight,
 		type PresetsBody,
@@ -68,6 +69,7 @@
 		type SnapshotsBody,
 	} from './api';
 	import Disclosure from './disclosure.svelte';
+	import PrinterLink from './printer-link.svelte';
 	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
 	import { addressOf, known, lights, loadKnownLights, nameOf, type LightFacts } from './lights.svelte';
@@ -230,14 +232,16 @@
 		return found === undefined ? '' : runText(found);
 	};
 
-	/** Which printer sits on one segment of this light, in the operator's words, and empty when none. */
-	const onSegmentOf = (one: LightFacts, id: number): string => {
+	/**
+	 * Which binding sits on one segment of this light, and undefined when none does. It is the
+	 * binding and not just its name, because the name is now a link to that printer's own page
+	 * and the link needs the printer's id: the same anchor every other screen gives a printer.
+	 */
+	const binderOf = (one: LightFacts, id: number): Binding | undefined => {
 		const whole = one.bindings.find((binding) => binding.whole);
-		if (whole !== undefined) return whole.printer_name ?? whole.printer;
+		if (whole !== undefined) return whole;
 
-		const found = one.bindings.find((binding) => !binding.whole && binding.segment === id);
-
-		return found === undefined ? '' : (found.printer_name ?? found.printer);
+		return one.bindings.find((binding) => !binding.whole && binding.segment === id);
 	};
 
 	/** A preset as a card names it: its name, or its slot when the light never named it. */
@@ -649,12 +653,19 @@
 							</thead>
 							<tbody>
 								{#each one.segments as segment (segment.id)}
+									{@const taker = binderOf(one, segment.id)}
 									<tr class="border-b last:border-b-0">
 										<td class="px-3 py-1 font-mono">{segment.id}</td>
 										<td class="px-3 py-1">{segment.name.trim() === '' ? t('devices.segment_unnamed') : segment.name}</td>
 										<td class="px-3 py-1 font-mono">{boundsOf(one, segment.id)}</td>
 										<td class="px-3 py-1">
-											{onSegmentOf(one, segment.id) === '' ? t('devices.segment_free') : onSegmentOf(one, segment.id)}
+											{#if taker === undefined}
+												{t('devices.segment_free')}
+											{:else if taker.printer_name}
+												<PrinterLink id={taker.printer} name={taker.printer_name} cls={NAME_LINK} />
+											{:else}
+												{t('bindings.printer_gone')}
+											{/if}
 										</td>
 									</tr>
 								{/each}
