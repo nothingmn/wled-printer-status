@@ -64,6 +64,16 @@
 	// offered only where there is something to reset. There is no per-value reset because there is no
 	// per-value route: `DELETE` on the binding is the route, and the screen says what it does.
 	//
+	// **A press changes one control and leaves the rest of the screen where it is.** That is a rule
+	// about the write path, not a hope: the draft is one object per binding for as long as the screen
+	// is open and is mutated where it stands; the controls are never disabled while a write is in the
+	// air, because a disabled input swallows the next press and a disabled *focused* one hands its
+	// focus back to the page; writes for a binding are chained so two quick presses are two writes in
+	// order; an answer whose write has been overtaken by a newer change is not adopted, so nothing
+	// flips back to a value the operator has already moved on from; and the "Saved" line above the
+	// controls is set and left set, because clearing it before every write lifted the whole card by a
+	// row and dropped it back when the answer landed — twice per press, under the pointer.
+	//
 	// `side-by-side` is built in the module but it composes **only while a job is running**: idle,
 	// finished, stopped and error keep the plain state colour, and that is true of take-turns too. The
 	// line is on the page, quietly, because a layout that looks like nothing while the printer is idle
@@ -179,9 +189,32 @@
 	let drafts = $state<Record<string, Draft>>({});
 	/** One refusal per binding, answered where it was made. */
 	let faults = $state<Record<string, string>>({});
+	/**
+	 * The writes in the air, one chain per binding.
+	 *
+	 * A change is written as it is made, so two quick changes are two writes. Chaining them makes
+	 * them arrive in the order they were made instead of racing each other, which is what lets the
+	 * controls stay live while a write is in flight — a control disabled until the route answers is
+	 * a control that swallows the next press, and disabling the one just pressed hands its focus
+	 * back to the page.
+	 *
+	 * It is deliberately not state: nothing on the screen is drawn from it.
+	 */
+	const queue = new Map<string, Promise<void>>();
+	/**
+	 * How many times each binding's draft has been edited, so an answer can tell whether it is
+	 * still the newest thing said about that binding: the write it answers may have been made
+	 * before a change that is already on its way.
+	 */
+	const revisions = new Map<string, number>();
+	/**
+	 * How many writes each binding has in the air, and the one thing that reads it is the discard:
+	 * a change is not there to be put back while the write that carries it is still out, and a
+	 * button that says it is would leave the screen saying one thing and the store another.
+	 */
+	let writing = $state<Record<string, number>>({});
 	let loading = $state(true);
 	let reading = $state(false);
-	let busy = $state(false);
 	let failure = $state('');
 	let notice = $state('');
 
@@ -205,6 +238,54 @@
 	});
 
 	const draftAt = (one: Layout): Draft => drafts[one.id] ?? draftOf(one);
+
+	/**
+	 * The fifteen keys the route writes, as one request: every key goes, because the route replaces
+	 * the row whole — a body that left `percent_scale` out would put it back to the default while
+	 * the operator watched a control stay where it was.
+	 */
+	const bodyOf = (draft: Draft): LayoutRequest => ({
+		bar: draft.bar,
+		bar_band: draft.bar_band,
+		bar_rows: draft.bar_rows,
+		percent: draft.percent,
+		percent_scale: draft.percent_scale,
+		name: draft.name,
+		remaining: draft.remaining,
+		ends: draft.ends,
+		temperatures: draft.temperatures,
+		elapsed: draft.elapsed,
+		material: draft.material,
+		printer_name: draft.printer_name,
+		layer: draft.layer,
+		rotation: draft.rotation,
+		rotate_seconds: draft.rotate_seconds,
+	});
+
+	/**
+	 * Puts one binding's draft back to a layout, in place.
+	 *
+	 * In place and never by replacement: a draft is one object for as long as the screen is open,
+	 * so a value that arrives from the store changes the one control that reads it and no other
+	 * part of the screen is re-made. Replacement is also how an answer used to land on top of a
+	 * change made after its write had already gone — the older value winning on screen, with
+	 * nothing a person could see to explain it.
+	 */
+	const adopt = (id: string, one: Layout): void => {
+		const draft = drafts[id];
+
+		if (draft === undefined) {
+			drafts[id] = draftOf(one);
+
+			return;
+		}
+
+		const held = draftOf(one);
+
+		for (const key of Object.keys(held) as (keyof Draft)[]) {
+			(draft as unknown as Record<string, unknown>)[key] = held[key];
+		}
+	};
 
 	/** The frame drawn for one binding, when the module has drawn one. */
 	const frameOf = (one: Layout): Frame | undefined => frames.find((frame) => frame.binding === one.id);
@@ -617,6 +698,9 @@
 		drafts = {};
 		faults = {};
 		notice = '';
+		queue.clear();
+		revisions.clear();
+		writing = {};
 		reading = true;
 
 		try {
@@ -666,23 +750,25 @@
 	};
 
 	/**
-	 * Writes one binding's draft.
+	 * Queues one binding's draft to be written.
 	 *
-	 * Every key goes, because the route replaces the row whole: a body that left `percent_scale` out
-	 * would put it back to the default while the operator watched a control stay where it was. A
-	 * draft that does not fit is refused here, before the route is asked, because the module would
-	 * draw nothing for it and a saved row that draws nothing is what "refused, not cropped" forbids.
+	 * The checks are made here, on the draft as it stands, so a refusal is a sentence beside the
+	 * control that caused it rather than a toast after a round trip: the route's own fixed limits
+	 * (a bar is 1 to 48 rows of a 64-row panel, and a rotation of no seconds is not a rotation),
+	 * and — on a panel whose height is known — the same arithmetic the painter would refuse with,
+	 * because the module would draw nothing for a layout that does not fit and a saved row that
+	 * draws nothing is what "refused, not cropped" forbids.
+	 *
+	 * What goes out is the draft *as it was when the change was made*, not as it stands when the
+	 * write's turn comes: a second change made while the first is in the air is its own write, and
+	 * it goes behind it rather than jumping the queue.
 	 */
-	const commit = async (one: Layout): Promise<void> => {
+	const commit = (one: Layout): void => {
 		const draft = drafts[one.id];
 		if (draft === undefined) return;
 
 		delete faults[one.id];
-		notice = '';
 
-		// The route's own fixed limits, refused here so the sentence is beside the control rather
-		// than in a toast: a bar is 1 to 48 rows of a 64-row panel, and a rotation of no seconds is
-		// not a rotation.
 		if (draft.bar_rows < 1 || draft.bar_rows > 48) {
 			faults[one.id] = t('layout.rows_out_of_range');
 
@@ -707,41 +793,50 @@
 			}
 		}
 
-		const body: LayoutRequest = {
-			bar: draft.bar,
-			bar_band: draft.bar_band,
-			bar_rows: draft.bar_rows,
-			percent: draft.percent,
-			percent_scale: draft.percent_scale,
-			name: draft.name,
-			remaining: draft.remaining,
-			ends: draft.ends,
-			temperatures: draft.temperatures,
-			elapsed: draft.elapsed,
-			material: draft.material,
-			printer_name: draft.printer_name,
-			layer: draft.layer,
-			rotation: draft.rotation,
-			rotate_seconds: draft.rotate_seconds,
-		};
+		const body = bodyOf(draft);
+		const sent = revisions.get(one.id) ?? 0;
+		const after = queue.get(one.id) ?? Promise.resolve();
 
-		busy = true;
+		writing[one.id] = (writing[one.id] ?? 0) + 1;
 
+		const run = after.then(() => send(one, body, sent));
+
+		queue.set(
+			one.id,
+			run.catch(() => undefined),
+		);
+	};
+
+	/**
+	 * Writes one binding's layout, in order with the writes for that binding before it.
+	 *
+	 * `sent` is the draft's revision at the moment this body was taken: if the operator has changed
+	 * something since, the answer is older than what the screen now says and the draft keeps it —
+	 * the write already queued behind this one carries the newer value to the store.
+	 */
+	const send = async (one: Layout, body: LayoutRequest, sent: number): Promise<void> => {
 		try {
 			const answer = await api.changeLayout(one.id, body);
 			withLayout(answer.layout);
-			drafts[one.id] = draftOf(answer.layout);
+
+			if ((revisions.get(one.id) ?? 0) === sent) adopt(one.id, answer.layout);
+
+			// Said once and left said. The line is above the controls, so clearing it before every
+			// write took the whole screen up a row and put it back down when the answer landed —
+			// twice per press, under the pointer, which is how a press ends up on its neighbour.
 			notice = t('layout.saved');
 
 			// The painter picks the row up on its next pass and GET /frames draws from the same row, so
 			// the picture beside the controls is asked for again rather than left as the last layout's.
 			await refreshFrames();
 		} catch (problem) {
-			// The route's own sentence, verbatim, beside the control that caused it.
+			// The route's own sentence, verbatim, beside the control that caused it. The row is
+			// unchanged, so the draft goes back to what the store holds — in place, so nothing moves.
+			notice = '';
 			faults[one.id] = t('layout.refused', { why: describe(problem) });
-			drafts[one.id] = draftOf(one);
+			adopt(one.id, rows.find((row) => row.id === one.id) ?? one);
 		} finally {
-			busy = false;
+			writing[one.id] = Math.max(0, (writing[one.id] ?? 1) - 1);
 		}
 	};
 
@@ -755,28 +850,53 @@
 	};
 
 	/** Puts one binding back to the built-in default: the whole row, because that is the route. */
-	const reset = async (one: Layout): Promise<void> => {
-		busy = true;
+	const reset = (one: Layout): void => {
 		delete faults[one.id];
-		notice = '';
 
+		// Behind the writes already in the air for this binding, so a reset is never answered
+		// before the change it replaces.
+		const after = queue.get(one.id) ?? Promise.resolve();
+		const run = after.then(() => putBack(one));
+
+		queue.set(
+			one.id,
+			run.catch(() => undefined),
+		);
+	};
+
+	/** The reset itself, once it is that binding's turn. */
+	const putBack = async (one: Layout): Promise<void> => {
 		try {
 			const answer = await api.resetLayout(one.id);
 			withLayout(answer.layout);
-			drafts[one.id] = draftOf(answer.layout);
+			adopt(one.id, answer.layout);
 			notice = answer.removed === false ? t('layout.already_default') : t('layout.reset_done');
 			await refreshFrames();
 		} catch (problem) {
 			faults[one.id] = t('layout.refused', { why: describe(problem) });
-		} finally {
-			busy = false;
 		}
 	};
 
-	/** One control changed: the draft takes it, and the write follows. */
+	/**
+	 * One control changed: the draft takes it, in place, and the write follows.
+	 *
+	 * The draft is one object for the life of the screen and is mutated rather than rebuilt. A
+	 * rebuilt object is a new value for every control that reads it, so one press re-rendered all
+	 * seven toggles — and, worse, an answer carrying the rebuilt object landed on top of whatever
+	 * the operator had changed since, putting the older value back on screen while he watched.
+	 */
 	const edit = (one: Layout, change: Partial<Draft>): void => {
-		drafts[one.id] = { ...draftAt(one), ...change };
-		void commit(one);
+		if (drafts[one.id] === undefined) drafts[one.id] = draftOf(one);
+
+		const draft = drafts[one.id];
+
+		for (const key of Object.keys(change) as (keyof Draft)[]) {
+			const next = change[key];
+			if (next !== undefined) (draft as unknown as Record<string, unknown>)[key] = next;
+		}
+
+		revisions.set(one.id, (revisions.get(one.id) ?? 0) + 1);
+		commit(one);
 	};
 
 	/** Whether a draft has been edited away from what the store holds. */
@@ -798,6 +918,13 @@
 			draft.rotate_seconds !== held.rotate_seconds
 		);
 	};
+
+	/**
+	 * Whether there is a change on this binding to put back: a draft edited away from the row the
+	 * store holds, with no write of it in the air. A refusal that never went out leaves one; a
+	 * change already on its way does not, because the store is about to hold it.
+	 */
+	const discardable = (one: Layout): boolean => dirty(one) && (writing[one.id] ?? 0) === 0;
 
 	/** A rotation in words. Two literals rather than a built key, so the check can see them. */
 	const rotationLabel = (rotation: 'take-turns' | 'side-by-side'): string =>
@@ -926,13 +1053,13 @@
 							<Badge variant={one.overridden ? 'secondary' : 'outline'} size="sm">
 								{one.overridden ? t('layout.yours') : t('layout.default')}
 							</Badge>
-							{#if dirty(one)}
-								<Button variant="link" size="sm" disabled={busy} onclick={() => (drafts[one.id] = draftOf(one))}>
+							{#if discardable(one)}
+								<Button variant="link" size="sm" onclick={() => adopt(one.id, one)}>
 									{t('layout.discard')}
 								</Button>
 							{/if}
 							{#if one.overridden}
-								<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(one)}>
+								<Button variant="ghost" size="sm" onclick={() => reset(one)}>
 									{t('layout.reset')}
 								</Button>
 							{/if}
@@ -1093,7 +1220,6 @@
 													type="checkbox"
 													class="h-4 w-4"
 													checked={draft.bar}
-													disabled={busy}
 													onchange={(event) => edit(one, { bar: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.bar')}</span>
@@ -1108,7 +1234,7 @@
 												<select
 													class="rounded border px-2 py-1"
 													value={draft.bar_band}
-													disabled={busy || !draft.bar}
+													disabled={!draft.bar}
 													onchange={(event) =>
 														edit(one, { bar_band: (event.currentTarget as HTMLSelectElement).value as 'top' | 'bottom' })}
 												>
@@ -1129,7 +1255,7 @@
 													min="1"
 													max="48"
 													value={draft.bar_rows}
-													disabled={busy || !draft.bar}
+													disabled={!draft.bar}
 													onchange={(event) => edit(one, { bar_rows: Number((event.currentTarget as HTMLInputElement).value) })}
 												/>
 												<span class="text-[10px] opacity-60">{t('layout.bar_rows_note')}</span>
@@ -1142,7 +1268,6 @@
 													type="checkbox"
 													class="h-4 w-4"
 													checked={draft.percent}
-													disabled={busy}
 													onchange={(event) => edit(one, { percent: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.percent')}</span>
@@ -1157,7 +1282,7 @@
 												<select
 													class="rounded border px-2 py-1"
 													value={String(draft.percent_scale)}
-													disabled={busy || !draft.percent}
+													disabled={!draft.percent}
 													onchange={(event) =>
 														edit(one, { percent_scale: Number((event.currentTarget as HTMLSelectElement).value) as 3 | 4 | 5 })}
 												>
@@ -1174,7 +1299,6 @@
 													type="checkbox"
 													class="h-4 w-4"
 													checked={draft.name}
-													disabled={busy}
 													onchange={(event) => edit(one, { name: (event.currentTarget as HTMLInputElement).checked })}
 												/>
 												<span class="font-medium">{t('layout.name')}</span>
@@ -1208,7 +1332,6 @@
 												<select
 													class="rounded border px-2 py-1"
 													value={draft.rotation}
-													disabled={busy}
 													onchange={(event) =>
 														edit(one, {
 															rotation: (event.currentTarget as HTMLSelectElement).value as 'take-turns' | 'side-by-side',
@@ -1230,7 +1353,7 @@
 													class="w-20 rounded border px-2 py-1"
 													min="1"
 													value={draft.rotate_seconds}
-													disabled={busy || draft.rotation === 'side-by-side'}
+													disabled={draft.rotation === 'side-by-side'}
 													onchange={(event) => edit(one, { rotate_seconds: Number((event.currentTarget as HTMLInputElement).value) })}
 												/>
 											</label>
@@ -1273,7 +1396,6 @@
 														type="checkbox"
 														class="h-4 w-4"
 														checked={draft[line.key]}
-														disabled={busy}
 														onchange={(event) => edit(one, { [line.key]: (event.currentTarget as HTMLInputElement).checked })}
 													/>
 													<span>{t(line.label)}</span>

@@ -14,6 +14,19 @@ the top, and `version:` in `module.yaml` is the newest released heading below it
 
 ### Fixed
 
+- **A line's toggle changes that line and nothing else on the Layout screen.** Pressing one of the
+  seven used to move the whole card — the line above the controls saying "Saved" was cleared before
+  each write and set again when the route answered, so every control jumped up a row and back down,
+  twice per press — and every control on the screen was disabled until the answer landed, which
+  swallowed the next press and took the keyboard away from the toggle that had just been pressed.
+  A press now lands where it is aimed, the toggle keeps the keyboard, and the count, the sketch and
+  the verdict are the only things that change. The only thing still raised by a press is the "Saved"
+  line itself, the first time in a visit that a change is written, because it sits above the card.
+- **Two changes made in quick succession both reach the store.** A second press used to be swallowed
+  while the first was being written, because every control was disabled until the route answered; and
+  an answer arriving after a newer change could put the older value back on screen. Writes for one
+  binding now go out in the order they were made, and an answer that a newer change has overtaken is
+  not applied to the controls.
 - **"Put a printer on a light" is drawn only when it can act.** The whole block on Right now — the
   heading, both columns, the defaults and the footnote — is absent unless a printer has no light **and**
   a light has room for one. It used to draw itself with a Lights column reading "0 with room" and a
