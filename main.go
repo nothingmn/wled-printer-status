@@ -27,6 +27,9 @@
 //	POST /devices/{name}/restore   put one back: the light's whole configuration, with an explicit
 //	                           confirmation, a safety snapshot taken first, and a wait for the light
 //	                           to answer again before the route claims it worked
+//	POST /devices/{name}/identify  flash the light — on and off, one second in each state, five
+//	                           times — and put it back exactly as it was found, so that a person can
+//	                           see which light a name means. See identify.go
 //
 // The paths are relative to the mount, so a caller reaches them under
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/. The host decides who may call

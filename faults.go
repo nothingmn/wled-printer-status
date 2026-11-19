@@ -399,6 +399,43 @@ var (
 		fault.ShowDetail,
 		"snapshot", "safety_snapshot",
 	))
+
+	// IdentifyBorrowedSegment is an identify asked of a light this module drives one borrowed segment
+	// of. A flash is a power write, and power on a controller is not a segment's: switching it off
+	// would take the rest of that strip — somebody else's segments and their picture — with it. The
+	// same rule the event layer and the preview routes refuse with, in the place a person presses a
+	// button and deserves the reason.
+	IdentifyBorrowedSegment = fault.Register(faultDomain, "IDENTIFY_BORROWED_SEGMENT", http.StatusConflict, fault.Document(
+		"The light is a borrowed segment, so this module will not flash it",
+		"This module was pointed at one segment of a controller somebody else also drives, and it shows a colour there. A flash is the light being switched off and on, and power on that controller belongs to the whole strip: a flash here would take the owner's segments and their picture off and on with it. Point this instance at its own light to identify it.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"controller",
+	))
+
+	// IdentifyPaused is an identify asked of a light a pause is in force on. A pause is the operator's
+	// instruction that a light be left alone — one write and then nothing at all — and a flash is ten
+	// seconds of writes, so it is refused rather than fired at a light somebody asked to be quiet. The
+	// sentence carries when the pause ends, so the answer says when the button will work again.
+	IdentifyPaused = fault.Register(faultDomain, "IDENTIFY_PAUSED", http.StatusConflict, fault.Document(
+		"This light is paused, so it was not flashed",
+		"A pause says this light is to be left alone: the module switches it off once and then writes nothing at all until the pause ends or is resumed. A flash is ten seconds of writes, which is the opposite of that. The detail says when the pause ends; send this again after that, or resume the light first. Nothing was written.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+		"controller",
+	))
+
+	// IdentifyUnreachable is an identify that could not be started: the light did not answer when it
+	// was asked what it was showing, or would not take the first write, or the writer that drives it
+	// did not take the flash at all. It is a 503 rather than a timeout, because the honest answer to
+	// "did it flash" is that it never started — and nothing was written to the light.
+	IdentifyUnreachable = fault.Register(faultDomain, "IDENTIFY_UNREACHABLE", http.StatusServiceUnavailable, fault.Document(
+		"The light could not be flashed",
+		"A flash reads the light before it writes to it, so that it can be put back exactly as it was found, and it writes power: a light that does not answer, or that will not take the first write, cannot be flashed. Nothing was written. This is also the answer when the writer that drives the light did not take the flash in time — a watch that is stopping, or a controller already in a failure window. Send the same request again once the light answers; a light that is off is reported this way rather than being mistaken for one that flashed.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+		"controller",
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

@@ -27,6 +27,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -373,6 +374,29 @@ type writer struct {
 	// lasts until the print it describes ends. See composedPanel.
 	composed *composedPanel
 
+	// asks is where a route leaves one identify for this goroutine to run, and flashMu guards the
+	// window a flash holds.
+	//
+	// A flash is ten seconds of power writes on a light this writer owns, so it is not something a
+	// route may do for itself: it is handed over here and run by the goroutine that talks to the
+	// controller, between two passes of the steady frame. flashPlan is nil when nothing is flashing,
+	// and otherwise the plan of the flash in progress — which is both what a second press is answered
+	// with and what `already` means. See identify.go.
+	asks      chan *identifyCall
+	flashMu   sync.Mutex
+	flashPlan *identifyPlan
+
+	// flashed is set when an identify has just put the light back, so that the steady picture is
+	// painted in the same pass rather than on the heartbeat.
+	//
+	// The flash's give-back restores the light's own segments, so a plain frame is on the wall again
+	// the moment it lands — but the picture this module draws in pixels is not in a segment, and the
+	// controller left realtime while the light was dark. A write that is suppressed as "already shown"
+	// because the frame equals `last` would then be a panel left on its own segments until the
+	// heartbeat, which is the fault `overwritten` exists for in the word's case. So the flag is set by
+	// the flash and read by the same two places afterPause is read, and the frame is written.
+	flashed bool
+
 	wake chan struct{}
 }
 
@@ -449,6 +473,7 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 		now:        time.Now,
 		after:      time.After,
 		wake:       make(chan struct{}, 1),
+		asks:       make(chan *identifyCall, 1),
 		record:     recordSend,
 		dialPixels: dialPixels,
 		// A whole light is switched off by a pause, which is the rule and the answer pause.go
@@ -558,6 +583,16 @@ func (w *writer) run(ctx context.Context) {
 		select {
 		case <-w.wake:
 		default:
+		}
+
+		// An identify, before anything else this pass would write. A flash is the light going on and
+		// off, so a frame written in the middle of it would be the module painting over the one thing
+		// the person in the room is looking at — and the steady frame waits in its slot for ten
+		// seconds, which is what a hold does with a picture. It comes before the pause because a
+		// paused light has to be *refused* with the reason rather than left waiting for a pause
+		// nobody may end. See identify.go.
+		if w.serveIdentify(ctx) {
+			continue
 		}
 
 		// The pause, before anything this loop would write. A pause is a light switched off and
@@ -741,22 +776,25 @@ func (w *writer) run(ctx context.Context) {
 		if decided := w.latest.Swap(nil); decided != nil {
 			picture := decided.frame
 			frame = &picture
-		} else if w.afterPause {
-			// A pause has just ended and the driver may not have said anything new yet. The
-			// newest scene it offered is still the picture, and waiting a tick for it to offer
-			// it again is the light that stays dark for a second after the button — which is the
-			// defect this rule exists to prevent, at a smaller scale.
+		} else if w.afterPause || w.flashed {
+			// A pause has just ended, or a flash has just put the light back, and the driver may
+			// not have said anything new yet. The newest scene it offered is still the picture, and
+			// waiting a tick for it to offer it again is the light that stays dark for a second
+			// after the button — which is the defect this rule exists to prevent, at a smaller
+			// scale. For a flash it is the picture drawn in pixels that needs it: the give-back
+			// restored the light's own segments, and this module's pixels are not in them.
 			if standing := w.standing.Load(); standing != nil {
 				picture := standing.frame
 				frame = &picture
 			}
 		}
 
-		// A pause has just ended, so whatever this writer last delivered is no evidence of what is
-		// on the wall: the light was dark, and a frame identical to the one before it must still be
-		// painted rather than suppressed as "already shown".
-		if w.afterPause {
+		// A pause has just ended, or a flash has, so whatever this writer last delivered is no
+		// evidence of what is on the wall: the light was dark, and a frame identical to the one
+		// before it must still be painted rather than suppressed as "already shown".
+		if w.afterPause || w.flashed {
 			w.afterPause = false
+			w.flashed = false
 
 			last, lastOK = nil, w.now()
 		}
@@ -1556,16 +1594,22 @@ func (w *writer) release() {
 	w.handBack(ctx)
 }
 
-// takenLight is a whole controller as it was found before a preset moment took it: its power, its
+// takenLight is a whole controller as it was found before something took it: its power, its
 // brightness and every segment the controller was drawing.
 //
 // It is not `borrowed`, and the difference is what each promise is about. `borrowed` is one segment
 // of somebody else's strip, kept for the life of the writer because the module draws in it and owes
 // it back on the way out. This is the whole of the operator's own light, kept for the length of one
-// moment: a preset carries its own segments, brightness and LED map (docs/design/v2/events/), so
-// running one replaces everything the light was doing, and the moment is not over until all of it is
-// back. A preset moment on a writer that borrows a zone is refused before any of this runs — there is
-// no part of somebody else's strip this module may take whole.
+// thing that takes it: a preset carries its own segments, brightness and LED map
+// (docs/design/v2/events/), so running one replaces everything the light was doing, and the moment is
+// not over until all of it is back.
+//
+// An identify flash takes it the same way, for the same reason and with the same give-back: the flash
+// is power writes on a light this module owns, and §2.6's promise is that it "leaves the light exactly
+// as it found it". See identify.go.
+//
+// Both are refused on a writer that borrows a zone, before any of this runs — there is no part of
+// somebody else's strip this module may take whole.
 type takenLight struct {
 	on         bool
 	brightness int
@@ -1576,7 +1620,7 @@ type takenLight struct {
 func (w *writer) takeLight(ctx context.Context) (*takenLight, error) {
 	state, err := w.light.State(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the light could not be read before a preset ran, so the preset was not run: %w", err)
+		return nil, fmt.Errorf("the light could not be read before it was taken, so it was not taken: %w", err)
 	}
 
 	return &takenLight{
@@ -1615,7 +1659,7 @@ func (w *writer) giveLightBack(ctx context.Context, held *takenLight) {
 		return w.light.SetPower(ctx, held.on)
 	})
 	if err != nil {
-		w.logf("%s: the light a preset moment took was not put back as it was found: %v", name, err)
+		w.logf("%s: the light was not put back as it was found: %v", name, err)
 
 		return
 	}

@@ -670,6 +670,27 @@ func previewsNow() []*previewTarget {
 	return nil
 }
 
+// penOf is the writer driving one light, by the name these routes give it.
+//
+// It reads the same offer the preview routes read, because a route cannot reach a writer any other
+// way: a writer is built inside a watch and owned by its own goroutine, and the whole point of that
+// ownership is that nothing else touches the controller. Anything that must *act* on a light rather
+// than read it — a preview's picture, an identify's flash — asks for the writer here, and the action
+// itself is handed to that goroutine. See identify.go.
+//
+// A light carrying two bindings is not two entries: several segment bindings on one controller each
+// offer one, so the first is the one answered with — and a segment binding is refused an identify
+// anyway, which is the rule that keeps a whole controller's power out of somebody else's strip.
+func penOf(light string) (*writer, bool) {
+	for _, target := range previewsNow() {
+		if target.named(light) {
+			return target.pen, true
+		}
+	}
+
+	return nil, false
+}
+
 // forgetPreview takes the offer away. A test uses it between watches; the process never needs
 // it, because a process that starts begins with nothing offered.
 func forgetPreview() { previewHeld.Store(nil) }

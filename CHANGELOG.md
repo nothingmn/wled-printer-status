@@ -193,8 +193,8 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   shape and pixel count from the frame the module is drawing, and its segment count; the light's own segments
   with all four bounds, read-only; its own presets, read-only, with an unnamed slot shown as unnamed and a
   light that could not be read saying why; the four proved tests as presses that say before they fire that
-  they paint the real light for a minute; a disabled `identify` with the reason — this build has no route that
-  blinks a light; snapshots with a take-now button, what each file cannot give back, and a restore behind a
+  they paint the real light for a minute; an `identify` that is disabled until the screen is wired to the
+  route below; snapshots with a take-now button, what each file cannot give back, and a restore behind a
   warning that names the destruction, states that it has **never been run against a real light**, and shows
   the sections written and the sections withheld; and a paragraph where `Replace this light…` would be, saying
   there is no replace route and what the swap would have to check. A light that is not answering has every
@@ -207,6 +207,19 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   words. Slot 0 is not listed: it is WLED's own, and both lights answer with an empty object there. A slot
   with no name is listed with an empty name and `unnamed: true`, because it is still a preset the light
   holds. No preset's body is read out: segments, effects and palettes stay in WLED's own interface.
+- `POST /devices/{name}/identify` flashes a light so that a person can see which light a name means: on,
+  then off, one second in each state, five times, and then the light is put back exactly as it was found —
+  the power it was in, its brightness and every segment it was drawing — with the picture this module was
+  showing painted again the moment it is back rather than at the next heartbeat. The flash is handed to the
+  writer that owns the light rather than written beside it, so the steady frame waits for the flash instead
+  of being painted over it. Ten seconds of flashing does not fit the host's ten-second call, so the answer
+  says what is running rather than holding the call open for it: `202` carries how many flashes, how long
+  each state lasts, the power the light was found in and when the flash ends, and the module's log carries
+  the line when the light is back. A light this module drives one borrowed segment of is refused (`409
+  IDENTIFY_BORROWED_SEGMENT`) — power on a WLED controller belongs to the whole strip, so a flash there
+  would take the owner's segments with it — and so is a paused light (`409 IDENTIFY_PAUSED`, naming when
+  the pause ends). A light that does not answer is a `503 IDENTIFY_UNREACHABLE` with nothing written,
+  rather than a call the host gives up on.
 
 ### Fixed
 

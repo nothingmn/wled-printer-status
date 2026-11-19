@@ -129,6 +129,7 @@ func TestTheFragmentParses(t *testing.T) {
 		"/bindings/{id}/pause",
 		"/controllers",
 		"/controllers/{name}",
+		"/devices/{name}/identify",
 		"/devices/{name}/presets",
 		"/devices/{name}/restore",
 		"/devices/{name}/snapshot",

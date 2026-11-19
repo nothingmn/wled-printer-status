@@ -167,7 +167,10 @@ in the order the UI needed them:
 
 Around them: the binding routes (`GET/POST /bindings`, `GET/PUT/DELETE /bindings/{id}`), `/printers`,
 `/controllers`, `GET /devices/{name}/presets` (a light's own presets, by slot and name, read-only, which
-is the list a moment's `which` is picked from), the four preview routes, `/status`,
+is the list a moment's `which` is picked from), `POST /devices/{name}/identify` (built in this tree and
+**not yet deployed**: the flash that says which light a name means — on and off, one second in each state,
+five times, then put back exactly as it was found; it answers `202` as the flash starts because ten seconds
+does not fit the host's ten-second call), the four preview routes, `/status`,
 `/wled-printer-status`, and a Svelte UI bundle served from the module's own `ui/`.
 
 **Genuinely open — do not report these as done:**

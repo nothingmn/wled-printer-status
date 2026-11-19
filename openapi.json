@@ -1768,6 +1768,118 @@
         }
       }
     },
+    "/devices/{name}/identify": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "identify-device",
+        "summary": "Flash the light so that a person can see which light a name means",
+        "description": "The light goes on and off, one second in each state, five times, and is then put back exactly as it was found. It is how a person standing in a room with two lights learns which one the name on a screen refers to, and it is the one thing on a light's card that has to be unmistakable across a room: ten seconds of flashing, then the picture that was there before. docs/product-requirements.md 2.6 is its requirement. Nothing is written behind the writer that owns the light: the flash is handed to the goroutine that drives that light and runs between two passes of its steady frame, so the picture the module would otherwise paint waits for the flash rather than being painted over it. The flash takes the light the way a preset moment does — its power, its brightness and every segment, read before anything is written — and gives it all back at the end, in that order, so a light that was on is on again and a light that was found off is left off; the steady picture this module draws is then painted in the same pass, not at the next heartbeat. A flash is ten seconds and the host gives a call ten seconds, so this route answers as the flash starts, as soon as the light has taken the first write, with what will happen and when it ends; the give-back happens on the module's own goroutine and the module's log carries the line when the light is back. A light that cannot be read, or that will not take the first write, is refused before anything else happens and nothing is written. Two refusals are rules rather than failures: a light this module drives one borrowed segment of is never flashed, because power on a WLED controller is the whole controller's and a flash there would take the owner's segments and their picture with it; and a paused light is never flashed, because a pause is the operator's instruction that the light be left alone — one write and then nothing at all — and ten seconds of writes is the opposite of that. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "202": {
+            "description": "The flash has started, and this is what it will do: five on/off pairs one second apart, and the power the light will be left in. It is answered as the flash begins rather than when it ends, because ten seconds of flashing does not fit the host's ten-second call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "controller": {
+                      "type": "string",
+                      "description": "The controller's base URL as an operator wrote it."
+                    },
+                    "light": {
+                      "type": "string",
+                      "description": "The light's name on these routes."
+                    },
+                    "flashing": {
+                      "type": "boolean",
+                      "description": "True: the light is flashing. This answer is never a 200 with false, because a flash that could not start is a refusal."
+                    },
+                    "already": {
+                      "type": "boolean",
+                      "description": "True when this press joined a flash that was already running rather than starting one: one flash at a time, so that a second press inside the ten seconds does not leave a blink arriving after the person has walked away. The rest of the answer then describes that flash, including how it ends."
+                    },
+                    "flashes": {
+                      "type": "integer",
+                      "description": "How many times the light will go on and off: five."
+                    },
+                    "seconds_per_state": {
+                      "type": "number",
+                      "description": "How long each state lasts: one second."
+                    },
+                    "seconds": {
+                      "type": "number",
+                      "description": "The whole flash: ten seconds, after which the light is put back as it was found."
+                    },
+                    "was_on": {
+                      "type": "boolean",
+                      "description": "The power the light was found in, which is the power it is put back to: a light found off is left off. Absent when the press joined a flash another call started, because this call did not read the light and a false there would be a statement nobody made."
+                    },
+                    "ends_at": {
+                      "type": "string",
+                      "description": "When the flashing ends and the light is put back, in RFC 3339."
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "What the answer means, in a sentence a screen can show: that the light is put back exactly as it was found, that it takes ten seconds, and that the module's log carries the line when it is back."
+                    }
+                  },
+                  "required": [
+                    "controller",
+                    "light",
+                    "flashing",
+                    "flashes",
+                    "seconds_per_state",
+                    "seconds",
+                    "ends_at",
+                    "note"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This light will not be flashed: it is one borrowed segment of somebody else's controller (IDENTIFY_BORROWED_SEGMENT), or a pause is in force on it and the detail says when the pause ends (IDENTIFY_PAUSED). Nothing was written.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The flash could not be started and nothing was written: the light did not answer when it was asked what it was showing, or would not take the first write (IDENTIFY_UNREACHABLE), or this instance is driving no light at this instant (PREVIEW_NOT_RUNNING).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/devices/{name}/restore": {
       "parameters": [
         {
