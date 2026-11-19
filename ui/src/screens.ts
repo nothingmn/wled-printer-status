@@ -30,8 +30,12 @@ export interface Screen {
 }
 
 /**
- * Every screen, in the order the requirements list them: Right now first, because it
+ * Every screen, in the order the requirements list them: Overview first, because it
  * is the one that answers the question the module exists for.
+ *
+ * The first entry's id and catalogue key still say `right-now` / `screen.right_now`: they are
+ * this bundle's own names and the address a person may hold, and the operator's rename was
+ * about the words on the rail. The words are the catalogue's, and they read Overview.
  */
 export const SCREENS: Screen[] = [
 	{ id: 'right-now', key: 'screen.right_now', component: Overview },

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Right now: the one question this screen answers, and the only one it is allowed to.
+	// Overview: the one question this screen answers, and the only one it is allowed to.
 	//
 	// docs/product-requirements.md §2.1, in the operator's own words: *what is on my walls
 	// at this moment*. One sentence, one row per light, and nothing that is a second copy
@@ -15,12 +15,14 @@
 	//     hide half of what is on the wall.
 	//   - **A pause per row**, beside `Pause everything` in the shell's header: one
 	//     mechanism, the same six lengths (pause.svelte.ts).
-	//   - **A one-click bind**, with the defaults it applies stated on the page rather
-	//     than hidden behind the click.
+	//   - **A one-click bind, and the gaps that bind fills stated plainly**: the section is
+	//     always on the screen and always lists the printers no binding names and the
+	//     lights no binding names. It used to be drawn only when both a printer and a
+	//     light were free, which hid exactly the list the operator then asked for.
 	//
-	// It is refreshed while it is open, because a page that answers "right now" and then
-	// stops is a page that lies after ten seconds. The refresh keeps the last good frames
-	// when a read fails, so a blink does not blank the wall.
+	// It is refreshed while it is open, because a page that answers "at this moment" and
+	// then stops is a page that lies after ten seconds. The refresh keeps the last good
+	// frames when a read fails, so a blink does not blank the wall.
 	import { onMount } from 'svelte';
 
 	import { Badge, Button } from '@prusa/connect-ui/primitives';
@@ -28,7 +30,7 @@
 	import { moduleApi, type BindingRequest, type Frame, type PausedBinding, type Printer } from './api';
 	import { ageText, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
-	import { loadLights, lights, addressOf, freeSegments, roomOn, type LightFacts } from './lights.svelte';
+	import { loadKnownLights, known, lights, addressOf, freeSegments, roomOn, type LightFacts } from './lights.svelte';
 	import {
 		LENGTHS,
 		fateOf,
@@ -133,14 +135,13 @@
 		return lengthText(t, left, fate.forever === true);
 	};
 
-	/** The lights a printer can still go on, which is the column's whole list. */
-	const roomy = $derived(
-		lights.list
-			.map((one) => ({ one, room: roomOn(one) }))
-			.filter((held) => held.room.room),
-	);
-
-	/** The printers nothing shows yet: §2.1's first condition, in his own words. */
+	/**
+	 * The printers no binding names: §2.1's first gap list, in his own words.
+	 *
+	 * Read from the bindings rather than from a printer's own `bound`, because that field
+	 * speaks only for the first of several: a printer in two rooms answers with the first
+	 * light, and a screen asking "is this printer on anything" has to read GET /bindings.
+	 */
 	const freePrinters = $derived(
 		printers.filter(
 			(one) => !lights.list.some((light) => light.bindings.some((held) => held.printer === one.id)),
@@ -148,28 +149,39 @@
 	);
 
 	/**
-	 * Whether the quick bind is offered at all.
+	 * The lights no binding names: §2.1's second gap list, and the answer to "where are the
+	 * lights I could put a printer on".
 	 *
-	 * §2.1's section is a control, and a control is worth drawing only when it can act: it
-	 * needs a printer that is not already on a light *and* a light that still has room for
-	 * one. With either missing there is nothing in it to press, so the whole section --
-	 * heading, both columns, the defaults and the footnote -- is absent rather than drawn
-	 * with an explanation of why it cannot work.
-	 *
-	 * Both halves are read from what the module knows now: the printers the host holds,
-	 * less the ones GET /bindings already places, and the lights whose own segments and
-	 * bindings leave room. A light that would not answer has no room to offer, which is
-	 * also the honest answer for a printer it might hold.
+	 * A light with a printer on one of its six zones **has a binding** and is therefore not
+	 * here. That is the distinction that made the old "0 with room" reading useless: room is
+	 * not the test, a binding is, and a light wearing one printer on one zone is a light
+	 * somebody has already given a job to.
 	 */
-	const canQuickBind = $derived(freePrinters.length > 0 && roomy.length > 0);
+	const freeLights = $derived(lights.list.filter((one) => one.bindings.length === 0));
 
-	/** Where a printer already is, by the light's own name, for the column that offers it. */
-	const whereIs = (printer: Printer): string => {
-		const lightsShown = frames
-			.filter((frame) => frame.printer.id === printer.id)
-			.map((frame) => keyOf(frame));
+	/**
+	 * Whether there is a pair to make, which is when a bind button and the defaults behind it
+	 * are worth drawing.
+	 *
+	 * The section itself is always drawn -- that is his rule of 2026-11-19, and it replaced
+	 * "hide it unless both sides are free", which hid the very list he went looking for. What
+	 * this decides is narrower: with no printer to pick, a bind button on a light would be a
+	 * control that cannot act, so the lights are listed plainly instead.
+	 */
+	const canBind = $derived(freePrinters.length > 0 && freeLights.length > 0);
 
-		return lightsShown.length === 0 ? t('overview.no_light_yet') : t('overview.on_light', { lights: lightsShown.join(', ') });
+	/**
+	 * What a light calls itself, from the row this module keeps for it: `DamonAward`, not
+	 * `10.0.0.99`. The route name is the address without its scheme, which is nobody's name for
+	 * their own light; a light that has never answered has no better name and says its address.
+	 */
+	const namedOf = (one: LightFacts): string => {
+		const row = known.list.find(
+			(held) => lightName(held.address) === lightName(addressOf(one)) || held.name === (one.controller?.name ?? ''),
+		);
+		const calls = row?.calls_itself ?? '';
+
+		return calls === '' ? (one.controller?.name ?? '') : calls;
 	};
 
 	const load = async (quiet = false): Promise<void> => {
@@ -232,9 +244,9 @@
 
 		try {
 			await api.addBinding(body);
-			notice = t('overview.bind_done', { printer: printer?.name ?? picked, light: (one.controller?.name ?? '') });
+			notice = t('overview.bind_done', { printer: printer?.name ?? picked, light: namedOf(one) });
 			picked = null;
-			await Promise.all([load(true), loadLights()]);
+			await Promise.all([load(true), loadKnownLights()]);
 		} catch (problem) {
 			failure = `${t('overview.bind_failed')}: ${describe(problem)}`;
 		} finally {
@@ -242,7 +254,7 @@
 		}
 	};
 
-	/** Pairs every light with room with the picked printer, which is what `bind them all` says. */
+	/** Pairs every light with no binding with the picked printer, which is what `bind them all` says. */
 	const bindEvery = async (): Promise<void> => {
 		if (picked === null) return;
 
@@ -254,18 +266,18 @@
 		try {
 			let placed = 0;
 
-			for (const held of roomy) {
-				const body: BindingRequest = { printer: picked, controller: addressOf(held.one) };
-				const first = freeSegments(held.one)[0];
+			for (const one of freeLights) {
+				const body: BindingRequest = { printer: picked, controller: addressOf(one) };
+				const first = freeSegments(one)[0];
 
-				if (!held.room.whole && first !== undefined) body.segment = first.id;
+				if (!roomOn(one).whole && first !== undefined) body.segment = first.id;
 				await api.addBinding(body);
 				placed += 1;
 			}
 
 			notice = t('overview.bind_all_done', { count: placed, printer: printer?.name ?? picked });
 			picked = null;
-			await Promise.all([load(true), loadLights()]);
+			await Promise.all([load(true), loadKnownLights()]);
 		} catch (problem) {
 			failure = `${t('overview.bind_failed')}: ${describe(problem)}`;
 		} finally {
@@ -287,10 +299,10 @@
 	};
 
 	onMount(() => {
-		void Promise.all([load(), loadLights(), refreshPauses()]);
+		void Promise.all([load(), loadKnownLights(), refreshPauses()]);
 	});
 
-	// The page answers "right now", so it keeps answering. Ten seconds is fast enough to
+	// The page answers "at this moment", so it keeps answering. Ten seconds is fast enough to
 	// watch a print move and slow enough that two lights cost six reads a minute.
 	$effect(() => {
 		const tick = (): void => {
@@ -457,44 +469,53 @@
 		<p class="text-xs opacity-60">{pictureNote}</p>
 	{/if}
 
-	<!-- §2.1's quick bind, drawn only when it can act: a printer with no light and a light
-	     with room for one. With either missing there is nothing in it to press, so the whole
-	     section -- heading, both columns, the defaults and the footnote -- is not drawn. -->
-	{#if canQuickBind}
-		<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
+	<!-- §2.1's quick bind, and his rule of 2026-11-19: the section is always drawn, and it
+	     always shows the two gap lists — the printers no binding names and the lights no
+	     binding names. It used to be hidden unless both sides were free, which hid exactly
+	     the list he then went looking for; a side with nothing in it now says so in one
+	     line, and the lights are listed plainly when there is no printer to pick, so the
+	     section never draws a control that cannot act. -->
+	<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
 
-		<div class="grid gap-3 md:grid-cols-2">
-			<div class="overflow-hidden rounded border">
-				<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-					<span>{t('overview.printers_heading')}</span>
-					<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: printers.length })}</span>
-				</div>
-				{#if printers.length === 0}
-					<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
-				{:else}
-					{#each printers as printer (printer.id)}
-						<button
-							type="button"
-							class={picked === printer.id
-								? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
-								: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
-							aria-pressed={picked === printer.id}
-							onclick={() => (picked = picked === printer.id ? null : printer.id)}
-						>
-							<span class="font-medium">{printer.name}</span>
-							<span class="text-xs opacity-60">{whereIs(printer)}</span>
-							{#if picked === printer.id}
-								<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
-							{/if}
-						</button>
-					{/each}
-				{/if}
+	<div class="grid gap-3 md:grid-cols-2">
+		<div class="overflow-hidden rounded border">
+			<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+				<span>{t('overview.printers_heading')}</span>
+				<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: freePrinters.length })}</span>
 			</div>
+			{#if loading}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.loading')}</p>
+			{:else if printers.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
+			{:else if freePrinters.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_printers')}</p>
+			{:else}
+				{#each freePrinters as printer (printer.id)}
+					<button
+						type="button"
+						class={picked === printer.id
+							? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
+							: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
+						aria-pressed={picked === printer.id}
+						onclick={() => (picked = picked === printer.id ? null : printer.id)}
+					>
+						<span class="font-medium">{printer.name}</span>
+						{#if printer.model}
+							<span class="text-xs opacity-60">{printer.model}</span>
+						{/if}
+						{#if picked === printer.id}
+							<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
+						{/if}
+					</button>
+				{/each}
+			{/if}
+		</div>
 
-			<div class="overflow-hidden rounded border">
-				<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-					<span>{t('overview.lights_heading')}</span>
-					<span class="font-normal opacity-60">{t('overview.lights_count', { count: roomy.length })}</span>
+		<div class="overflow-hidden rounded border">
+			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+				<span>{t('overview.lights_heading')}</span>
+				<span class="font-normal opacity-60">{t('overview.lights_count', { count: freeLights.length })}</span>
+				{#if canBind}
 					<Button
 						variant="secondary"
 						size="sm"
@@ -502,34 +523,45 @@
 						disabled={picked === null || working}
 						onclick={() => void bindEvery()}
 					>
-						{t('overview.bind_them_all', { count: roomy.length })}
+						{t('overview.bind_them_all', { count: freeLights.length })}
 					</Button>
-				</div>
-				{#each roomy as held (addressOf(held.one))}
+				{/if}
+			</div>
+			{#if !lights.loaded}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.loading')}</p>
+			{:else if lights.failure !== ''}
+				<p class="px-3 py-3 text-sm" role="alert">{t('overview.lights_unreadable', { why: lights.failure })}</p>
+			{:else if lights.list.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_lights')}</p>
+			{:else if freeLights.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_lights')}</p>
+			{:else}
+				{#each freeLights as one (addressOf(one))}
 					<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
-						<span class="font-medium">{held.one.controller?.name}</span>
-						<span class="font-mono text-xs opacity-60">{held.one.controller?.address}</span>
-						<span class="text-xs opacity-60">
-							{held.room.whole
-								? t('overview.whole_free')
-								: t('overview.free_segments', { free: held.room.free, total: held.one.segments.length })}
-						</span>
-						<span class="ml-auto">
-							<Button
-								variant="default"
-								size="sm"
-								disabled={picked === null || working}
-								onclick={() => void bind(held.one)}
-							>
-								{picked === null ? t('overview.bind') : t('overview.bind_one', { printer: printers.find((one) => one.id === picked)?.name ?? '' })}
-							</Button>
-						</span>
+						<span class="font-medium">{namedOf(one)}</span>
+						{#if namedOf(one) !== (one.controller?.name ?? '')}
+							<span class="font-mono text-xs opacity-60">{one.controller?.address}</span>
+						{/if}
+						{#if canBind}
+							<span class="ml-auto">
+								<Button
+									variant="default"
+									size="sm"
+									disabled={picked === null || working}
+									onclick={() => void bind(one)}
+								>
+									{picked === null ? t('overview.bind') : t('overview.bind_one', { printer: printers.find((held) => held.id === picked)?.name ?? '' })}
+								</Button>
+							</span>
+						{/if}
 					</div>
 				{/each}
-				<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
-			</div>
+			{/if}
+			<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
 		</div>
+	</div>
 
+	{#if canBind}
 		<div class="rounded border px-3 py-3 text-sm">
 			<p class="text-xs font-medium uppercase tracking-wide opacity-60">{t('overview.defaults_heading')}</p>
 			<ul class="mt-1 list-disc pl-5 text-sm">

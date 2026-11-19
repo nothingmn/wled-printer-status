@@ -27,10 +27,17 @@ the top, and `version:` in `module.yaml` is the newest released heading below it
   an answer arriving after a newer change could put the older value back on screen. Writes for one
   binding now go out in the order they were made, and an answer that a newer change has overtaken is
   not applied to the controls.
-- **"Put a printer on a light" is drawn only when it can act.** The whole block on Right now — the
-  heading, both columns, the defaults and the footnote — is absent unless a printer has no light **and**
-  a light has room for one. It used to draw itself with a Lights column reading "0 with room" and a
-  paragraph explaining there was nowhere to put a printer: a control that could not do anything.
+- **"Put a printer on a light" is always on the Overview, and always shows what is missing.** The block
+  now lists the printers no binding names and the lights no binding names, one line per side when that
+  side is empty — *Every printer is on a light* / *Every light has a printer* — and it is drawn every
+  time, so a light added by address and never bound is visible without hunting for it. A light with a
+  printer on one of its zones counts as bound: it is not offered here, because it already has a job.
+  The bind button on a light, `bind them all` and the defaults behind them appear only when there is a
+  printer to pick, so the block never draws a control that cannot act. (This replaces the version that
+  hid the whole block unless a printer and a light were both free — which hid the list itself.)
+- **The screen called "Right now" is called Overview.** The rail entry and the heading both read
+  Overview — the name the design record and the requirements have always used in the second half of
+  their own heading. Nothing else about the screen changed: same id, same place, first in the rail.
 - **Dropdown lists are readable in dark mode.** The closed control was right and the open list was
   white text on a white popup, because the list is drawn by the browser and painted from the page's
   colour scheme, while this module's palette switches on the host's `.dark` class and never told the

@@ -2,7 +2,7 @@
 //
 // docs/product-requirements.md §3 puts `Pause everything` in the header of every tab,
 // because it is a panic button and not a page feature, and §2.1 puts a pause on each
-// row of Right now. Two controls, one mechanism: the same six lengths, the same store
+// row of Overview. Two controls, one mechanism: the same six lengths, the same store
 // behind them, one place that reads GET /pause. That is why this lives beside the
 // screens rather than inside one of them -- a second implementation of the panic
 // button is a second thing that can be wrong when it matters.

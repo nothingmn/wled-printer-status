@@ -41,7 +41,7 @@
 	const host = heldHost();
 	const t = host.t;
 
-	/** The screen showing. Right now opens first, which is the one every visit starts on. */
+	/** The screen showing. Overview opens first, which is the one every visit starts on. */
 	let current = $state<string>(SCREENS[0].id);
 	/** Whether the six lengths are on offer. */
 	let menu = $state(false);

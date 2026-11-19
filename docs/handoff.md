@@ -197,7 +197,7 @@ the four preview routes, `/status`,
 `/wled-printer-status`, and a Svelte UI bundle served from the module's own `ui/`.
 
 **The page carries seven of the requirements' eight screens.** `ui/src/screens.ts` is the whole list —
-Right now, Bindings, Events, Colours, Layout, Devices, Diagnostics — and the built bundle holds each id and
+Overview, Bindings, Events, Colours, Layout, Lights, Diagnostics — and the built bundle holds each id and
 its catalogue key, proved by grepping the shipped `index.js` rather than the source. **Settings (§2.8) has
 no component in this tree**: there is no `settings.svelte`, no `screen.settings` key in the bundle, and no
 rail entry for it. That is the one gap between §2 and the page, and it is the first item of UI work rather
