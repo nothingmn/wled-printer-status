@@ -728,6 +728,63 @@ way on purpose: the `FINISHED` word on this panel is still unverified, nobody ha
 brightness is not the thing to change underneath an experiment that only the operator's eyes can settle. The
 desk light at `10.0.0.253` was not written to, no preview was fired, and no pixels were pushed.
 
+**Eleventh run, 2026-11-19 00:39Z, from `c817859`.** The change that clears the word's name when its hold
+ends, and the removal of the per-LED JSON call (`Paint`) that this firmware accepts and draws nothing of.
+Built from `git archive HEAD` for the reason run six gives; release `/config/config.d/wled-release-c817859`,
+whose `linux_amd64` digest is `22a137ff9e6ccdd91fe123acca0c6a374335c901529084ef9a7437bdfa54f166` and is what
+the installed binary reads back.
+
+`ui/` is unchanged between `e8bc059` and this commit, so the bundle was carried over from the release it was
+last built into and is listed in `checksums.txt` with everything else: ten files, which `module add` counted
+back. The settings file was **not** touched — a do-nothing whole-day window at 128 in `America/Denver` — so
+the panel's brightness is where the tenth run left it. The install printed the eight settings and the two
+egress lines (port 80, and port 4048 for the pixels), said `memory 32 MiB, set by the author`, `enabled yes`,
+and `MODULE_ADD_EXIT=0`.
+
+```console
+$ docker restart prusa_connect        # 00:39:33Z
+$ docker ps --format "{{.Names}}\t{{.Status}}" | grep prusa_connect
+prusa_connect     Up 27 seconds (healthy)      # and still healthy at two minutes
+prusa_connect_db  Up 25 hours (healthy)
+$ curl -s localhost:8080/api/v1/readiness
+{"ready":true,"serving":4,"declared":4,"blocked":[],…}    # this instance ready
+… wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at the brightness of
+                       brightness_schedule judged in America/Denver, with 128 standing wherever no window covers
+… wled-printer-status: the light's brightness is 128, the 00:00-23:59 window of America/Denver, where it is 17:39 MST
+… wled-printer-status: the controller drives 16384 LEDs
+… wled-printer-status: the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+**The name, proved on the device rather than in a test.** The debt this run closes was a `FINISHED` name that
+outlived its own event, because this firmware keeps a segment's name through a body that does not mention
+`"n"`. A preview could not be fired to make one — the operator's word experiment is unverified and must be
+left exactly as it was — so the leftover state was reproduced directly, with a body that carries the name
+and nothing else, and the module's ordinary write was watched clearing it:
+
+```console
+$ curl -s -X POST -H 'Content-Type: application/json' -d '{"seg":[{"id":0,"n":"FINISHED"}]}' \
+    http://10.0.0.136/json/state                    # 00:40:07.997Z
+{"success":true}
+$ curl -s http://10.0.0.136/json/state              # 00:40:08Z
+seg 0  start 0  stop 236  rows 0..64  on true  fx 0  n 'FINISHED'  col [0,170,0]
+                                                    # 00:40:49Z — no request from anyone but the module
+seg 0  start 0  stop 238  rows 0..64  on true  fx 0  n None        col [0,170,0]
+seg 1  start 238 stop 256            on true          n None        col [0,0,0]
+$ curl -s …/status                                  # 00:40:54Z
+… "frame":{"colour":{"r":0,"g":170,"b":0},"lit":15237,"total":16384,"reason":"progress"},
+  "last_send":{"at":"2026-11-19T00:40:48.992686417Z","ok":true}
+```
+
+The write that cleared the name is the write the progress bar was making anyway — `last_send` is
+`00:40:48.993Z`, the read a second later shows the bar two columns further on and no name, and nothing was
+sent to make the clear happen. `bri` reads 128 throughout, so the brightness the tenth run settled is
+untouched.
+
+**What this run does not prove.** That a letter is lit. No preview was fired and no datagram was pushed: the
+word itself is still exactly as the operator left it, unlooked at, and `AGENTS.md` §8 says so. What is proved
+here is the hand-back's other half — the name does not survive the event on this firmware, and clearing it
+costs no request.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
