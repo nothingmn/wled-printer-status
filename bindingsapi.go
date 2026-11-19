@@ -859,6 +859,24 @@ func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A light this module knows but drives no binding on. It is still a light, and its own segments
+	// are exactly what a person adding a binding to it needs to see — schema version 7's whole
+	// point is that a light exists before anything is shown on it (lights.go). Its entry carries no
+	// printers and no taken segments, because nothing is bound to it yet.
+	if api.tables != nil {
+		if light, ok := api.tables.knownLightNamed(name); ok {
+			answer(w, http.StatusOK, api.readSegments(r.Context(), controllerAnswer{
+				Name:     light.name(),
+				Address:  light.Address,
+				Key:      light.key(),
+				Segments: []int{},
+				Printers: []string{},
+			}))
+
+			return
+		}
+	}
+
 	names := make([]string, 0, len(found))
 	for _, one := range found {
 		names = append(names, one.Name)

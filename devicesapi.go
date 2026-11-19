@@ -228,6 +228,22 @@ func (api deviceAPI) deviceNamed(name string) (controllerAnswer, bool, error) {
 		}
 	}
 
+	// A light this module knows and drives nothing on: schema version 7 makes a light a thing of
+	// its own, so a snapshot, a preset list and an identify can be asked of one with no printer
+	// bound to it (lights.go). Its entry says exactly that — no printers, no taken segments — and
+	// the address is the light's own, so the reads below reach it.
+	if api.tables != nil {
+		if light, known := api.tables.knownLightNamed(name); known {
+			return controllerAnswer{
+				Name:     light.name(),
+				Address:  light.Address,
+				Key:      light.key(),
+				Segments: []int{},
+				Printers: []string{},
+			}, true, nil
+		}
+	}
+
 	return controllerAnswer{}, false, nil
 }
 
@@ -351,6 +367,12 @@ func (api deviceAPI) capture(ctx context.Context, found controllerAnswer, light 
 	if err != nil {
 		return snapshotDocument{}, at, fmt.Errorf("what it is doing now could not be read: %w", err)
 	}
+
+	// A reading taken is a reading worth keeping: what the light just said about itself is written
+	// into the row this module holds for it, so a light added while it was dark stops saying its
+	// facts have never been read. A light this module does not know is not added here — adding is a
+	// person's act (lights.go).
+	rememberLightFacts(api.tables, found.Address, info, at)
 
 	return snapshotDocument{
 		Format:  snapshotFormat,

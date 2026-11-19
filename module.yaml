@@ -1,6 +1,6 @@
 # The manifest for wled-printer-status: the Go process in main.go, and the browser
 # bundle under ui/. The process is the whole of what runs; the bundle is the module's
-# own pages — Overview, Bindings, Events, Colours, Layout, Devices, Diagnostics — and the
+# own pages — Overview, Bindings, Events, Colours, Layout, Lights, Diagnostics — and the
 # module runs without it.
 #
 # `prusa-connect module add` reads it out of the release and writes one

@@ -177,6 +177,52 @@ var (
 		"controller",
 	))
 
+	// LightRefused is an address that is not a light this module can keep: nothing answered at it,
+	// or something answered that is not a WLED controller, or the light is the one a binding still
+	// uses and cannot be removed.
+	//
+	// Every one of them is a refusal and not a stored row: a typo that left a phantom light in the
+	// document would be a card that never fills and a name nobody can match against the network.
+	// The detail names which of those happened, because "that did not work" is not something a
+	// person can act on.
+	LightRefused = fault.Register(faultDomain, "LIGHT_REFUSED", http.StatusConflict, fault.Document(
+		"This address is not a light this module can keep",
+		"Adding a light reads it first: GET /json/info on the address, which every WLED controller answers with its own name, its firmware, its pixel count and its shape. Nothing is stored unless something answered there and the answer was a WLED controller's. An address nothing answers at, an address that answers with something else — a printer, a NAS, a web page — and a light a binding still uses are all refused, and the detail says which. Nothing in this module's store was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"address",
+	))
+
+	// LightAlreadyKnown is the address of a light this module already knows. It is its own refusal
+	// rather than a success that changes nothing, because adding twice is a typo a person should
+	// see, and because the row that exists keeps the address as it was first written.
+	LightAlreadyKnown = fault.Register(faultDomain, "LIGHT_ALREADY_KNOWN", http.StatusConflict, fault.Document(
+		"This light is already on the list",
+		"The address resolves to a light this module already knows, by the same rule that makes two spellings of one controller one controller: the scheme and the host, lowercased, without a path or a trailing slash. Read GET /lights for the row it already holds. Nothing was added.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"address",
+	))
+
+	// LightBodyInvalid is a body that does not name an address at all: not JSON, a key this module
+	// does not read, or nothing where the address goes.
+	LightBodyInvalid = fault.Register(faultDomain, "LIGHT_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body does not name a light's address",
+		"Write a JSON object with one member, address: the light's IP address or its full URL, such as 10.0.0.253 or http://10.0.0.253. Every other key is refused rather than ignored. An address with no scheme is read as http, which is what a WLED controller answers on.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// LightNotFound is a light this module does not know, by the name the list gives it: its
+	// address without the scheme.
+	LightNotFound = fault.Register(faultDomain, "LIGHT_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module knows no light of that name",
+		"Read GET /lights for the ones it knows. A light is named here the way a controller is named on GET /controllers: its address without the scheme, so http://10.0.0.253 is 10.0.0.253.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"light",
+	))
+
 	// StoreUnavailable is a read or a write where this module has no configuration store it can
 	// act on: the operator granted it no data directory, the document has not been written yet,
 	// the document is one this build cannot act on, or the directory would not take the write.

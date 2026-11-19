@@ -623,6 +623,15 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 	// the settings seeded that store once and change nothing in it now.
 	live.setOrigin(origin)
 
+	// Every light the store knows but has never read is read once now, in the background: an
+	// install that came up from the migration to schema version 7 holds addresses and no facts, and
+	// the Lights screen would otherwise say "not read yet" about a light that is answering this
+	// minute. It is a goroutine because a start must not wait for a controller: a light that is
+	// unplugged is not a reason to be slow, and fillLightFacts keeps nothing it could not read.
+	go fillLightFacts(sessionCtx, tables, func(address string) (lightProber, error) {
+		return wled.New(address)
+	}, logf)
+
 	held.Store(&sent)
 
 	return nil
@@ -689,7 +698,15 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 			return nil, "", renderErr
 		}
 
-		path, writeErr := saveStore(dataDir, storedConfig{Version: storeVersion, Bindings: entries})
+		path, writeErr := saveStore(dataDir, storedConfig{
+			Version:  storeVersion,
+			Bindings: entries,
+			// And the lights those bindings name, as rows with the address on them: a fresh
+			// install from settings has the same claim on the list as an upgraded one, and a
+			// person who wrote two bindings in the settings must not have to retype the two
+			// addresses they already name. The start fills the facts in (fillLightFacts).
+			Lights: seededLightsOrNothing(entries),
+		})
 		if writeErr != nil {
 			return nil, "", writeErr
 		}
@@ -868,6 +885,10 @@ func routes() http.Handler {
 		live:   live,
 		tables: tables,
 	}.mount(mux)
+
+	// The lights this module knows: the list a screen draws a card per light from, a light added by
+	// its address, and a light taken off the list. See lights.go.
+	lightsAPI{tables: tables}.mount(mux)
 
 	// The Overview screen's thumbnails: one reconstructed picture per binding, drawn by the same
 	// code that draws the light and cheap enough to ask for on every draw. See framesapi.go.

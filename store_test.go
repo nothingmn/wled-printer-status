@@ -500,7 +500,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 6 {
+	if found.Config.Version != storeVersion || storeVersion != 7 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -1001,14 +1001,17 @@ func TestAVersionFourStoreStepsToFiveAndKeepsEveryTable(t *testing.T) {
 	}
 }
 
-// TestAVersionFiveStoreStepsToSixAndInventsNoLine is the step this change adds, and the one thing it
-// must not do.
+// TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine is the step a version-5 document takes
+// to this build, and the one thing the layout half of it must not do.
 //
 // Version 6 is the panel's seven optional lines, and every one of them is absent until somebody
 // switches it on. A version-5 row never carried one and must not acquire one at the upgrade: a line
 // written as `false` by the upgrade would be indistinguishable from a line a person had switched off,
 // and the row would grow a key nobody wrote on every install that had ever been laid out.
-func TestAVersionFiveStoreStepsToSixAndInventsNoLine(t *testing.T) {
+//
+// Version 7 is the lights list, which a version-5 document reaches through the version-6 step and
+// then the one above it.
+func TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine(t *testing.T) {
 	const panel = "07e893bb-b922-4ff0-9ad3-061b957400c3"
 
 	dir := writeStoreFile(t, `{
@@ -1034,8 +1037,18 @@ func TestAVersionFiveStoreStepsToSixAndInventsNoLine(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 5")
 	}
 
-	if found.Config.Version != 6 || storeVersion != 6 {
-		t.Fatalf("the upgraded document is at version %d, want 6", found.Config.Version)
+	if found.Config.Version != 7 || storeVersion != 7 {
+		t.Fatalf("the upgraded document is at version %d, want 7", found.Config.Version)
+	}
+
+	// The address the binding names became a light, with no facts on it: the migration has the
+	// address and nothing else, and inventing a name here would be writing a fact nobody read.
+	if len(found.Config.Lights) != 1 || found.Config.Lights[0].Address != "http://10.0.0.136" {
+		t.Fatalf("the stepped document holds the lights %+v, want one row for http://10.0.0.136", found.Config.Lights)
+	}
+
+	if found.Config.Lights[0].read() || found.Config.Lights[0].CallsItself != "" || found.Config.Lights[0].Pixels != 0 {
+		t.Fatalf("the upgrade invented facts for a light nobody read: %+v", found.Config.Lights[0])
 	}
 
 	if len(found.Config.Layouts) != 1 {
@@ -1077,5 +1090,107 @@ func TestAVersionFiveStoreStepsToSixAndInventsNoLine(t *testing.T) {
 
 	if again.Config.Layouts[0].Material == nil || !*again.Config.Layouts[0].Material {
 		t.Fatalf("the line the row names did not survive the round trip: %+v", again.Config.Layouts[0])
+	}
+}
+
+// TestTheInstalledStoreMigratesToThisBuild is the real document, copied off the running install.
+//
+// It is skipped unless WLED_STORE_FIXTURE names a directory holding one, because the document it
+// steps up is the operator's own and must not be a fixture this repository invents: the point of
+// the test is that the file an install is actually running on reaches schema version 7 with its
+// bindings intact and one light per address they name. The copy is made into a temporary directory
+// first, so a read here can never write over the document that is in use.
+//
+// The command, run on the host that has the module's store in its container:
+//
+//	docker cp prusa_connect:/config/config.d/module-data/wled-printer-status/config.json /tmp/live/config.json
+//	WLED_STORE_FIXTURE=/tmp/live go test -run TestTheInstalledStoreMigratesToThisBuild -v .
+func TestTheInstalledStoreMigratesToThisBuild(t *testing.T) {
+	fixture := strings.TrimSpace(os.Getenv("WLED_STORE_FIXTURE"))
+	if fixture == "" {
+		t.Skip("set WLED_STORE_FIXTURE to a directory holding a copy of an installed store")
+	}
+
+	source, err := os.ReadFile(storePath(fixture))
+	if err != nil {
+		t.Fatalf("read the installed store at %s: %v", storePath(fixture), err)
+	}
+
+	before, err := versionOf(source)
+	if err != nil {
+		t.Fatalf("read the version of the installed store: %v", err)
+	}
+
+	dir := t.TempDir()
+
+	if err := os.WriteFile(storePath(dir), source, 0o600); err != nil {
+		t.Fatalf("copy the installed store: %v", err)
+	}
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("the installed document at schema version %d was refused: %v", before, err)
+	}
+
+	if found.Config.Version != storeVersion {
+		t.Fatalf("the installed document stepped to version %d, want %d", found.Config.Version, storeVersion)
+	}
+
+	if !found.Upgraded {
+		t.Fatalf("the installed document at version %d was not stepped up", before)
+	}
+
+	// Every address a binding names, once, and the bindings are the lines they were.
+	named := make([]string, 0, len(found.Config.Bindings))
+
+	for i, raw := range found.Config.Bindings {
+		var line storedEntry
+
+		if err := decodeStrictly(raw, &line); err != nil {
+			t.Fatalf("read binding %d of the installed document: %v", i+1, err)
+		}
+
+		named = append(named, line.Controller)
+	}
+
+	if len(named) == 0 {
+		t.Fatal("the installed document names no binding, so there is nothing for this test to prove")
+	}
+
+	if len(found.Config.Lights) != len(named) {
+		t.Fatalf("the stepped document holds %d lights, want the %d its bindings name: %+v",
+			len(found.Config.Lights), len(named), found.Config.Lights)
+	}
+
+	for i, address := range named {
+		if lightKey(found.Config.Lights[i].Address) != lightKey(address) {
+			t.Fatalf("light %d is at %q, want the address its binding names, %q",
+				i+1, found.Config.Lights[i].Address, address)
+		}
+
+		t.Logf("binding %d names %s, which is now light %q", i+1, address, found.Config.Lights[i].name())
+	}
+
+	// Written back and read again: the document this build would leave behind reads at 7 without
+	// another step, and still holds the lights.
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the stepped document back: %v", err)
+	}
+
+	again, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("read the stepped document back: %v", err)
+	}
+
+	if again.Upgraded || len(again.Config.Lights) != len(named) {
+		t.Fatalf("the document at rest upgraded %v and holds %d lights, want no upgrade and %d",
+			again.Upgraded, len(again.Config.Lights), len(named))
+	}
+
+	t.Logf("schema version %d stepped to %d, %d bindings kept, %d lights written",
+		before, again.Config.Version, len(again.Config.Bindings), len(again.Config.Lights))
+
+	if written, err := os.ReadFile(storePath(dir)); err == nil {
+		t.Logf("the stepped document this build leaves behind:\n%s", written)
 	}
 }

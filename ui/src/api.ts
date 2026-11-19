@@ -102,6 +102,48 @@ export interface Segment {
   stopY: number;
 }
 
+/**
+ * One light this module knows, as GET /lights answers with it: its address, and what it said about
+ * itself the last time it was read.
+ *
+ * It exists whether or not a binding sits on it, which is the whole of docs/product-requirements.md
+ * §2.6's "one card per light": a light with no printer on it is still a card, and a card per
+ * binding wearing a light's name is what this replaced.
+ */
+export interface KnownLight {
+  /** Its name on the routes: the address without the scheme, as GET /controllers names one. */
+  name: string;
+  /** The base URL the operator wrote, with a scheme. */
+  address: string;
+  /** The name the light calls itself, absent until it has answered here. */
+  calls_itself?: string;
+  /** The firmware it reports. */
+  firmware?: string;
+  /** How many LEDs it drives. */
+  pixels: number;
+  /** Which shape it is, absent until it has answered here. */
+  kind?: 'panel' | 'strip';
+  /** The panel's geometry in pixels; zero on a strip. */
+  width?: number;
+  height?: number;
+  /** When those facts were read. Absent means nobody has heard from it yet. */
+  probed_at?: string;
+  /** True when the facts above are the light's own answer. */
+  facts_known: boolean;
+  /** What the card must not leave a reader to assume, when there is something. */
+  note?: string;
+}
+
+/** GET /lights: every light this module knows, and the sentence about discovery. */
+export interface LightsBody {
+  lights: KnownLight[];
+  count: number;
+  persisted: boolean;
+  /** That network discovery is not switched on yet, that typing an address works, and that
+   * opening discovery is planned. */
+  note: string;
+}
+
 /** GET /controllers/{name}: the light's own segments, which every picker is built from. */
 export interface ControllerDetail {
   controller: Controller;
@@ -761,6 +803,14 @@ const routes = (namespace: string) => {
     listPrinters: operation('list-printers', 'GET', `${base}/printers`, 'json'),
     listControllers: operation('list-controllers', 'GET', `${base}/controllers`, 'json'),
     readController: operation('read-controller', 'GET', `${base}/controllers/{name}`, 'json'),
+
+    // The lights this module knows, which is not the same list as the controllers it drives: a
+    // light somebody owns is a fact whether or not a printer is shown on it. The list is what the
+    // Lights screen draws a card per entry from; the add route is a person typing an address, which
+    // is read before it is kept.
+    listLights: operation('list-lights', 'GET', `${base}/lights`, 'json'),
+    addLight: operation('add-light', 'POST', `${base}/lights`, 'json', 'application/json'),
+    removeLight: operation('remove-light', 'DELETE', `${base}/lights/{name}`, 'json'),
     readStatus: operation('read-status', 'GET', `${base}/status`, 'json'),
     listFrames: operation('list-frames', 'GET', `${base}/frames`, 'json'),
 
@@ -873,6 +923,25 @@ export const moduleApi = (host: ModuleHost) => {
     /** One light, and the segments it reports of itself: the list every picker is built from. */
     readController: (name: string) =>
       transport.call<ControllerDetail>(held.readController, { path: { name } }, host.signal),
+
+    /** Every light this module knows, whether or not a printer is shown on it. */
+    listLights: () => transport.call<LightsBody>(held.listLights, {}, host.signal),
+
+    /**
+     * Adds a light by its address. The route reads the light before it keeps it, so what comes back
+     * is what answered: its own name, its firmware, its pixels and its shape. A refusal is the
+     * sentence saying what happened, and nothing was stored.
+     */
+    addLight: (address: string) =>
+      transport.call<{ light: KnownLight; note: string }>(held.addLight, { body: { address } }, host.signal),
+
+    /** Takes a light off the list. Refused while a binding still names it, and the refusal says so. */
+    removeLight: (name: string) =>
+      transport.call<{ deleted: string; address: string; note: string }>(
+        held.removeLight,
+        { path: { name } },
+        host.signal,
+      ),
 
     readStatus: () => transport.call<StatusBody>(held.readStatus, {}, host.signal),
 

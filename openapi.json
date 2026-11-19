@@ -328,6 +328,147 @@
         }
       }
     },
+    "/lights": {
+      "get": {
+        "operationId": "list-lights",
+        "summary": "The lights this module knows",
+        "description": "Every light this module knows, whether or not a binding sits on it: the address as the operator wrote it, and what the light said about itself the last time it was read — the name it calls itself, its firmware, its pixel count, and whether it is a panel or a strip. This is the list the Lights screen draws a card per entry from, and it is docs/product-requirements.md §2.6's 'one card per light' made true: a light somebody owns is a fact whether or not anything is shown on it. Nothing here asks a light anything, so a light that is unplugged answers with what it last said and probed_at is the age of that reading. The note carries the one thing a reader must not have to work out: finding lights on the network is not switched on yet, the way to add one today is to type its address, and opening that path is planned work. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The lights this module knows, in the order they were added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lights": {
+                      "type": "array",
+                      "description": "Every light this module knows. Empty on an install that has named none, which is not an error.",
+                      "items": {"$ref": "#/components/schemas/Light"}
+                    },
+                    "count": {"type": "integer", "description": "How many lights the list holds."},
+                    "persisted": {"type": "boolean", "description": "True when the list is the one in this module's own configuration store, so the next start reads it. False means no document could be read, and then nothing here can be kept either."},
+                    "note": {"type": "string", "description": "What this module has to say about the list: that network discovery is not switched on yet, that typing an address works now, and that opening discovery is planned."}
+                  },
+                  "required": ["lights", "count", "persisted", "note"]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "add-light",
+        "summary": "Add a light by its address",
+        "description": "Reads the light at one address and keeps what answered. The read is GET /json/info through this module's own WLED client — the same path every other read of a light takes — and nothing is stored unless something answered there and the answer was a WLED controller's. The address may be written with or without a scheme; one written without is read as http. A light does not need a printer to be free: a light you own is a fact whether or not anything is shown on it. A light already on the list, an address nothing answers at, an address that answers with something that is not a WLED controller, and an address this module cannot build a client for are all refused in words, and the store is left exactly as it was. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "One light to add, by address. No other key is read, so a misspelt one is refused rather than ignored.",
+                "properties": {
+                  "address": {"type": "string", "description": "The light's IP address or its full URL: 10.0.0.253 or http://10.0.0.253. Read as http when it carries no scheme."}
+                },
+                "required": ["address"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The light answered, was read, and is on the list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"$ref": "#/components/schemas/Light"},
+                    "note": {"type": "string", "description": "That the facts above are the light's own answer, and that adding a light is not the same as showing a printer on it."}
+                  },
+                  "required": ["light", "note"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body does not name an address, or names one this module cannot build a client for (LIGHT_BODY_INVALID).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "Nothing answered at that address, something answered that is not a WLED light (LIGHT_REFUSED), or the light is already on the list (LIGHT_ALREADY_KNOWN). Nothing was stored.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no configuration store it could keep the light in (STORE_UNAVAILABLE). Nothing was added.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lights/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, which is the name GET /lights gives it. http://10.0.0.253 is 10.0.0.253 here.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "delete": {
+        "operationId": "remove-light",
+        "summary": "Take a light off the list",
+        "description": "Removes one light from this module's own list. It is refused while a binding still names that address, and the refusal says which bindings do: a binding is this module's promise to write to that light, and removing the light under it would leave the writer with an address the list does not hold. A person who meant to stop a printer being shown deletes the binding, not the light. Snapshots already taken of the light are kept, because they are the last copy of a light nobody can read any more. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light was taken off the list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {"type": "string", "description": "The light's name on these routes."},
+                    "address": {"type": "string", "description": "The address it had, as the operator wrote it."},
+                    "note": {"type": "string", "description": "That the light's snapshots are still in this module's data directory."}
+                  },
+                  "required": ["deleted", "address", "note"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module knows no light of that name (LIGHT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "A binding still names the light, so it cannot be removed (LIGHT_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/lights/{light}/moments": {
       "parameters": [
         {
@@ -2073,6 +2214,24 @@
           "answers": {"type": "string", "description": "For a diagnostic pattern, what the picture answers on this light."}
         },
         "required": ["controller", "light"]
+      },
+      "Light": {
+        "type": "object",
+        "description": "One light this module knows: its address, and what the light said about itself the last time it was read. It exists whether or not a binding sits on it, which is what makes a light a thing a person can add and what makes one card per light possible (docs/product-requirements.md §2.6). The facts are the light's own answer, never this module's guess: a light that has never answered here carries the address, facts_known false, and no facts at all.",
+        "properties": {
+          "name": {"type": "string", "description": "The light's name on these routes: its address without the scheme, the same rule GET /controllers uses. It is what the screens address the light by on every other route."},
+          "address": {"type": "string", "description": "The light's base URL, as the operator wrote it, with a scheme. An address typed without one is stored as http."},
+          "calls_itself": {"type": "string", "description": "The name the light reports for itself, \"name\" on its own /json/info. Absent when it has never answered here."},
+          "firmware": {"type": "string", "description": "The firmware version the light reports, \"ver\" on the wire."},
+          "pixels": {"type": "integer", "description": "How many LEDs the light drives, \"leds.count\" on the wire. Zero when it has never answered here."},
+          "kind": {"type": "string", "description": "panel when the light published a matrix and strip when it did not. Absent when it has never answered here.", "enum": ["panel", "strip"]},
+          "width": {"type": "integer", "description": "The panel's width in pixels, and zero on a strip."},
+          "height": {"type": "integer", "description": "The panel's height in pixels, and zero on a strip."},
+          "probed_at": {"type": "string", "description": "When those facts were read, in UTC and RFC 3339. Absent means the light has never answered here — the row a migration writes for every address a binding already names — and a page then shows the address and says the facts have not been read yet."},
+          "facts_known": {"type": "boolean", "description": "True when the facts above are the light's own answer. False is a light this module knows of but has not heard from, which is not the same as a light that answered with an empty name."},
+          "note": {"type": "string", "description": "What a card must not leave a reader to assume, when there is something: absent on a light whose facts are known."}
+        },
+        "required": ["name", "address", "pixels", "facts_known"]
       },
       "State": {
         "type": "object",

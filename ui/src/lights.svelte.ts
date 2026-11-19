@@ -12,7 +12,7 @@
 // requirements asked for before any segment picker could be built (§5). A light that
 // will not answer is not a failed screen: it is a light with no segments to offer,
 // which is why the read is caught here and carried as a fact on the light.
-import { moduleApi, type Binding, type Controller, type Segment } from './api';
+import { moduleApi, type Binding, type Controller, type ControllerDetail, type KnownLight, type Segment } from './api';
 import { describe, lightName } from './format';
 import { heldHost } from './host';
 
@@ -55,6 +55,72 @@ export const loadLights = async (): Promise<void> => {
 					// its add button is off instead of leaving a person to find out.
 					return {
 						controller,
+						segments_known: false,
+						segments: [] as Segment[],
+						segments_unread: describe(problem),
+					};
+				}
+			}),
+		);
+
+		lights.list = details.map((detail) => {
+			const named = lightName(detail.controller?.address ?? '');
+
+			return {
+				controller: detail.controller,
+				segments: detail.segments ?? [],
+				segmentsKnown: detail.segments_known === true,
+				segmentsUnread: detail.segments_unread ?? '',
+				bindings: set.bindings.filter(
+					(one) => one.light === detail.controller?.name || one.light === named,
+				),
+			};
+		});
+
+		lights.loaded = true;
+	} catch (problem) {
+		lights.failure = describe(problem);
+	} finally {
+		lights.loading = false;
+	}
+};
+
+/**
+ * Every light this module knows, which is a longer list than the one it drives: a light somebody
+ * owns exists whether or not a printer is shown on it (docs/product-requirements.md §2.6).
+ *
+ * It is separate from `lights` on purpose. `lights` is the driven set, and five screens build their
+ * pickers from it; a light with nothing on it would be a row in a picker that selects nothing. This
+ * is the Lights screen's own list, and it is the only screen that draws a card per light.
+ */
+export const known = $state<{ list: KnownLight[]; note: string }>({ list: [], note: '' });
+
+/**
+ * Reads every light this module knows, its own segments, and the bindings on it, in that order —
+ * and puts them in `lights`, so that the card that draws a light draws it the same way whichever
+ * list it came from.
+ *
+ * A light with no binding on it answers GET /controllers/{name} too: a light is a light, and its own
+ * segments are exactly what somebody needs to see before he binds the first printer to it.
+ */
+export const loadKnownLights = async (): Promise<void> => {
+	lights.loading = true;
+	lights.failure = '';
+
+	try {
+		const api = moduleApi(heldHost());
+		const [all, set] = await Promise.all([api.listLights(), api.listBindings()]);
+
+		known.list = all.lights;
+		known.note = all.note;
+
+		const details = await Promise.all(
+			all.lights.map(async (one): Promise<ControllerDetail> => {
+				try {
+					return await api.readController(one.name);
+				} catch (problem) {
+					return {
+						controller: { name: one.name, address: one.address, key: '', segments: [], printers: [] },
 						segments_known: false,
 						segments: [] as Segment[],
 						segments_unread: describe(problem),

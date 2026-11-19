@@ -1,10 +1,19 @@
 <script lang="ts">
-	// Devices: what each light *is*. Nothing here about printers beyond naming which one sits on a
-	// segment.
+	// Lights: what each light *is*, and the list of them. Nothing here about printers beyond naming
+	// which one sits on a segment.
 	//
 	// docs/product-requirements.md §2.6 is one card per light, and the split with Bindings is the point
-	// of it: Bindings says which printer is on which light, Devices says what the light is, so the two
-	// cannot grow into each other. A card carries, in the requirement's own order:
+	// of it: Bindings says which printer is on which light, Lights says what the light is and which
+	// lights exist at all, so the two cannot grow into each other. The screen was called Devices until
+	// the operator could not find a light on it — a device on this host means a printer session — so it
+	// is named for what it holds.
+	//
+	// Adding a light is the one thing this screen does that changes anything: a person types an
+	// address, POST /lights reads the light before it keeps it, and the card that appears carries what
+	// answered. A light does not need a printer to be free: it is a fact whether or not anything is
+	// shown on it.
+	//
+	// A card carries, in the requirement's own order:
 	//
 	//   - **the hardware facts** — the name the light calls itself, its firmware, how many pixels it
 	//     has and whether it is a panel or a strip. Two sources, because no single route carries all
@@ -38,15 +47,16 @@
 	import {
 		moduleApi,
 		type Frame,
+		type KnownLight,
 		type PresetsBody,
 		type RestoreAnswer,
 		type Snapshot,
 		type SnapshotDetailBody,
 		type SnapshotsBody,
 	} from './api';
-	import { ageText, describe, runText } from './format';
+	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
-	import { addressOf, lights, loadLights, nameOf, type LightFacts } from './lights.svelte';
+	import { addressOf, known, lights, loadKnownLights, nameOf, type LightFacts } from './lights.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -85,6 +95,24 @@
 	let failure = $state('');
 	let loading = $state(true);
 
+	/** The address a person is typing. Cleared once the light has answered and been added. */
+	let typed = $state('');
+	/** Whether an address is being read. Adding reads the light, so it is not instant. */
+	let adding = $state(false);
+	/** What the last added light answered, in the words of the route's own sentence. */
+	let added = $state('');
+	/** Why the last address was refused. A refusal is a sentence, and nothing was stored. */
+	let addFailed = $state('');
+	/** One line per light, saying what the last removal did, or why it could not. */
+	let removeSaid = $state<Record<string, string>>({});
+
+	/** The row this module keeps for one light: its address and what it last said about itself. */
+	const knownOf = (one: LightFacts): KnownLight | undefined =>
+		known.list.find(
+			(row) =>
+				lightName(row.address) === lightName(addressOf(one)) || row.name === (one.controller?.name ?? ''),
+		);
+
 	const frameOfLight = (one: LightFacts): Frame | undefined =>
 		frames.find((frame) => frame.light.name === nameOf(one));
 
@@ -98,23 +126,56 @@
 	const answers = (one: LightFacts): boolean =>
 		one.segmentsKnown || (presets[nameOf(one)]?.presets_known ?? false);
 
-	/** The shape, from the frame first and the newest snapshot second. */
+	/** The shape, from the store first, the frame second and the newest snapshot third. */
 	const kindOf = (one: LightFacts): 'panel' | 'strip' | '' =>
-		frameOfLight(one)?.kind ?? newestSnapshot(one)?.device.kind ?? '';
+		knownOf(one)?.kind ?? frameOfLight(one)?.kind ?? newestSnapshot(one)?.device.kind ?? '';
 
-	/** How many pixels the light has. */
+	/** How many pixels the light has: what it said, then what the module is drawing, then a snapshot. */
 	const pixelsOf = (one: LightFacts): number => {
+		const row = knownOf(one);
+		if (row !== undefined && row.facts_known && row.pixels > 0) return row.pixels;
+
 		const frame = frameOfLight(one);
 		if (frame !== undefined) return frame.kind === 'panel' ? frame.width * frame.height : frame.width;
 
 		return newestSnapshot(one)?.device.pixels ?? 0;
 	};
 
-	/** The name the light calls itself, which only a snapshot carries. */
-	const calledOf = (one: LightFacts): string => newestSnapshot(one)?.device.controller ?? '';
+	/** The panel's own width and height, from the store first and the frame second. */
+	const panelSize = (one: LightFacts): { width: number; height: number } => {
+		const row = knownOf(one);
+		if (row !== undefined && row.facts_known && (row.width ?? 0) > 0) {
+			return { width: row.width ?? 0, height: row.height ?? 0 };
+		}
 
-	/** The firmware, which only a snapshot carries. */
-	const firmwareOf = (one: LightFacts): string => newestSnapshot(one)?.device.firmware ?? '';
+		const frame = frameOfLight(one);
+		if (frame !== undefined && frame.kind === 'panel') return { width: frame.width, height: frame.height };
+
+		return { width: 0, height: 0 };
+	};
+
+	/** The name the light calls itself: what this module read when it was added, or a snapshot. */
+	const calledOf = (one: LightFacts): string => {
+		const row = knownOf(one);
+		if (row !== undefined && row.facts_known && (row.calls_itself ?? '') !== '') return row.calls_itself ?? '';
+
+		return newestSnapshot(one)?.device.controller ?? '';
+	};
+
+	/** The firmware: what this module read when it was added, or a snapshot. */
+	const firmwareOf = (one: LightFacts): string => {
+		const row = knownOf(one);
+		if (row !== undefined && row.facts_known && (row.firmware ?? '') !== '') return row.firmware ?? '';
+
+		return newestSnapshot(one)?.device.firmware ?? '';
+	};
+
+	/** When the light last answered this module, which is what the card says its facts are as of. */
+	const readAgeOf = (one: LightFacts): string => {
+		const row = knownOf(one);
+
+		return row === undefined ? '' : (ageText(t, row.probed_at) ?? '');
+	};
 
 	/** One segment's four bounds, in the controller's own spelling. */
 	const boundsOf = (one: LightFacts, id: number): string => {
@@ -150,7 +211,7 @@
 		failure = '';
 
 		try {
-			await loadLights();
+			await loadKnownLights();
 
 			// A frame first: it is what says whether a light is a panel or a strip, and it never
 			// touches a controller. Then the two reads that ask the light itself, per light, each
@@ -309,6 +370,54 @@
 		}
 	};
 
+	/** Reads the light at the address a person typed, and keeps what answered.
+	 *
+	 * Nothing is kept unless the light answered: the route refuses an address nothing is at, an
+	 * address that answers with something that is not a WLED light, and one already on the list, and
+	 * each of those is a sentence here rather than a card that never fills.
+	 */
+	const addLight = async (): Promise<void> => {
+		const address = typed.trim();
+		if (address === '' || adding) return;
+
+		adding = true;
+		added = '';
+		addFailed = '';
+
+		try {
+			const answer = await api.addLight(address);
+			const light = answer.light;
+
+			added = t('devices.added', {
+				address: light.address,
+				called: (light.calls_itself ?? '') === '' ? t('devices.added_unnamed') : (light.calls_itself ?? ''),
+				firmware: (light.firmware ?? '') === '' ? t('devices.fact_firmware_unknown') : (light.firmware ?? ''),
+				pixels: light.pixels,
+				shape: light.kind === 'panel' ? t('devices.shape_panel') : t('devices.shape_strip'),
+			});
+
+			typed = '';
+			await load();
+		} catch (problem) {
+			addFailed = t('devices.add_refused', { why: describe(problem) });
+		} finally {
+			adding = false;
+		}
+	};
+
+	/** Takes one light off the list. Refused while a binding still shows a printer on it, in words. */
+	const takeOff = async (one: LightFacts): Promise<void> => {
+		const light = nameOf(one);
+		removeSaid[light] = '';
+
+		try {
+			await api.removeLight(light);
+			await load();
+		} catch (problem) {
+			removeSaid[light] = t('devices.remove_refused', { why: describe(problem) });
+		}
+	};
+
 	onMount(() => {
 		void load();
 	});
@@ -318,7 +427,36 @@
 	<header class="flex flex-col gap-1">
 		<h1 class="text-lg font-semibold">{t('devices.title')}</h1>
 		<p class="text-sm opacity-70">{t('devices.intro')}</p>
+		<p class="text-xs opacity-70">{known.note === '' ? t('devices.discovery_note') : known.note}</p>
 	</header>
+
+	<!-- Adding a light: a person types an address, and the module reads the light before it keeps
+	     it, so what comes back is what answered. Nothing is kept when something refuses. -->
+	<div class="flex flex-wrap items-end gap-2 rounded border px-3 py-2">
+		<label class="flex flex-col gap-1 text-xs" for="light-address">
+			<span class="font-medium">{t('devices.add_label')}</span>
+			<input
+				id="light-address"
+				class="w-64 rounded border px-2 py-1 font-mono text-sm"
+				placeholder={t('devices.add_placeholder')}
+				autocomplete="off"
+				spellcheck="false"
+				bind:value={typed}
+			/>
+		</label>
+		<Button variant="secondary" size="sm" disabled={adding || typed.trim() === ''} onclick={() => void addLight()}>
+			{adding ? t('devices.add_busy') : t('devices.add_button')}
+		</Button>
+		<span class="pb-1 text-[11px] opacity-60">{t('devices.add_hint')}</span>
+	</div>
+
+	{#if added !== ''}
+		<p class="rounded border px-3 py-2 text-sm" role="status">{added}</p>
+	{/if}
+
+	{#if addFailed !== ''}
+		<p class="rounded border px-3 py-2 text-sm" role="alert">{addFailed}</p>
+	{/if}
 
 	{#if failure !== ''}
 		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
@@ -344,6 +482,9 @@
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="text-sm font-semibold">{one.controller?.name ?? light}</span>
 					<span class="font-mono text-[11px] opacity-60">{addressOf(one)}</span>
+					{#if one.bindings.length === 0}
+						<Badge variant="outline" size="sm">{t('devices.no_printer_badge')}</Badge>
+					{/if}
 					{#if kind === 'panel'}
 						<Badge variant="outline" size="sm">{t('devices.shape_panel')}</Badge>
 					{:else if kind === 'strip'}
@@ -354,6 +495,9 @@
 					<Badge variant={reachable ? 'secondary' : 'warning'} size="sm">
 						{reachable ? t('devices.answering') : t('devices.not_answering')}
 					</Badge>
+					{#if readAgeOf(one) !== ''}
+						<span class="text-[11px] opacity-60">{t('devices.read_at', { age: readAgeOf(one) })}</span>
+					{/if}
 				</div>
 
 				{#if !reachable}
@@ -387,7 +531,7 @@
 						<dd class="font-mono">
 							{#if pixelsOf(one) > 0}
 								{#if kind === 'panel'}
-									{t('devices.pixels_panel', { width: frame?.width ?? 0, height: frame?.height ?? 0, pixels: pixelsOf(one) })}
+									{t('devices.pixels_panel', { width: panelSize(one).width, height: panelSize(one).height, pixels: pixelsOf(one) })}
 								{:else}
 									{t('devices.pixels_strip', { pixels: pixelsOf(one) })}
 								{/if}
@@ -483,18 +627,22 @@
 						<span class="text-[10px] opacity-60">{t('devices.tests_before', { hold: HOLD_SECONDS })}</span>
 					</div>
 
+					{#if one.bindings.length === 0}
+						<p class="text-[11px] opacity-70">{t('devices.tests_need_printer')}</p>
+					{/if}
+
 					<div class="flex flex-wrap items-center gap-1">
 						{#each PATTERNS as pattern (pattern)}
 							<Button
 								variant="secondary"
 								size="sm"
-								disabled={busy[light] === true || !reachable}
+								disabled={busy[light] === true || !reachable || one.bindings.length === 0}
 								onclick={() => void firePattern(one, pattern)}
 							>
 								{pattern}
 							</Button>
 						{/each}
-						<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable} onclick={() => void fireFinished(one)}>
+						<Button variant="secondary" size="sm" disabled={busy[light] === true || !reachable || one.bindings.length === 0} onclick={() => void fireFinished(one)}>
 							{t('devices.test_word')}
 						</Button>
 
@@ -590,6 +738,26 @@
 					<p class="opacity-70">{t('devices.replace_bindings')}</p>
 					<p class="opacity-70">{t('devices.replace_out_of_scope')}</p>
 				</div>
+
+				<!-- Taking the light off the list. Off while a binding still writes to it, with the
+				     reason beside it, and the route refuses it too if it is called some other way. -->
+				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={busy[light] === true || one.bindings.length > 0}
+						onclick={() => void takeOff(one)}
+					>
+						{t('devices.remove_button')}
+					</Button>
+					<span class="text-[10px] opacity-60">
+						{one.bindings.length > 0 ? t('devices.remove_bound', { count: one.bindings.length }) : t('devices.remove_note')}
+					</span>
+				</div>
+
+				{#if (removeSaid[light] ?? '') !== ''}
+					<p class="text-[11px]" role="alert">{removeSaid[light]}</p>
+				{/if}
 			</article>
 		{/each}
 

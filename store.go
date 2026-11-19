@@ -84,7 +84,16 @@ const (
 	// A version-5 row could not have carried one: version 5's build had no such field and refused
 	// `remaining: true` by name, so this is a shape change with no data in it, which is why the
 	// step is the stamp alone.
-	storeVersion = 6
+	//
+	// Version 7 is the list of lights this module knows, which is the first thing in this document
+	// that is not a thing somebody edited: until it, a light existed only because a binding named
+	// its address, so there was nothing to add a light *to* and no card for a light with no printer
+	// on it — docs/product-requirements.md §2.6's "one card per light". Each row carries the
+	// address and what the light said about itself when it was read (storedLight, lights.go). The
+	// step from 6 is a step with data in it: every address a binding already names becomes a row,
+	// so the lights an install is already driving appear on their own, with the address the
+	// operator wrote and no facts invented (seededLights).
+	storeVersion = 7
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -144,6 +153,15 @@ type storedConfig struct {
 	// parser, so that a window written through a route and a window written in the settings file
 	// cannot mean two different things.
 	Windows []brightnessWindow `json:"windows"`
+
+	// Lights is every light this module knows, whether or not a binding sits on it: the address,
+	// and what the light said about itself the last time it was read. It is the list the Lights
+	// screen draws a card per entry from, and the list a person adds to by typing an address.
+	//
+	// It is not derived from the bindings on every read, and that is the point: a light somebody
+	// owns is a fact whether or not a printer is shown on it, and a light keeps its address while
+	// the binding that introduced it is edited or removed. See lights.go.
+	Lights []storedLight `json:"lights"`
 
 	// Pauses is the pause state: at most one row of `global` scope, and at most one per binding.
 	// Each row carries the absolute instant it ends at, never a duration and never a timer, because
@@ -205,6 +223,24 @@ func (l storedLayoutV3) toStored() storedLayout {
 		Rotation:      l.Rotation,
 		RotateSeconds: l.RotateSeconds,
 	}
+}
+
+// storedConfigV6 is the document at schema version 6: everything version 5 held, and the panel's
+// seven optional lines on a layout row. Only the upgrades from it and the one above it read it;
+// nothing writes it.
+//
+// It is a type of its own rather than storedConfig minus the lights list, because the steps below
+// decode strictly: a version-6 document read into the current shape would accept a `lights` key
+// that version 6 never wrote, and a document half one shape and half another is the one thing the
+// version stamp exists to catch.
+type storedConfigV6 struct {
+	Version  int                `json:"version"`
+	Bindings []json.RawMessage  `json:"bindings"`
+	States   []storedState      `json:"states"`
+	Moments  []storedMoment     `json:"moments"`
+	Layouts  []storedLayout     `json:"layouts"`
+	Windows  []brightnessWindow `json:"windows"`
+	Pauses   []storedPause      `json:"pauses"`
 }
 
 // storedConfigV2 is the document at schema version 2: the version, the bindings list, and the two
@@ -398,7 +434,7 @@ var storeUpgrades = []storeUpgrade{
 				rows = append(rows, one.toStored())
 			}
 
-			return json.Marshal(storedConfig{
+			return json.Marshal(storedConfigV6{
 				Version:  4,
 				Bindings: lines,
 				States:   third.States,
@@ -423,7 +459,7 @@ var storeUpgrades = []storeUpgrade{
 			// has to have been *written* by this build, one step at a time, so that a version 4
 			// document is stepped rather than read as though it were version 5 with a field
 			// missing. The read after it decodes strictly at version 5.
-			var fourth storedConfig
+			var fourth storedConfigV6
 			if err := decodeStrictly(raw, &fourth); err != nil {
 				return nil, err
 			}
@@ -446,7 +482,7 @@ var storeUpgrades = []storeUpgrade{
 			// document is read as it stands and becomes a version-6 row that draws the line. That
 			// is deliberate: the key means what it says, and refusing it would be refusing a
 			// layout for the version it arrived in.
-			var fifth storedConfig
+			var fifth storedConfigV6
 			if err := decodeStrictly(raw, &fifth); err != nil {
 				return nil, err
 			}
@@ -454,6 +490,40 @@ var storeUpgrades = []storeUpgrade{
 			fifth.Version = 6
 
 			return json.Marshal(fifth)
+		},
+	},
+	{
+		from: 6,
+		why:  "every address a binding already named became a light of its own, with no facts invented",
+		step: func(raw []byte) ([]byte, error) {
+			// The rows are the addresses the bindings already name, and the facts on each are
+			// empty on purpose: this is a migration, it runs before the watch starts, and a
+			// migration that dialled a controller would make a start depend on the network —
+			// a light that is unplugged would either hold the upgrade up or have a name and a
+			// firmware written into the document that nobody observed. The address is the fact
+			// this step does have, so it is the fact this step writes; the start that follows
+			// this one reads what each light says about itself and fills the rest in
+			// (fillLightFacts, lights.go).
+			var sixth storedConfigV6
+			if err := decodeStrictly(raw, &sixth); err != nil {
+				return nil, err
+			}
+
+			lights, err := seededLights(sixth.Bindings)
+			if err != nil {
+				return nil, err
+			}
+
+			return json.Marshal(storedConfig{
+				Version:  7,
+				Bindings: sixth.Bindings,
+				States:   sixth.States,
+				Moments:  sixth.Moments,
+				Layouts:  sixth.Layouts,
+				Windows:  sixth.Windows,
+				Pauses:   sixth.Pauses,
+				Lights:   lights,
+			})
 		},
 	},
 }
@@ -650,6 +720,13 @@ func saveStore(dir string, config storedConfig) (string, error) {
 
 	if config.Pauses == nil {
 		config.Pauses = []storedPause{}
+	}
+
+	// And the lights list, for the reason above and one of its own: the first start of an install
+	// that names no light writes this document with an empty list rather than a null, so that a
+	// person opening it sees "no lights yet" and not a key this build does not know.
+	if config.Lights == nil {
+		config.Lights = []storedLight{}
 	}
 
 	document, err := json.MarshalIndent(config, "", "  ")

@@ -7,6 +7,57 @@ Write the entry in the same change as the code. One bullet per behaviour a
 person outside this repository can observe: a route, a setting, a screen, a
 refusal. Name the route and the setting key, never a function or a file.
 
+A change that has landed but has not been released sits under `Unreleased` at
+the top, and `version:` in `module.yaml` is the newest released heading below it.
+
+## Unreleased
+
+Lights are a thing in this module. The screen called Devices is called **Lights**, and a light can be
+added by typing its address, which is read before it is kept. The store is at schema version 7: a
+document stamped 5 or 6 is stepped up one version at a time and written back stamped, and a document
+from a newer release is still refused by name. A rollback to `0.2.0` needs the older document it was
+written with.
+
+### Added
+
+- **A list of lights this module knows**, whether or not a printer is shown on one. Until now a light
+  existed only because a binding named its address, so there was nothing to add a light to. Each row
+  carries the address as the operator wrote it and what the light said about itself when it was read:
+  the name it calls itself, its firmware, how many pixels it drives, and whether it is a panel or a
+  strip. `GET /lights` answers the list, `POST /lights` adds one, `DELETE /lights/{name}` takes one off.
+- **Adding a light by address probes it first.** `POST /lights` with `{"address": "10.0.0.253"}` reads
+  the light's own `/json/info` through this module's WLED client and stores nothing unless a WLED
+  controller answered. Four refusals, each in words and each leaving the store untouched:
+  `LIGHT_REFUSED` for an address nothing answers at and for something that answers but is not a WLED
+  light, `LIGHT_ALREADY_KNOWN` for a light already on the list, `LIGHT_BODY_INVALID` for a body that
+  names no address or one no client can be built for. An address typed without a scheme is read as
+  http. Adding a light needs no free printer: a light you own is a fact on its own.
+- **Removing a light** is refused with `LIGHT_REFUSED` while a binding still writes to it, and the
+  detail names the bindings. Snapshots already taken are kept.
+- The Lights screen draws **one card per light**, which is what §2.6 has always said: hardware facts,
+  its own segments, its own presets, the tests and the snapshots, on a light with no printer on it as
+  well as on one with. The tests are offered only where a printer is shown, because they paint a light
+  this module is drawing.
+- A light that is not answering still shows the facts it last answered with, and the age of that
+  reading, rather than an empty card.
+
+### Changed
+
+- The screen called **Devices** is called **Lights** — on the rail, as its title, and in the copy that
+  refers to it. Its route id is unchanged, and so are the light routes it calls.
+- `GET /controllers/{name}` and the snapshot, preset and identify routes accept a light this module
+  knows but drives nothing on, so a light added with no printer on it can still be read.
+- The screen says, in one sentence, that finding lights on the network is not switched on yet, that
+  typing an address works now, and that turning discovery on is planned work. No empty "discovered
+  lights" card.
+
+### Upgrading
+
+The store steps to schema version 7 and every address a binding already names becomes a light row, so
+the lights an install is already driving appear on their own with the addresses they were given. The
+facts on those rows are filled from the light the first time it answers; until then the card shows the
+address and says the light has not been read yet.
+
 ## 0.2.0 — 2026-11-19
 
 The module's own page, the moment and state tables, a layout per binding, several lights showing one

@@ -39,6 +39,6 @@ export const SCREENS: Screen[] = [
 	{ id: 'events', key: 'screen.events', component: Events },
 	{ id: 'colours', key: 'screen.colours', component: Colours },
 	{ id: 'layout', key: 'screen.layout', component: Layout },
-	{ id: 'devices', key: 'screen.devices', component: Devices },
+	{ id: 'devices', key: 'screen.lights', component: Devices },
 	{ id: 'diagnostics', key: 'screen.diagnostics', component: Diagnostics },
 ];
