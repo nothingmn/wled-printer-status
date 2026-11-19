@@ -1,0 +1,9 @@
+The commit message above was truncated by shell quoting at its last line (the same
+accident the repository was warned about tonight). It was written to end:
+
+  ... and product-requirements' measured facts M-8 and its derived R-21/R-32 say
+  what the transports actually do. AGENTS.md section 8 now says plainly that the
+  word has never been looked at: DDP delivery is proved (live true through the
+  hold, false after), a lit letter is not.
+
+Nothing else is missing from it.
