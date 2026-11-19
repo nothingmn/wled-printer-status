@@ -1113,6 +1113,82 @@ pixels in the right place, whether the name reads `MK4IS 0.4N 0.2MM PLA` on a re
 rotation actually swaps every fifteen seconds are all questions for a person standing in front of it.
 `AGENTS.md` §8 says so; the tests say what the arithmetic is.
 
+**Fifteenth run, 2026-11-19 11:31Z, from `3c12d89`.** The change that lets one printer sit on several
+lights: `81281f2` moves the binding set out of the settings and into this module's own store, refuses a
+change it cannot write there, and teaches the store to step a version 3 document up to 4; `3c12d89` is
+the README sentence that still claimed a printer appears in at most one binding. Version **0.1.0**,
+release `/config/config.d/wled-release-3c12d89`, and its `linux_amd64` digest is what the installed
+binary reads back:
+
+```console
+$ docker exec prusa_connect sha256sum \
+    /config/config.d/modules/wled-printer-status/bin/wled-printer-status_linux_amd64 \
+    /config/config.d/wled-release-3c12d89/wled-printer-status_linux_amd64
+e6bb2abc7f09cc5e83091d821e74a3b8f54bfa711bb180d7ac046497508d8f18  …/bin/wled-printer-status_linux_amd64
+e6bb2abc7f09cc5e83091d821e74a3b8f54bfa711bb180d7ac046497508d8f18  …/wled-release-3c12d89/wled-printer-status_linux_amd64
+$ docker exec prusa_connect sh -c 'cd /config/config.d/wled-release-3c12d89 && sha256sum -c checksums.txt' | tail -3
+wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK
+wled-printer-status_windows_amd64.exe: OK
+```
+
+**The store, in five lines.** A release that changes the schema is the one deploy where a healthy module
+proves nothing, so the log is the evidence, read in order:
+
+```console
+$ docker logs prusa_connect 2>&1 | grep -a 'wled-printer-status' | grep -a 'schema version'
+10:24:48Z  … the store was written for the first time …, from the settings, at schema version 3 …
+11:13:58Z  … was upgraded from schema version 3 to 4 …
+11:13:58Z  … the set this start runs is the one in this module's own store …, schema version 4 (1 bindings) …
+11:31:14Z  … schema version 4 (1 bindings) …
+11:31:48Z  … schema version 4 (2 bindings) …
+```
+
+The document was seeded at version 3 when this module first owned its settings; the release before this
+one stepped it to 4 in place; the install's own restart at **11:31:14Z** read the migrated document with
+one binding; the second binding was added after that; and the core restart at **11:31:47Z** — read off
+`bedmesh` and `storage:local` going `starting`→`ready` in the same second, so it is the container and
+not the module alone — brought this instance up at **11:31:48Z** on **two** bindings. The store
+therefore carried two bindings across a restart, which is what a schema change has to survive:
+
+```console
+$ curl -s …/bindings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["count"], d["persisted"], [b["id"] for b in d["bindings"]])'
+2 True ['07e893bb-b922-4ff0-9ad3-061b957400c3', '07e893bb-b922-4ff0-9ad3-061b957400c3@10.0.0.253:whole']
+$ docker exec prusa_connect cat /config/config.d/module-data/wled-printer-status/config.json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["version"], len(d["bindings"]), {k: len(v) for k, v in d.items() if isinstance(v, list) and k != "bindings"})'
+4 2 {'states': 0, 'moments': 0, 'layouts': 0, 'windows': 0, 'pauses': 0}
+```
+
+Two bindings and five empty tables at version 4 on disk: the same printer on the panel
+(`http://10.0.0.136`, the whole controller) and on the desk strip (`http://10.0.0.253`) at once, which
+is the case the settings file could not express and the locked requirement §2.2 asks for. Health after
+the restart, read at 11:39Z:
+
+```console
+$ docker ps --format '{{.Names}} {{.Status}}' | grep prusa_connect
+prusa_connect Up 8 minutes (healthy)
+$ curl -s localhost:8080/api/v1/readiness
+{"app":"served","discovery":"announcing","ready":true,"serving":4,"declared":4,"blocked":[],
+ … {"resource":"sink:wled-printer-status","state":"ready","required":false,"serving":true}]}
+```
+
+**The way back** is the release this one replaced, `714417b`, copied out before the install as
+`/home/robchartier/wled-rollback/wled-release-0.1.0-714417b-20261119T112841Z.tar.gz` (24 MB) with
+`ROLLBACK-714417b.md` beside it: that file carries the exact `module add … -from …` line and the digest
+of the binary it restores, `c7ea4fa7a66b351342069190d1bad1c236c7bc762cd2b9d3cc5810f897d37a2a`. The store
+is not a second complication on this step — `714417b` is the build that wrote schema 4 in the first
+place, the 11:13:58 upgrade above being its own start — so a binary-only rollback lands on a document
+it reads. One thing to know before reaching for `LATEST`: it still names the `8b67c7e` archive, which is
+three releases behind what runs.
+
+The rest of this run is the functional check of the two-light install, on 2026-11-19 between 04:33 and
+04:40 MST: every route answered, a state's word reached the panel and its own `/json/state` carried it as
+the segment's name, a pause put both lights out and a resume brought them back within the second, a
+brightness window moved both controllers to 40 and back to 128, and both lights were left solid green at
+128 with the store's five tables empty again. The frames' own pixels were not read — nothing on this
+firmware exposes them — and both lights are still on the printer's finished green, so a composed layout
+and a progress bar remain questions for a print.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
