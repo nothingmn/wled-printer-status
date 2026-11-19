@@ -220,8 +220,8 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 	}{
 		{
 			name:    "a document from a newer release",
-			fixture: `{"version": 4, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": []}`,
-			want:    []string{"schema version 4", "version 3"},
+			fixture: `{"version": 5, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": []}`,
+			want:    []string{"schema version 5", "version 4"},
 		},
 		{
 			name:    "a negative version, which no release wrote",
@@ -230,7 +230,7 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 		},
 		{
 			name:    "a key this build does not know",
-			fixture: `{"version": 3, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": [], "colours": []}`,
+			fixture: `{"version": 4, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": [], "colours": []}`,
 			want:    []string{"unknown field"},
 		},
 		{
@@ -493,8 +493,8 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 3 {
-		t.Fatalf("the upgraded document is at version %d, want 3", found.Config.Version)
+	if found.Config.Version != storeVersion || storeVersion != 4 {
+		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
 	// The bindings are the previous release's own record and must cross the upgrade unchanged: a
@@ -528,8 +528,8 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 3 {
-		t.Fatalf("the store on disk carries version %v after the upgrade, want 3", onDisk["version"])
+	if version, _ := onDisk["version"].(float64); int(version) != 4 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
 	}
 
 	if lines, _ := onDisk["bindings"].([]any); len(lines) != 1 {
@@ -551,20 +551,20 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	}
 
 	if again.Upgraded || again.Version != storeVersion {
-		t.Fatalf("the store reads at version %d with upgraded %v after being written back, want 3 and false",
-			again.Version, again.Upgraded)
+		t.Fatalf("the store reads at version %d with upgraded %v after being written back, want %d and false",
+			again.Version, again.Upgraded, storeVersion)
 	}
 }
 
-// TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables is this wave's upgrade step, on its own: a
+// TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables is a run of upgrade steps, on its own: a
 // document the previous release wrote, with a binding, a state override and a moment entry in it, is
-// stepped up once — and everything it held is still there afterwards, with the three lists wave 3
-// added arriving empty.
+// stepped up to the current version — and everything it held is still there afterwards, with the
+// three lists version 3 added arriving empty and the binding named by version 4's step.
 //
 // The bindings, states and moments are asserted one by one because a step that rebuilt the document
 // from a struct with three fields would compile, run, and silently drop the two tables the Colours
 // and Events screens had already filled in.
-func TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables(t *testing.T) {
+func TestAVersionTwoStoreIsSteppedUpAndKeepsBothTables(t *testing.T) {
 	dir := writeStoreFile(t, `{
   "version": 2,
   "bindings": [{"printer": "printer-a", "controller": "http://10.0.0.136", "segment": 3}],
@@ -586,8 +586,8 @@ func TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 2")
 	}
 
-	if found.Config.Version != 3 {
-		t.Fatalf("the upgraded document is at version %d, want 3", found.Config.Version)
+	if found.Config.Version != 4 {
+		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
 	if len(found.Config.Bindings) != 1 {
@@ -630,8 +630,8 @@ func TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 3 {
-		t.Fatalf("the store on disk carries version %v after the upgrade, want 3", onDisk["version"])
+	if version, _ := onDisk["version"].(float64); int(version) != 4 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
 	}
 
 	for _, name := range []string{"layouts", "windows", "pauses"} {
@@ -678,12 +678,13 @@ func TestAStoreFromBeforeTheVersionStepsThroughEveryShapeToTheCurrentOne(t *test
 			}
 
 			if found.Config.Version != storeVersion {
-				t.Fatalf("the document reached version %d, want 3", found.Config.Version)
+				t.Fatalf("the document reached version %d, want %d", found.Config.Version, storeVersion)
 			}
 
-			// All three steps ran: the version was stamped, the two tables were added, and the
-			// three version-3 lists were added after them. A step that jumped from 0 straight to 3
-			// would answer here with the bindings intact and everything after it still nil.
+			// All four steps ran: the version was stamped, the two tables were added, the three
+			// version-3 lists were added after them, and version 4 named every binding. A step
+			// that jumped from 0 straight to the current version would answer here with the
+			// bindings intact and everything after it still nil.
 			if found.Config.States == nil || found.Config.Moments == nil {
 				t.Fatalf("the stepped document has states %v and moments %v, want both present and empty",
 					found.Config.States, found.Config.Moments)
@@ -692,6 +693,21 @@ func TestAStoreFromBeforeTheVersionStepsThroughEveryShapeToTheCurrentOne(t *test
 			if found.Config.Layouts == nil || found.Config.Windows == nil || found.Config.Pauses == nil {
 				t.Fatalf("the stepped document has layouts %v, windows %v and pauses %v, want all three present and empty",
 					found.Config.Layouts, found.Config.Windows, found.Config.Pauses)
+			}
+
+			// The fourth step, on the line a document written before the version was stamped does
+			// carry: a pre-version document that named a printer gets that printer's device id as
+			// its binding's name, which is the path it answered at before names existed.
+			for _, raw := range found.Config.Bindings {
+				var line storedEntry
+				if err := json.Unmarshal(raw, &line); err != nil {
+					t.Fatalf("read a stepped binding line: %v", err)
+				}
+
+				if line.ID != line.Printer || line.ID == "" {
+					t.Fatalf("the stepped binding line reads %+v, want its id to be the printer's device id %q",
+						line, line.Printer)
+				}
 			}
 		})
 	}
@@ -754,5 +770,122 @@ func TestAStoreAtVersionTwoCarriesBothTablesThroughARoundTrip(t *testing.T) {
 	// The same printer on another light is another row: nothing here keys on the printer alone.
 	if _, ok := storedMomentFor(found.Config, "10.0.0.136", "printer-a", momentPrintStarted); ok {
 		t.Fatal("a moment stored on one light was found on another, and the key is the pair")
+	}
+}
+
+// TestAVersionThreeStoreKeepsItsLayoutThroughTheRekeying is the step this wave added, on the
+// document the operator is actually running: one whole-controller binding at brightness 128, no
+// state, moment, window or pause rows, and a layout row keyed on the printer because version 3 had
+// no other key to use.
+//
+// Two things have to survive it and they are different claims. The row has to still be there, with
+// every field somebody set — a step that rebuilt the table from a struct would compile, run and
+// quietly empty it. And it has to be readable *for that binding*: the key moves from the printer to
+// the binding's name, and a row left on the old key would be a row nothing reads while the panel
+// went back to the built-in default in the middle of a print.
+func TestAVersionThreeStoreKeepsItsLayoutThroughTheRekeying(t *testing.T) {
+	const panel = "07e893bb-b922-4ff0-9ad3-061b957400c3"
+
+	dir := writeStoreFile(t, `{
+  "version": 3,
+  "bindings": [{"printer": "`+panel+`", "controller": "http://10.0.0.136", "segment": -1, "brightness": 128}],
+  "states": [],
+  "moments": [],
+  "layouts": [{"printer": "`+panel+`", "bar_band": "top", "bar_rows": 6, "percent_scale": 3}],
+  "windows": [],
+  "pauses": []
+}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 3 document was refused: %v", err)
+	}
+
+	if found.Version != 3 {
+		t.Fatalf("the read says the document carried version %d, want 3", found.Version)
+	}
+
+	if !found.Upgraded {
+		t.Fatal("the read does not say the document was upgraded, and it was written at version 3")
+	}
+
+	if found.Config.Version != storeVersion {
+		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
+	}
+
+	// The binding gained a name, and it is the printer's own device id: that is the path the panel
+	// answered at before this version existed, so nothing a screen holds stops working.
+	if len(found.Config.Bindings) != 1 {
+		t.Fatalf("the upgraded document holds %d bindings, want the one it had", len(found.Config.Bindings))
+	}
+
+	var line storedEntry
+	if err := json.Unmarshal(found.Config.Bindings[0], &line); err != nil {
+		t.Fatalf("read the stepped binding line: %v", err)
+	}
+
+	if line.ID != panel || line.Printer != panel || line.Controller != "http://10.0.0.136" ||
+		line.Segment == nil || *line.Segment != -1 || line.Brightness == nil || *line.Brightness != 128 {
+		t.Fatalf("the stepped binding line reads %+v, want the panel at id %q, whole, brightness 128", line, panel)
+	}
+
+	// The layout row is the row, and every field it carried is the field it carries.
+	if len(found.Config.Layouts) != 1 {
+		t.Fatalf("the upgraded document holds %d layout rows, want the one it had", len(found.Config.Layouts))
+	}
+
+	row := found.Config.Layouts[0]
+	if row.Binding != panel {
+		t.Fatalf("the layout row is keyed on %q, want the binding's name %q", row.Binding, panel)
+	}
+
+	if row.BarBand == nil || *row.BarBand != "top" || row.BarRows == nil || *row.BarRows != 6 ||
+		row.PercentScale == nil || *row.PercentScale != 3 {
+		t.Fatalf("the layout row the upgrade kept reads %+v, want band top, six rows and scale 3", row)
+	}
+
+	// And it is read for that binding: the panel finds its row, and a second binding of the same
+	// printer — the strip this version exists for — finds nothing rather than the panel's picture.
+	rows, err := layoutRows(found.Config)
+	if err != nil {
+		t.Fatalf("the upgraded layout table cannot be read: %v", err)
+	}
+
+	resolved, held := layoutFor(rows, panel)
+	if !held {
+		t.Fatalf("the upgraded layout row is not found for binding %q", panel)
+	}
+
+	if resolved.BarBand == nil || *resolved.BarBand != "top" || resolved.BarRows == nil || *resolved.BarRows != 6 {
+		t.Fatalf("the layout read for %q is %+v, want the row's own band and rows", panel, resolved)
+	}
+
+	if _, held := layoutFor(rows, panel+"@10.0.0.253:whole"); held {
+		t.Fatal("the panel's layout row was read for a second binding of the same printer")
+	}
+
+	// On disk the key is `binding` and there is no `printer` left in the row: a document that kept
+	// both would be two keys for one fact, and the next release would have to guess which one wins.
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the upgraded store back: %v", err)
+	}
+
+	onDisk := storedRaw(t, dir)
+	if version, _ := onDisk["version"].(float64); int(version) != 4 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want 4", onDisk["version"])
+	}
+
+	layouts, _ := onDisk["layouts"].([]any)
+	if len(layouts) != 1 {
+		t.Fatalf("the store on disk holds %v layout rows, want 1", onDisk["layouts"])
+	}
+
+	written := layouts[0].(map[string]any)
+	if written["binding"] != panel {
+		t.Fatalf("the row on disk is keyed on %v, want %q", written["binding"], panel)
+	}
+
+	if _, held := written["printer"]; held {
+		t.Fatalf("the row on disk still carries a printer key: %v", written)
 	}
 }

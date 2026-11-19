@@ -213,9 +213,14 @@ func (r *runner) stop() {
 }
 
 // applyLocked is apply for a caller already holding the lock, and it is the whole of the
-// change: judge, stop, build, or put back.
+// change: name, judge, stop, build, or put back.
 func (r *runner) applyLocked(parent context.Context, next bindings) error {
 	if len(next) > 0 {
+		// Named before it is judged, because a name is what the routes address and what the
+		// layout table is keyed on, and two bindings of one printer must not arrive without
+		// one. An existing name is never touched — see bindings.identified.
+		next = next.identified()
+
 		if err := next.check(); err != nil {
 			return err
 		}

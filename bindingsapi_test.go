@@ -248,9 +248,9 @@ func TestAddingABindingRefusesWhatTheRulesRefuse(t *testing.T) {
 		want string
 	}{
 		{
-			name: "a printer that is already shown",
+			name: "a segment the running binding drives whole",
 			body: `{"printer": "Hermes MK4", "controller": "http://10.0.0.136", "segment": 7}`,
-			want: "already shown by a binding",
+			want: "a whole controller leaves no segment for anything else",
 		},
 		{
 			name: "a printer the host does not hold",

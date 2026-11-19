@@ -13,6 +13,19 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 
 ### Added
 
+- A printer may sit on several lights. Two bindings may show one printer — a panel in one room and a strip
+  in another — and each draws the same job for the room it is in, which is the multi-room status the
+  requirements ask for. The same segment of the same controller is still one binding's, and the refusal
+  names the light, the segment and the binding that got there first.
+- A binding is named by its own `id`: the printer's device id while that printer has one binding, and
+  `<device id>@<light>:<segment>` — `07e893bb-b922-4ff0-9ad3-061b957400c3@10.0.0.253:whole` — once it has
+  two. The name is written into the configuration document when it is minted and never changed, so the
+  binding an install is already running keeps the path it answered at: `GET /bindings/07e893bb-…` still
+  answers. `GET /bindings` and `GET /bindings/{id}` carry `id`, `light`, `segment` and `whole`, and
+  `GET /printers` carries `bound_count`, so two rows for one printer can be told apart. `POST /bindings`
+  answers the new binding's `id`, which is the path to use afterwards.
+- `GET /bindings/{id}/layout` and `DELETE` on it are keyed on the binding rather than on the printer, so a
+  panel and a strip showing one machine keep two pictures instead of one shared one.
 - `GET /controllers/{name}` answers the segments the light itself holds — its `id`, its `name` and its
   four bounds — which is the list every segment picker is built from. `segments_known` says whether the
   controller answered; a light that is unplugged answers `200` with an empty list and `segments_unread`
@@ -77,9 +90,12 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   settings save. A binding that drives a borrowed zone is reported as `hands-back` and never `off`, because
   the rest of that strip belongs to its owner. This release stores and reports a pause and does not yet
   switch the light off.
-- The configuration document is at schema version 3. A version 2 document is stepped up in place, bindings,
-  state table and moment table and all, with the layout table, the windows and the pause arriving empty. A
-  version 4 document is refused, naming both versions.
+- The configuration document is at schema version 4. A version 3 document is stepped up in place: every
+  binding line gains its `id`, and every layout row is re-keyed from the printer to that binding with every
+  field it carried unchanged. A version 2 document is stepped through both shapes, with the layout table,
+  the windows and the pause arriving empty, and one written before the version was stamped is stepped
+  through every shape rather than skipping to the current one. A version 5 document is refused, naming both
+  versions.
 - `GET /frames` answers one frame per binding for the Overview screen's thumbnails: the frame this module
   decided — colour, fill, total, percent, the job's name and the reason — how old the reading behind it is,
   when the light last took a write, and the picture itself as a PNG. The picture is drawn by the same code

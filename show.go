@@ -183,6 +183,13 @@ type storeLights struct {
 	// tables is the store the routes write. It owns the directory and the write counter.
 	tables *configTables
 
+	// binding is the binding's own name on the routes, which is what the layout table is keyed on,
+	// and empty for a writer that is not a binding (a test's).
+	//
+	// It is not the printer: one printer may sit on two lights with two layouts, so a printer-keyed
+	// lookup would hand the strip the panel's picture. See bindinglayout.go.
+	binding string
+
 	// printer is the binding's own device id, which is the name a pause on one binding is kept
 	// under, and empty for a writer that is not a binding (a test's).
 	printer string
@@ -351,8 +358,11 @@ func (s *storeLights) moment(id string) (momentEntry, bool) {
 // The row is resolved against the defaults on the way out, so a row that names one field answers for
 // all eight and a screen and the painter read one picture. A row that will not check refuses the
 // whole document in `read`, so nothing here refuses anything.
+//
+// It is looked up by the binding's own name and not by the printer, because a printer on two lights
+// is two bindings with two pictures: the panel draws a bar and a name, the strip draws a fill.
 func (s *storeLights) layout() (layout, bool) {
-	row, held := layoutFor(s.view().layouts, s.printer)
+	row, held := layoutFor(s.view().layouts, s.binding)
 	if !held {
 		return layout{}, false
 	}

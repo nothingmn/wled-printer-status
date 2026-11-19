@@ -181,10 +181,13 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			// pause is kept per binding and one reader shared between two would be answering for
 			// whichever printer happened to be asked last. The light's name travels with it because
 			// the moment table is keyed on the (light, printer) pair — the same printer on two lights
-			// carries two independent sets, which is what multi-room means (§2.3).
+			// carries two independent sets, which is what multi-room means (§2.3) — and the
+			// binding's own name travels with it because the layout table is keyed on that, so a
+			// strip and a panel showing one printer keep two pictures.
 			if c.tables != nil {
 				pen.store = &storeLights{
 					tables:  c.tables,
+					binding: b.ID,
 					printer: b.DeviceID,
 					light:   lightName(b.Address),
 					logging: c.logf,

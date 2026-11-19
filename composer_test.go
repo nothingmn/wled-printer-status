@@ -542,12 +542,19 @@ func TestTheDocumentIsWhatThePainterReadsForMomentsAndLayouts(t *testing.T) {
 			momentEntry: momentEntry{Enabled: true, Shows: showsWord, Which: "DONE", For: "30s"},
 		}},
 		Layouts: []storedLayout{{
-			Printer: "printer-a", BarBand: ptr("top"), BarRows: ptr(6), PercentScale: ptr(3),
+			Binding: "printer-a@10.0.0.136:whole",
+			BarBand: ptr("top"), BarRows: ptr(6), PercentScale: ptr(3),
 			Rotation: ptr(rotationSideBySide),
 		}},
 	})
 
-	painter := &storeLights{tables: tables, printer: "printer-a", light: "10.0.0.136", logging: quiet}
+	painter := &storeLights{
+		tables:  tables,
+		binding: "printer-a@10.0.0.136:whole",
+		printer: "printer-a",
+		light:   "10.0.0.136",
+		logging: quiet,
+	}
 
 	entry, stored := painter.moment(momentPrintFinished)
 	if !stored || entry.Shows != showsWord || entry.Which != "DONE" || entry.For != "30s" {
@@ -578,27 +585,30 @@ func TestTheDocumentIsWhatThePainterReadsForMomentsAndLayouts(t *testing.T) {
 		t.Fatalf("the fields the row left out did not resolve to the defaults: %+v", shape)
 	}
 
-	// Another light's row is not this binding's: the key is the (light, printer) pair, and the same
-	// printer on a second light carries its own set (docs/product-requirements.md §2.3).
-	other := &storeLights{tables: tables, printer: "printer-a", light: "10.0.0.253", logging: quiet}
+	// Another light's row is not this binding's: the moment table's key is the (light, printer) pair,
+	// and the same printer on a second light carries its own set (docs/product-requirements.md §2.3).
+	other := &storeLights{
+		tables:  tables,
+		binding: "printer-a@10.0.0.253:whole",
+		printer: "printer-a",
+		light:   "10.0.0.253",
+		logging: quiet,
+	}
 
 	if one, held := other.moment(momentPrintFinished); held || one.Which == "DONE" {
 		t.Fatalf("a moment row written for one light was read for another: %+v (stored %v)", one, held)
 	}
 
-	// The layout table is keyed by the printer rather than the pair, and that is this build's own
-	// shape: /bindings/{id}/layout addresses a binding by the printer's device id, and bindings.check
-	// refuses one printer on two bindings ("one printer is shown by one binding"), so a printer names
-	// exactly one binding and the row is found from a second binding object naming the same printer,
-	// whatever light it carries. Multi-room — the same printer on two lights, which §2.2 allows — is
-	// the change that would have to key this table on the pair, and this assertion is where that
-	// shows up: when multi-room lands, the row below is a defect rather than a fact.
-	if _, held := other.layout(); !held {
-		t.Fatal("the layout row for printer-a was not found from a second binding object naming the same printer")
+	// The layout table is keyed on the binding's own name, which is what multi-room cost: the same
+	// printer on a second light is a second binding, and a printer-keyed row would have handed this
+	// strip the panel's bar and its scale. So the row written for the panel is not found from the
+	// strip — that is the point — and the strip reads the code's default until somebody lays it out.
+	if _, held := other.layout(); held {
+		t.Fatal("the layout row for one binding of a printer was read for another binding of it")
 	}
 
 	// And a binding the document says nothing about answers the setting, because the reader says so.
-	unknown := &storeLights{tables: tables, printer: "printer-b", light: "10.0.0.136", logging: quiet}
+	unknown := &storeLights{tables: tables, binding: "printer-b", printer: "printer-b", light: "10.0.0.136", logging: quiet}
 
 	if _, held := unknown.layout(); held {
 		t.Fatal("a binding with no row of its own answered as though it had one")

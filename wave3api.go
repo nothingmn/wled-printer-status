@@ -123,7 +123,7 @@ func (api tableAPI) mountWave3(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /bindings/{id}/pause", api.clearBindingPause)
 }
 
-// bindingAndLight is one binding by the device id these routes address it with, and the light it sits
+// bindingAndLight is one binding by the name these routes address it with, and the light it sits
 // on.
 //
 // The light is resolved from the running set rather than from the store, so that a layout written for
@@ -157,12 +157,12 @@ func (api tableAPI) bindingAndLight(id string) (binding, controllerAnswer, bool,
 	return found, controllerAnswer{Name: key, Address: found.Address, Key: key}, true, nil
 }
 
-// bindingNotFound is the refusal for a device id the running set does not drive. It is the binding
+// bindingNotFound is the refusal for a name the running set does not drive. It is the binding
 // editor's own code, because a binding here is a binding: one fact, one code.
 func bindingNotFound(id string) *fault.Fault {
 	return BindingNotFound.New(
-		"This module drives no binding of that printer. Read GET /bindings for the ones it does.").
-		With(fault.StringParam("printer", strings.TrimSpace(id)))
+		"This module drives no binding of that name. Read GET /bindings for the ones it does.").
+		With(fault.StringParam("binding", strings.TrimSpace(id)))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -220,14 +220,14 @@ func (sent layoutRequest) carriesNothing() bool {
 }
 
 // stored is the row this body writes, for the binding it names.
-func (sent layoutRequest) stored(printer string) (storedLayout, error) {
+func (sent layoutRequest) stored(binding string) (storedLayout, error) {
 	if sent.Remaining != nil && *sent.Remaining {
 		return storedLayout{}, fmt.Errorf(
 			"remaining is true, and this build draws no time remaining: nothing would put it on the panel, so it is refused rather than ignored — switch it off, or ask for it as a change that draws it")
 	}
 
 	one := storedLayout{
-		Printer:       printer,
+		Binding:       binding,
 		Bar:           sent.Bar,
 		BarBand:       sent.BarBand,
 		BarRows:       sent.BarRows,
@@ -252,7 +252,7 @@ func layoutAnswerFor(config storedConfig, b binding, light controllerAnswer) (la
 		return layoutAnswer{}, err
 	}
 
-	row, stored := layoutFor(rows, b.DeviceID)
+	row, stored := layoutFor(rows, b.ID)
 
 	return layoutAnswerOf(b, light, row, stored), nil
 }
@@ -328,10 +328,10 @@ func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	one, err := sent.stored(found.DeviceID)
+	one, err := sent.stored(found.ID)
 	if err != nil {
 		refuse(w, r, LayoutRefused.New(err.Error()).
-			With(fault.StringParam("printer", found.DeviceID)))
+			With(fault.StringParam("binding", found.ID)))
 
 		return
 	}
@@ -379,7 +379,7 @@ func (api tableAPI) deleteLayout(w http.ResponseWriter, r *http.Request) {
 	var removed bool
 
 	if _, err = api.tables.revise(func(config *storedConfig) {
-		removed = withoutLayout(config, found.DeviceID)
+		removed = withoutLayout(config, found.ID)
 	}); err != nil {
 		refuse(w, r, StoreUnavailable.New(err.Error()))
 
@@ -431,7 +431,7 @@ func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
 	out := make([]layoutAnswer, 0, len(on))
 
 	for _, one := range on {
-		row, stored := layoutFor(rows, one.DeviceID)
+		row, stored := layoutFor(rows, one.ID)
 		out = append(out, layoutAnswerOf(one, light, row, stored))
 	}
 
@@ -905,8 +905,11 @@ func (api tableAPI) readPause(w http.ResponseWriter, r *http.Request) {
 		said := pauseAnswerOf(one, now)
 
 		if one.Scope == pauseOnBinding {
-			if held, ok := set.find(one.Printer); ok {
-				said.Effect = pauseEffectOn(held)
+			// A pause row is keyed on the printer, not on the binding, so this asks which bindings
+			// show that printer and speaks for the first: one printer on two lights is paused on
+			// both, which is what a printer-keyed pause means.
+			if held := set.onPrinter(one.Printer); len(held) > 0 {
+				said.Effect = pauseEffectOn(held[0])
 			}
 		}
 
@@ -1017,8 +1020,8 @@ func (api tableAPI) setPause(w http.ResponseWriter, r *http.Request, scope, prin
 	// The binding's own fate, so that the exception is answered by the write that a screen has just
 	// made rather than only by a read afterwards.
 	if scope == pauseOnBinding {
-		if held, ok := api.live.set().find(printer); ok {
-			said.Effect = pauseEffectOn(held)
+		if held := api.live.set().onPrinter(printer); len(held) > 0 {
+			said.Effect = pauseEffectOn(held[0])
 			body["pause"] = said
 			body["effect"] = said.Effect
 		}

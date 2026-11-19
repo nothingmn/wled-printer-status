@@ -234,8 +234,9 @@ options:
   #
   #   printer     the printer to watch, by the host's device id or by the name an operator
   #               gave it. GET /printers on this module lists both, which is where a device
-  #               id comes from: nobody types one. Required, and one printer appears in one
-  #               line only.
+  #               id comes from: nobody types one. Required. One printer may appear on more
+  #               than one line — a panel in one room and a strip in another — as long as no
+  #               two lines take the same segment of the same controller.
   #   controller  the WLED controller to drive, as its base URL with no path and no trailing
   #               slash. Required, and two spellings of one address are one controller.
   #   segment     the one segment to drive on a controller that carries several. Absent or -1
@@ -249,7 +250,8 @@ options:
   #               window covers the moment. A borrowed line never follows the schedule: it
   #               writes no brightness at all, at start or at a window's edge.
   #
-  # Two printers on two controllers, or three segments of one, is therefore:
+  # Two printers on two controllers, three segments of one, or one printer on two lights, is
+  # therefore:
   #
   #   [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
   #    {"printer": "Mini", "controller": "http://10.0.0.253", "segment": 2}]

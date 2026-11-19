@@ -40,6 +40,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -61,7 +62,15 @@ const (
 	// a binding composes with, the brightness windows, and the pause with its absolute expiry. All
 	// three arrive empty from version 2 for the reason the two tables did — absent is a default and
 	// not a zero — and the step is an entry in storeUpgrades like every other.
-	storeVersion = 3
+	//
+	// Version 4 is what multi-room cost. A binding gained a name of its own — `id` on its line —
+	// because "a printer may sit on several lights" (docs/product-requirements.md §2.2) means the
+	// printer's device id stops naming one binding; and the layout table is keyed on that name
+	// rather than on the printer, so a panel and a strip showing one machine keep two pictures.
+	// Every version-3 binding was its printer's only one, so the step writes each line's `id` as
+	// the printer it already carried and renames each layout row's `printer` key to `binding` with
+	// the same value. Nothing is dropped: the rows are the rows.
+	storeVersion = 4
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -79,9 +88,9 @@ type storedConfig struct {
 	// on purpose: a reader that knows nothing else can still tell whether it may read the rest.
 	Version int `json:"version"`
 
-	// Bindings is one line per printer this module shows, in the same shape one line of the
-	// `bindings` setting carries: printer, controller, and segment or brightness when they were
-	// named.
+	// Bindings is one line per binding this module shows, in the same shape one line of the
+	// `bindings` setting carries — printer, controller, and segment or brightness when they were
+	// named — with the binding's own `id` beside them.
 	//
 	// It is raw JSON for the reason the setting is: a strict decode of a slice cannot say which
 	// line a misspelt key was in, and parseBindingEntries decodes one line at a time so that a
@@ -110,9 +119,9 @@ type storedConfig struct {
 	// default belongs to the code, and a copy of it in this file would be a second statement to
 	// keep in step by hand.
 	//
-	// The row is named by the printer, which is the binding's own name on the routes
-	// (`/bindings/{id}`) because one printer is shown by one binding — bindings.check refuses a
-	// second. It is the one key that survives a light being replaced.
+	// The row is named by the binding's id — `binding` — and not by the printer, because one
+	// printer may be shown by two bindings on two lights and a panel and a strip do not compose
+	// the same way. That is schema version 4's change; see storeVersion.
 	Layouts []storedLayout `json:"layouts"`
 
 	// Windows is the brightness windows the Brightness screen edits, in the operator's order: the
@@ -127,6 +136,61 @@ type storedConfig struct {
 	// this process is reconstructed on every settings save and on every restart — a pause held in
 	// a timer is a pause that ends early the first time somebody saves the settings.
 	Pauses []storedPause `json:"pauses"`
+}
+
+// storedConfigV3 is the document at schema version 3: the version, the bindings list, the two
+// tables Colours and Events edit, and the three the Layout, Brightness and Overview screens edit.
+// Only the upgrade from it reads it; nothing writes it.
+//
+// The layouts in it are storedLayoutV3, keyed on the printer, which is the shape version 4 replaced.
+// The bindings are raw JSON for the reason they are everywhere: the step has to rewrite each line,
+// and a typed list here would refuse a line for a reason that is the next version's business.
+type storedConfigV3 struct {
+	Version  int                `json:"version"`
+	Bindings []json.RawMessage  `json:"bindings"`
+	States   []storedState      `json:"states"`
+	Moments  []storedMoment     `json:"moments"`
+	Layouts  []storedLayoutV3   `json:"layouts"`
+	Windows  []brightnessWindow `json:"windows"`
+	Pauses   []storedPause      `json:"pauses"`
+}
+
+// storedLayoutV3 is one layout row as version 3 wrote it: keyed on the printer, because version 3
+// could not have two bindings of one printer and the printer was therefore the binding's name.
+//
+// A type of its own rather than storedLayout with a second key, because the step decodes strictly: a
+// version-3 row read into the current shape would put its `printer` key through DisallowUnknownFields
+// and refuse a document this build is supposed to read.
+type storedLayoutV3 struct {
+	Printer string `json:"printer"`
+
+	Bar           *bool   `json:"bar,omitempty"`
+	BarBand       *string `json:"bar_band,omitempty"`
+	BarRows       *int    `json:"bar_rows,omitempty"`
+	Percent       *bool   `json:"percent,omitempty"`
+	PercentScale  *int    `json:"percent_scale,omitempty"`
+	Name          *bool   `json:"name,omitempty"`
+	Rotation      *string `json:"rotation,omitempty"`
+	RotateSeconds *int    `json:"rotate_seconds,omitempty"`
+}
+
+// toStored is this row at version 4: the same eight fields, keyed on the binding its printer named.
+//
+// The value is the printer's device id unchanged, and that is not a guess: version 3 refused a second
+// binding of one printer, so on every document version 3 wrote, the printer *was* the binding's name
+// — which is why the migration renames the key and copies the value rather than inventing one.
+func (l storedLayoutV3) toStored() storedLayout {
+	return storedLayout{
+		Binding:       l.Printer,
+		Bar:           l.Bar,
+		BarBand:       l.BarBand,
+		BarRows:       l.BarRows,
+		Percent:       l.Percent,
+		PercentScale:  l.PercentScale,
+		Name:          l.Name,
+		Rotation:      l.Rotation,
+		RotateSeconds: l.RotateSeconds,
+	}
 }
 
 // storedConfigV2 is the document at schema version 2: the version, the bindings list, and the two
@@ -156,8 +220,8 @@ type storedConfigV0 struct {
 	Bindings []json.RawMessage `json:"bindings"`
 }
 
-// storedEntry is one line of the store's bindings list, and it is the same three or four keys one
-// line of the `bindings` setting is written with.
+// storedEntry is one line of the store's bindings list, and it is the same keys one line of the
+// `bindings` setting is written with, beside the binding's own name.
 //
 // The pointers are the setting's own distinction and are kept for the same reason: absent is not
 // zero. Segment 0 is a segment a controller holds, a brightness of 0 is a strip switched off, and
@@ -165,6 +229,13 @@ type storedConfigV0 struct {
 // brightness, because that is the number the next start has to land on; a borrowed one writes
 // none, because a brightness on it is refused.
 type storedEntry struct {
+	// ID is the binding's name, and it is written here rather than derived on every start because
+	// a name that is derived is a name that can change: a printer's second binding would take the
+	// bare device id from the first if the first were ever removed, and the path a screen holds
+	// would move under it. Schema version 4 introduced it; the upgrade from 3 fills every existing
+	// line with the printer it already names, which was that binding's name.
+	ID string `json:"id,omitempty"`
+
 	Printer    string `json:"printer"`
 	Controller string `json:"controller"`
 	Segment    *int   `json:"segment,omitempty"`
@@ -254,14 +325,73 @@ var storeUpgrades = []storeUpgrade{
 			// with the default the painter holds; and a window list with nothing in it is the
 			// fixed brightness, which is what every install before windows ran. Copying any of
 			// those into the file would be a second copy of a decision the code already makes.
-			return json.Marshal(storedConfig{
+			//
+			// The shape at 3 and not storedConfig, which is the shape at 4: a step answers the
+			// document exactly one version later, and the layout rows here are still keyed on the
+			// printer, which is what version 3 wrote and what the next step renames.
+			return json.Marshal(storedConfigV3{
 				Version:  3,
 				Bindings: second.Bindings,
 				States:   second.States,
 				Moments:  second.Moments,
-				Layouts:  []storedLayout{},
+				Layouts:  []storedLayoutV3{},
 				Windows:  []brightnessWindow{},
 				Pauses:   []storedPause{},
+			})
+		},
+	},
+	{
+		from: 3,
+		why:  "every binding was named, and the layout table was re-keyed from the printer to the binding",
+		step: func(raw []byte) ([]byte, error) {
+			var third storedConfigV3
+			if err := decodeStrictly(raw, &third); err != nil {
+				return nil, err
+			}
+
+			// Every binding line gains `id`, and the value is the printer the line already names.
+			// That is the whole migration and it is not an invention: version 3 refused a second
+			// binding of one printer (bindings.check's rule then was "one printer is shown by one
+			// binding"), so on every document version 3 wrote, the printer's device id was that
+			// binding's only name — and it is the name the routes answered at, which is why the
+			// panel keeps its path across this upgrade.
+			lines := make([]json.RawMessage, 0, len(third.Bindings))
+
+			for i, raw := range third.Bindings {
+				var line storedEntry
+				if err := decodeStrictly(raw, &line); err != nil {
+					return nil, fmt.Errorf("read binding %d: %w", i+1, err)
+				}
+
+				if strings.TrimSpace(line.ID) == "" {
+					line.ID = line.Printer
+				}
+
+				stamped, err := json.Marshal(line)
+				if err != nil {
+					return nil, err
+				}
+
+				lines = append(lines, stamped)
+			}
+
+			// And every layout row is renamed, not rewritten: `printer` becomes `binding` and the
+			// eight fields travel exactly as they were, so a panel somebody had laid out composes
+			// with the same picture after the upgrade as before it.
+			rows := make([]storedLayout, 0, len(third.Layouts))
+
+			for _, one := range third.Layouts {
+				rows = append(rows, one.toStored())
+			}
+
+			return json.Marshal(storedConfig{
+				Version:  4,
+				Bindings: lines,
+				States:   third.States,
+				Moments:  third.Moments,
+				Layouts:  rows,
+				Windows:  third.Windows,
+				Pauses:   third.Pauses,
 			})
 		},
 	},
@@ -507,13 +637,18 @@ func saveStore(dir string, config storedConfig) (string, error) {
 // store is this module's record and not a copy of his settings: an id survives a rename, and a
 // document that named a printer by a name that has since changed would refuse the next start for
 // a reason nobody caused.
+//
+// The binding's name is written beside it, because that is what the next start has to hand back to
+// the routes and to the layout table. A set is named before it is checked, so every binding here
+// has one; the empty case is written out rather than trusted, since a line with no id would be a
+// binding renamed at the next start — the one thing a name exists to prevent.
 func storeEntries(set bindings) ([]json.RawMessage, error) {
 	entries := make([]json.RawMessage, 0, len(set))
 
 	for _, b := range set {
 		segment := b.Segment
 
-		line := storedEntry{Printer: b.DeviceID, Controller: b.Address, Segment: &segment}
+		line := storedEntry{ID: b.ID, Printer: b.DeviceID, Controller: b.Address, Segment: &segment}
 
 		if b.Segment < 0 {
 			brightness := b.Brightness

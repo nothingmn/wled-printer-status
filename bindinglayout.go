@@ -78,8 +78,13 @@ func bindingLayoutKeys() string {
 	return "bar, bar_band, bar_rows, percent, percent_scale, name, remaining, rotation and rotate_seconds"
 }
 
-// storedLayout is one binding's layout as the document holds it: the printer it is about, and only
+// storedLayout is one binding's layout as the document holds it: the binding it is about, and only
 // the fields somebody changed.
+//
+// The row is keyed on the binding's id and not on the printer, because a printer may now sit on
+// several lights (docs/product-requirements.md §2.2) and the same printer's panel and strip do not
+// compose the same way. A printer-keyed row would be one picture shared by two very different
+// displays, and the second binding's layout would silently overwrite the first's.
 //
 // Every field is a pointer for the reason a stored state's are: absent is not zero. A `bar_rows` of
 // 0 is not a row count at all and must not be read as "no bar" — that is `bar: false` — and a
@@ -87,7 +92,10 @@ func bindingLayoutKeys() string {
 // ever be false in this build, so writing it into the document would be writing a value nothing can
 // change, and a request that asks for true is refused by name before the row is built.
 type storedLayout struct {
-	Printer string `json:"printer"`
+	// Binding is the binding's id on the routes — the printer's device id while one printer is
+	// shown once, and the device id, light and segment once it is shown twice. Schema version 4
+	// is what renamed this key from `printer`; see store.go's v3 upgrade.
+	Binding string `json:"binding"`
 
 	Bar           *bool   `json:"bar,omitempty"`
 	BarBand       *string `json:"bar_band,omitempty"`
@@ -264,54 +272,54 @@ func checkStoredLayout(one storedLayout) error {
 	return nil
 }
 
-// layoutRows is the document's layout table as it stands, by printer, with every row checked.
+// layoutRows is the document's layout table as it stands, by binding id, with every row checked.
 //
 // A row naming a binding this build no longer drives is left out here and reported by
-// unknownLayouts instead of being applied: a printer that was unbound keeps its layout in the file
-// — a binding is not this route's to erase, and rebinding the printer should find it again — but a
-// table that quietly grew a row nobody can see would be the failure the version stamp exists to
+// unknownLayouts instead of being applied: a binding that was removed keeps its layout in the file
+// — a deletion is not this route's to erase, and adding the binding back should find it again — but
+// a table that quietly grew a row nobody can see would be the failure the version stamp exists to
 // prevent.
 func layoutRows(config storedConfig) (map[string]storedLayout, error) {
 	rows := make(map[string]storedLayout, len(config.Layouts))
 
 	for _, one := range config.Layouts {
-		printer := strings.TrimSpace(one.Printer)
-		if printer == "" {
-			return nil, fmt.Errorf("a layout row names no printer, and a layout belongs to one binding")
+		binding := strings.TrimSpace(one.Binding)
+		if binding == "" {
+			return nil, fmt.Errorf("a layout row names no binding, and a layout belongs to one binding")
 		}
 
 		if err := checkStoredLayout(one); err != nil {
-			return nil, fmt.Errorf("the layout for %s: %w", printer, err)
+			return nil, fmt.Errorf("the layout for %s: %w", binding, err)
 		}
 
-		one.Printer = printer
-		rows[printer] = one
+		one.Binding = binding
+		rows[binding] = one
 	}
 
 	return rows, nil
 }
 
 // layoutFor is one binding's row, and false when nobody has laid that binding out.
-func layoutFor(rows map[string]storedLayout, printer string) (storedLayout, bool) {
-	one, held := rows[printer]
+func layoutFor(rows map[string]storedLayout, binding string) (storedLayout, bool) {
+	one, held := rows[binding]
 
 	return one, held
 }
 
-// unknownLayouts is the printers a document holds a layout for that the running set does not drive.
+// unknownLayouts is the bindings a document holds a layout for that the running set does not drive.
 // They are reported beside the table rather than dropped in silence, for the reason unknownStates is.
 func unknownLayouts(config storedConfig, set bindings) []string {
 	driven := make(map[string]bool, len(set))
 
 	for _, b := range set {
-		driven[b.DeviceID] = true
+		driven[b.ID] = true
 	}
 
 	unknown := make([]string, 0)
 
 	for _, one := range config.Layouts {
-		if printer := strings.TrimSpace(one.Printer); printer != "" && !driven[printer] {
-			unknown = append(unknown, printer)
+		if binding := strings.TrimSpace(one.Binding); binding != "" && !driven[binding] {
+			unknown = append(unknown, binding)
 		}
 	}
 
@@ -325,30 +333,30 @@ func unknownLayouts(config storedConfig, set bindings) []string {
 // it" or "clear it", and the one answer that is always wrong is the guess. A field goes back to its
 // default by not being written in a route that carries all eight, or by DELETE.
 func setLayout(config *storedConfig, one storedLayout) {
-	printer := strings.TrimSpace(one.Printer)
+	binding := strings.TrimSpace(one.Binding)
 
 	kept := make([]storedLayout, 0, len(config.Layouts)+1)
 
 	for _, held := range config.Layouts {
-		if strings.TrimSpace(held.Printer) != printer {
+		if strings.TrimSpace(held.Binding) != binding {
 			kept = append(kept, held)
 		}
 	}
 
-	one.Printer = printer
+	one.Binding = binding
 
 	config.Layouts = append(kept, one)
 }
 
 // withoutLayout is the document with one binding's layout taken away, and false when it had none.
-func withoutLayout(config *storedConfig, printer string) bool {
-	wanted := strings.TrimSpace(printer)
+func withoutLayout(config *storedConfig, binding string) bool {
+	wanted := strings.TrimSpace(binding)
 
 	kept := make([]storedLayout, 0, len(config.Layouts))
 	removed := false
 
 	for _, held := range config.Layouts {
-		if strings.TrimSpace(held.Printer) == wanted {
+		if strings.TrimSpace(held.Binding) == wanted {
 			removed = true
 
 			continue
@@ -370,9 +378,11 @@ func withoutLayout(config *storedConfig, printer string) bool {
 // there is nothing to reset on a default, and a default shown as though it were an override is a
 // change a person believes he made.
 type layoutAnswer struct {
-	// Printer is the binding's name on these routes, and Light, Segment and Whole are the rest of
+	// ID is the binding's name on these routes, and Light, Segment and Whole are the rest of
 	// what makes it one binding: a layout belongs to a segment of a light, not to a printer in
-	// the abstract.
+	// the abstract. Printer is the machine it shows, which is no longer the same thing as the
+	// binding once a printer sits on two lights.
+	ID      string `json:"id"`
 	Printer string `json:"printer"`
 	Light   string `json:"light"`
 	Segment int    `json:"segment"`
@@ -434,6 +444,7 @@ func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored 
 	}
 
 	said := layoutAnswer{
+		ID:      b.ID,
 		Printer: b.DeviceID,
 		Light:   light.Name,
 		Segment: b.Segment,

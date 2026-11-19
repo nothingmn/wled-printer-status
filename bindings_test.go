@@ -45,12 +45,40 @@ func TestBindingsHoldTheOperatorsRules(t *testing.T) {
 			want: "nothing to watch",
 		},
 		{
-			name: "one printer in two bindings",
+			// docs/product-requirements.md §2.2: "A printer may sit on several lights — multi-room
+			// status — at the cost of a second steady stream." Two bindings, one printer, two
+			// controllers, both whole: accepted.
+			name: "one printer on two lights",
+			set: bindings{
+				{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 128},
+				{DeviceID: "printer-a", Address: "http://10.0.0.253", Segment: wholeStrip, Brightness: 96},
+			},
+		},
+		{
+			// And the same printer on two segments of one controller: the segment is the unit, so
+			// this is two zones of one display, which the rules allow.
+			name: "one printer on two segments of one controller",
 			set: bindings{
 				{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
 				{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 5},
 			},
-			want: "one printer is shown by one binding",
+		},
+		{
+			// The rule multi-room does not lift: a segment carries one printer, whoever's.
+			name: "one printer twice on one segment",
+			set: bindings{
+				{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
+				{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
+			},
+			want: "one segment is shown by one binding",
+		},
+		{
+			name: "two bindings sharing one name",
+			set: bindings{
+				{ID: "same", DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
+				{ID: "same", DeviceID: "printer-a", Address: "http://10.0.0.253", Segment: 2},
+			},
+			want: "two bindings cannot share one",
 		},
 		{
 			name: "one segment in two bindings, one with a trailing slash",

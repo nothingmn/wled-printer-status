@@ -502,8 +502,9 @@ curl -s http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-print
   …]}
 ```
 
-`bound` is the binding already showing that printer, so a choice can leave it out. This is the answer to
-"where would someone get that GUID": from the module, not from memory.
+`bound` is the first binding already showing that printer, and `bound_count` is how many there are, so a
+choice can say "already on two lights" rather than believing a printer in two rooms is one row. This is the
+answer to "where would someone get that GUID": from the module, not from memory.
 
 ### Changing bindings while it runs
 
@@ -512,12 +513,19 @@ The module serves the set it is running, and edits it:
 | request | what it does |
 | --- | --- |
 | `GET /bindings` | the set in force, in the operator's order, with printer names read from the host |
-| `GET /bindings/{id}` | one binding, by the printer's device id |
+| `GET /bindings/{id}` | one binding, by its own id |
 | `POST /bindings` | `{"printer": "Mini", "controller": "http://10.0.0.253", "segment": 2}` |
-| `PUT /bindings/{id}` | the same body, for a binding that exists; the printer in the path is its name |
-| `DELETE /bindings/{id}` | stop showing one printer, and give a borrowed segment back |
-| `GET /printers` | the host's printers, each with the binding that already shows it |
+| `PUT /bindings/{id}` | the same body, for a binding that exists; the id in the path is its name |
+| `DELETE /bindings/{id}` | stop showing that binding, and give a borrowed segment back |
+| `GET /printers` | the host's printers, each with the binding that already shows it and how many there are |
 | `GET /controllers` | the same set grouped by controller, with the segments each gives up |
+
+A binding's `id` is its name, and it is minted once and never changed. The first binding of a printer is
+named by the printer's device id — so an install that has been running answers at the path it always did —
+and a second binding of the same printer takes `<device id>@<light>:<segment>`, such as
+`07e893bb-b922-4ff0-9ad3-061b957400c3@10.0.0.253:whole`. One printer on several lights is what multi-room
+is; the same segment of the same controller twice is still refused, and the refusal names the binding that
+got there first.
 
 Every write takes effect **at once**: the watch is stopped — waiting for a borrowed segment to be given
 back — and started again on the new set, so no restart and no reinstall is needed. What it does **not** do

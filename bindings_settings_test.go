@@ -44,22 +44,22 @@ func TestTheBindingsSettingCarriesSeveralPrinters(t *testing.T) {
 		{
 			name: "printer and controller, and nothing else",
 			line: `{"printer": "Morpheus", "controller": "http://10.0.0.136"}`,
-			want: binding{DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 128},
+			want: binding{ID: morpheus.ID, DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 128},
 		},
 		{
 			name: "the device id, which survives a rename",
 			line: `{"printer": "01J9OTHER", "controller": "http://10.0.0.253", "segment": 2}`,
-			want: binding{DeviceID: other.ID, Address: "http://10.0.0.253", Segment: 2},
+			want: binding{ID: other.ID, DeviceID: other.ID, Address: "http://10.0.0.253", Segment: 2},
 		},
 		{
 			name: "segment -1, which is the whole controller written out",
 			line: `{"printer": "Morpheus", "controller": "http://10.0.0.136", "segment": -1, "brightness": 64}`,
-			want: binding{DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 64},
+			want: binding{ID: morpheus.ID, DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 64},
 		},
 		{
 			name: "brightness 0 on the whole controller, which is a strip switched off",
 			line: `{"printer": "Morpheus", "controller": "http://10.0.0.136", "brightness": 0}`,
-			want: binding{DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 0},
+			want: binding{ID: morpheus.ID, DeviceID: morpheus.ID, Address: "http://10.0.0.136", Segment: wholeStrip, Brightness: 0},
 		},
 	}
 
@@ -128,12 +128,12 @@ func TestTheBindingsSettingNamesTheLineItCannotRead(t *testing.T) {
 			want:  `bindings[1]: json: unknown field "britness"`,
 		},
 		{
-			name: "two lines on one segment",
+			name: "two lines on one segment, which is the one rule multi-room does not lift",
 			lines: []string{
 				`{"printer": "Morpheus", "controller": "http://10.0.0.136", "segment": 2}`,
 				`{"printer": "Morpheus", "controller": "http://10.0.0.136", "segment": 2}`,
 			},
-			want: "one printer is shown by one binding",
+			want: "one segment is shown by one binding",
 		},
 		{
 			name: "two printers on one segment",

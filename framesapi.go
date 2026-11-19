@@ -268,7 +268,7 @@ func (api framesAPI) frameOf(held bindingStatus, set bindings) (frameAnswer, err
 	found, bindingOf, ok := api.bindingOf(held, set)
 
 	said := frameAnswer{
-		Binding:  bindingOf.DeviceID,
+		Binding:  bindingOf.ID,
 		Printer:  held.Printer,
 		Light:    lightView{Name: found, Address: held.Controller, Segment: held.Segment},
 		Frame:    held.Frame,

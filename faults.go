@@ -118,25 +118,28 @@ var (
 	))
 
 	// BindingNotFound is a read, a change or a delete of a binding this module is not driving.
-	// A binding is named by the device id of the printer it shows, so the refusal names the id
-	// that missed and says where the list is.
+	// A binding is named by its own id — the printer's device id while one printer is shown once,
+	// and the light and segment appended once it is shown on more than one — so the refusal names
+	// the id that missed and says where the list is.
 	BindingNotFound = fault.Register(faultDomain, "BINDING_NOT_FOUND", http.StatusNotFound, fault.Document(
-		"This module drives no binding of that printer",
-		"Read GET /bindings for the set this module is running. A binding is named by the host's device id for the printer it shows, and GET /printers lists the ones this host holds.",
+		"This module drives no binding of that name",
+		"Read GET /bindings for the set this module is running: it carries every binding's id. A binding is named by the printer's device id while that printer has one binding, and by the device id, the light and the segment once it has two.",
 		fault.RetryNever,
 		fault.ShowDetail,
-		"printer",
+		"binding",
 	))
 
-	// BindingRefused is a change the module's own rules refuse: two bindings on one segment, two
-	// bindings on one printer, the whole controller beside a segment of it, a brightness on a
-	// borrowed segment, a printer the host does not hold, or a controller address that is not one.
+	// BindingRefused is a change the module's own rules refuse: two bindings on one segment, the
+	// whole controller beside a segment of it, a brightness on a borrowed segment, a printer the
+	// host does not hold, or a controller address that is not one.
+	//
+	// One printer on two lights is *not* one of these: it is what multi-room means.
 	//
 	// It is a 409 and not a 400 because the body is well formed: what is wrong is the set the
 	// change would make, and the sentence names which rule and which two bindings.
 	BindingRefused = fault.Register(faultDomain, "BINDING_REFUSED", http.StatusConflict, fault.Document(
 		"The set that change would make breaks a rule this module holds two bindings to",
-		"One printer is shown by one binding, one segment is shown by one binding, a whole controller leaves no segment for anything else, and a borrowed segment carries no brightness. The detail names the rule and the binding that got there first. Nothing was changed: the set that was running is still running.",
+		"One segment is shown by one binding, a whole controller leaves no segment for anything else, and a borrowed segment carries no brightness. One printer on two lights is allowed. The detail names the rule and the binding that got there first. Nothing was changed: the set that was running is still running.",
 		fault.RetryNever,
 		fault.ShowDetail,
 	))
@@ -254,7 +257,7 @@ var (
 		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is drawn. rotate_seconds is a whole number of seconds, one or more. remaining may only be false: this build draws no time remaining. The detail names the value that was sent and the values accepted. Nothing was changed.",
 		fault.RetryNever,
 		fault.ShowDetail,
-		"printer", "bar_band", "bar_rows", "percent_scale", "rotation", "rotate_seconds",
+		"binding", "bar_band", "bar_rows", "percent_scale", "rotation", "rotate_seconds",
 	))
 
 	// LayoutBodyInvalid is a body that is not a layout at all: not JSON, a key this module does not

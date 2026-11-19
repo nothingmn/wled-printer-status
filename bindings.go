@@ -14,16 +14,31 @@ import (
 // binding is one printer shown on one segment of one controller.
 //
 // It is the unit the operator's topology is made of. His decision of 2026-11-18 replaced "one
-// controller per printer" with something smaller: a binding is (printer, controller, segment),
-// a printer appears in at most one binding, a segment is driven by at most one binding, and a
-// controller may carry as many bindings as it has segments it is willing to give up. A
-// controller that holds no named segments carries exactly one, because the whole light is then
-// one display.
+// controller per printer" with something smaller: a binding is (printer, controller, segment), a
+// segment is driven by at most one binding, and a controller may carry as many bindings as it has
+// segments it is willing to give up. A controller that holds no named segments carries exactly
+// one, because the whole light is then one display.
 //
 // That decision superseded an earlier one — one controller per printer, at most — and the code
 // here says so rather than quietly growing a second rule beside the first: the controller is no
 // longer the unit, the segment is.
+//
+// docs/product-requirements.md §2.2 adds the other half, and it is the reason a binding needs a
+// name of its own: "A printer may sit on several lights — multi-room status — at the cost of a
+// second steady stream", and a segment still carries one printer. So the same printer may appear
+// in two bindings while no segment may, which is what makes "the printer's device id" stop being a
+// binding's identity.
 type binding struct {
+	// ID is this binding's name on the routes and the key of the layout table. It is the host's
+	// device id for the printer when this is the only binding carrying that printer, and
+	// `<device id>@<light>:<segment>` when the printer sits on more than one — see qualifiedID.
+	//
+	// It is the one field here the host does not mint: identified names a set before it runs, and
+	// the store writes the name down so that a binding is named once and keeps the name. That is
+	// what lets the panel's binding keep answering at the path it answered at before a strip was
+	// bound beside it.
+	ID string
+
 	// DeviceID is the host's id for the printer, which survives a rename. It is resolved from
 	// the `printer` setting before a set is built, so every binding here names one machine and
 	// not a string two machines might answer to.
@@ -54,21 +69,27 @@ type bindings []binding
 // Every rule here is a refusal and not a warning, because each names a way two bindings would
 // otherwise undo each other silently, at the rate of a tick:
 //
-//   - one printer, one binding. Two bindings on one printer would each read the same job and
-//     draw it, and whichever wrote last would be the answer a person sees — with the other's
-//     animation cut short for reasons nothing could explain.
 //   - one segment, one binding. WLED has no ownership: the only exclusivity there is, is the
 //     one this check makes. Two bindings on one segment overwrite each other on every frame,
-//     and neither log line would say so.
+//     and neither log line would say so. This is "a segment carries one printer only", and it
+//     is the rule that protects a borrowed zone.
 //   - -1 claims every segment on its controller, so it collides with any other binding there.
 //     A controller somebody also drives is only ever borrowed, one segment at a time, and a
 //     whole-controller body (which carries every segment it draws) would take the rest.
 //   - a brightness on a borrowed binding is refused rather than ignored: a field nothing reads
 //     is a field the next change reads, and a writer that carried one could dim a desk light to
 //     the value meant for a status strip.
+//   - two bindings cannot share a name. The name is what the routes address and what the layout
+//     table is keyed on, so a shared one would be two bindings answering at one path.
 //
-// One rule is deliberately not here, because it needs a fact only the controller has: whether
-// the segments two bindings name really exist. The borrow reads /json/state at start and refuses
+// One rule is deliberately *not* here, and its absence is a requirement: "a printer may sit on
+// several lights" (docs/product-requirements.md §2.2). Two bindings carrying one printer are two
+// displays of one machine, which is the product — a panel in the office and a strip on the desk
+// read the same job and each draws it for the room it is in. What they must not do is share a
+// segment, and that is the first rule above.
+//
+// One further check is not here, because it needs a fact only the controller has: whether the
+// segments two bindings name really exist. The borrow reads /json/state at start and refuses
 // a segment the device does not report (see writer.borrow), so a set naming segments a controller
 // does not hold writes nothing and says why — which is the same answer, one read later.
 func (bs bindings) check() error {
@@ -76,8 +97,8 @@ func (bs bindings) check() error {
 		return fmt.Errorf("no binding: this module has nothing to watch")
 	}
 
-	printers := make(map[string]int, len(bs))
 	claims := make(map[string]*claim, len(bs))
+	named := make(map[string]int, len(bs))
 
 	for i, b := range bs {
 		where := fmt.Sprintf("binding %d", i+1)
@@ -109,60 +130,79 @@ func (bs bindings) check() error {
 				where, b.Segment, b.Address, b.Brightness)
 		}
 
-		if earlier, ok := printers[b.DeviceID]; ok {
-			return fmt.Errorf(
-				"%s watches printer %s, which binding %d already watches: one printer is shown by one binding",
-				where, b.DeviceID, earlier)
-		}
-
 		held := claims[key]
 		if held == nil {
-			held = &claim{segments: make(map[int]int, 1)}
+			held = &claim{segments: make(map[int]seat, 1)}
 			claims[key] = held
 		}
 
+		mine := seat{at: i + 1, printer: b.DeviceID}
+
 		switch {
-		case b.Segment == -1 && held.whole != 0:
+		case b.Segment == -1 && held.whole.held():
 			return fmt.Errorf(
-				"%s drives the whole of %s, which binding %d already drives",
-				where, b.Address, held.whole)
+				"%s drives the whole of %s, which binding %d (%s) already drives",
+				where, b.Address, held.whole.at, held.whole.printer)
 		case b.Segment == -1 && len(held.segments) > 0:
 			return fmt.Errorf(
 				"%s drives the whole of %s, and another binding drives a segment of it: a whole controller leaves no segment for anything else",
 				where, b.Address)
-		case b.Segment >= 0 && held.whole != 0:
+		case b.Segment >= 0 && held.whole.held():
 			return fmt.Errorf(
-				"%s drives segment %d of %s, which binding %d drives whole: a whole controller leaves no segment for anything else",
-				where, b.Segment, b.Address, held.whole)
+				"%s drives segment %d of %s, which binding %d (%s) drives whole: a whole controller leaves no segment for anything else",
+				where, b.Segment, b.Address, held.whole.at, held.whole.printer)
 		case b.Segment >= 0:
 			if earlier, ok := held.segments[b.Segment]; ok {
 				return fmt.Errorf(
-					"%s drives segment %d of %s, which binding %d already drives: one segment is shown by one binding",
-					where, b.Segment, b.Address, earlier)
+					"%s drives segment %d of %s, which binding %d (%s) already drives: one segment is shown by one binding",
+					where, b.Segment, b.Address, earlier.at, earlier.printer)
 			}
 
-			held.segments[b.Segment] = i + 1
+			held.segments[b.Segment] = mine
 		}
 
 		if b.Segment == -1 {
-			held.whole = i + 1
+			held.whole = mine
 		}
 
-		printers[b.DeviceID] = i + 1
+		// A binding with no name yet is named by identified before a set runs, so the only
+		// thing to refuse here is two bindings that carry the same one.
+		if earlier, ok := named[b.ID]; ok && b.ID != "" {
+			return fmt.Errorf(
+				"%s and binding %d are both named %q: a binding's name is what its routes address, so two bindings cannot share one",
+				where, earlier, b.ID)
+		}
+
+		named[b.ID] = i + 1
 	}
 
 	return nil
 }
 
-// claim is what one controller has already been asked for, by the binding numbers that asked
+// seat is one binding's place in a set, as a claim records it: where it sits, and the printer it
+// shows. The printer is kept beside the position because under multi-room a refusal that named
+// only "binding 2" would be a refusal about a number the operator has to count to, in a list where
+// the same printer may occupy two lines.
+type seat struct {
+	// at is the binding's position in the set, counting from one, and zero for no binding.
+	at int
+
+	// printer is the host's device id the binding shows.
+	printer string
+}
+
+// held says whether a claim has been taken.
+func (s seat) held() bool { return s.at != 0 }
+
+// claim is what one controller has already been asked for, by the bindings that asked
 // for it. It exists so that the rules are written once per controller and a message can name
 // the binding that got there first.
 type claim struct {
-	// whole is the binding driving the whole controller, or zero for none.
-	whole int
+	// whole is the binding driving the whole controller, and the zero seat for none.
+	whole seat
 
 	// segments is each named segment and the binding driving it.
-	segments map[int]int
+	segments map[int]seat
 }
 
 // controllerKey is one controller's identity for those rules, so that two spellings of one
@@ -236,14 +276,15 @@ func (bs bindings) controllers() ([]controller, error) {
 	return order, nil
 }
 
-// find is the binding one printer is shown by, and false for a printer this module does not
-// drive. A printer appears in at most one binding, so the device id is the whole of a
-// binding's name: it survives a rename of the machine, it survives the controller being
-// swapped for another, and it is the one thing about a binding the host minted rather than the
-// operator.
+// find is the binding one name on these routes addresses, and false for a name this module does
+// not drive.
+//
+// The name is the binding's own — ID — and not the printer's device id: under multi-room one
+// printer is two bindings, so the device id names a machine and the ID names a binding. A set that
+// has not been through identified has no names, which is why applyLocked names one before it runs.
 func (bs bindings) find(id string) (binding, bool) {
 	for _, b := range bs {
-		if b.DeviceID == id {
+		if b.ID != "" && b.ID == id {
 			return b, true
 		}
 	}
@@ -251,13 +292,90 @@ func (bs bindings) find(id string) (binding, bool) {
 	return binding{}, false
 }
 
+// onPrinter is every binding carrying one printer, in the operator's order: one entry, two, or
+// none. It is what a printer-keyed question asks — "is this printer shown at all, and where" —
+// and it is deliberately not find, because a printer is not a binding's name.
+func (bs bindings) onPrinter(deviceID string) bindings {
+	held := make(bindings, 0, 1)
+
+	for _, b := range bs {
+		if b.DeviceID == deviceID {
+			held = append(held, b)
+		}
+	}
+
+	return held
+}
+
+// identified is the set with every binding named: a name already written stays exactly as it is,
+// and a binding with none takes the printer's device id when no earlier binding in the set holds
+// it, and qualifiedID otherwise.
+//
+// It is the one place a name is minted, and it runs on every set before it is checked or run — so
+// the order of the set is the only thing that decides which of two bindings of one printer takes
+// the bare device id. An existing binding keeps it, because an existing binding is already named
+// in the store and appears first in the list it was written in; a binding added later is appended
+// and takes the qualified name. That is what leaves the panel answering at the path it answered at
+// before a strip was bound beside it.
+func (bs bindings) identified() bindings {
+	named := append(bindings(nil), bs...)
+
+	taken := make(map[string]bool, len(named))
+
+	for _, b := range named {
+		if b.ID != "" {
+			taken[b.ID] = true
+		}
+	}
+
+	for i := range named {
+		if named[i].ID != "" {
+			continue
+		}
+
+		want := named[i].DeviceID
+
+		if taken[want] {
+			want = qualifiedID(named[i])
+		}
+
+		named[i].ID = want
+		taken[want] = true
+	}
+
+	return named
+}
+
+// qualifiedID is the name a binding takes when its printer's device id is already another
+// binding's name in the set: the device id, the light, and the segment.
+//
+// Those three are unique together — check refuses a second binding on one segment of one
+// controller — so two bindings of one printer cannot mint the same qualified name. The light is
+// the controller's name on the routes (its key without the scheme), so the name reads as an
+// address a person can match against the Bindings screen: a 48-LED strip on 10.0.0.253 driving the
+// whole light is `07e893bb-...@10.0.0.253:whole`.
+func qualifiedID(b binding) string {
+	light := strings.TrimRight(strings.TrimSpace(b.Address), "/")
+
+	if key, err := controllerKey(b.Address); err == nil {
+		light = nameOfController(key)
+	}
+
+	segment := fmt.Sprintf("%d", b.Segment)
+	if b.Segment < 0 {
+		segment = "whole"
+	}
+
+	return b.DeviceID + "@" + light + ":" + segment
+}
+
 // without is the set with one binding taken out, in the operator's order. A set that does not
-// hold the id is returned unchanged, and false says so.
+// hold the name is returned unchanged, and false says so.
 func (bs bindings) without(id string) (bindings, bool) {
 	kept := make(bindings, 0, len(bs))
 
 	for _, b := range bs {
-		if b.DeviceID != id {
+		if b.ID != id {
 			kept = append(kept, b)
 		}
 	}
@@ -272,9 +390,13 @@ func (bs bindings) without(id string) (bindings, bool) {
 // with is the set with one binding put where the one it replaces was, or at the end when the
 // set does not hold it yet. Keeping the position is what stops an edit from moving a line on
 // the list a person is reading.
+//
+// It matches on the name, so a binding whose name is not in the set yet is appended — which is
+// what makes POST an add and PUT a replace. A binding with no name at all cannot match, and is
+// named on its way in by identified.
 func (bs bindings) with(b binding) bindings {
 	for i := range bs {
-		if bs[i].DeviceID == b.DeviceID {
+		if b.ID != "" && bs[i].ID == b.ID {
 			next := append(bindings(nil), bs...)
 			next[i] = b
 
@@ -296,12 +418,21 @@ func (bs bindings) with(b binding) bindings {
 //	[{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
 //	 {"printer": "Mini",       "controller": "http://10.0.0.136", "segment": 3}]
 //
+// One printer may appear on two lines — one per light — as long as no two lines take the same
+// segment of the same controller.
+//
 // Segment and brightness are pointers so that a line that leaves them out is not read as zero.
 // Zero is a real answer to both — segment 0 is the first segment a controller holds, and a
 // brightness of 0 is a strip switched off — so an absent one has to be told apart from a
 // written one, and it is the difference between driving the whole controller and borrowing its
 // first segment.
 type bindingSetting struct {
+	// ID is the binding's name, and it is written rather than derived for every binding the store
+	// holds: a name minted once and kept is what stops a printer's second light from renaming the
+	// first. The store writes it (store.go); a line of the `bindings` setting may carry one, and a
+	// line that does not is named by identified.
+	ID string `json:"id,omitempty"`
+
 	// Printer is the printer to watch, by the host's device id or by the name an operator gave
 	// it. The id is the better answer: a name is not unique until the host says it is.
 	Printer string `json:"printer"`
@@ -395,12 +526,18 @@ func bindingsFrom(ctx context.Context, fleet devices, entries []json.RawMessage)
 		}
 
 		set = append(set, binding{
+			ID:         strings.TrimSpace(one.ID),
 			DeviceID:   deviceID,
 			Address:    one.Controller,
 			Segment:    one.segment(),
 			Brightness: one.brightness(),
 		})
 	}
+
+	// Every binding needs a name before the set can be run or read back: the store writes it, the
+	// routes address it, and the layout table is keyed on it. A line that carried one keeps it
+	// exactly, which is how the panel's binding survives the upgrade that introduced the field.
+	set = set.identified()
 
 	if err := set.check(); err != nil {
 		return nil, err
@@ -453,7 +590,7 @@ func wantedBindings(ctx context.Context, fleet devices, sent Settings) (bindings
 		one.Brightness = 0
 	}
 
-	set := bindings{one}
+	set := bindings{one}.identified()
 
 	if err := set.check(); err != nil {
 		return nil, err

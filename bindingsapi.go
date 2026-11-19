@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -119,7 +120,9 @@ func (api bindingAPI) mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /controllers", api.listControllers)
 	mux.HandleFunc("GET /controllers/{name}", api.readController)
 
-	// One binding, named by the device id of the printer it shows.
+	// One binding, named by its own id: the printer's device id while one printer is shown once,
+	// and `<device id>@<light>:<segment>` once a printer sits on more than one light. GET
+	// /bindings answers that name for every binding.
 	mux.HandleFunc("GET /bindings/{id}", api.readBinding)
 	mux.HandleFunc("PUT /bindings/{id}", api.updateBinding)
 	mux.HandleFunc("DELETE /bindings/{id}", api.deleteBinding)
@@ -128,13 +131,19 @@ func (api bindingAPI) mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /bindings", api.createBinding)
 }
 
-// bindingAnswer is one binding as a caller reads it: the two things that name it, the number
-// a person needs to know how much of the controller it takes, and the name of the machine so
-// that a list of device ids is not what an operator has to match against the printers screen.
+// bindingAnswer is one binding as a caller reads it: the name it is addressed by, the light and
+// segment it drives, the number a person needs to know how much of the controller it takes, and
+// the name of the machine so that a list of device ids is not what an operator has to match
+// against the printers screen.
+//
+// Light, Segment and Whole are here because two bindings may now show one printer: a list that
+// carried only the device id would draw two identical rows for the panel and the strip, and there
+// would be nothing on the page to tell them apart.
 type bindingAnswer struct {
-	// ID is the binding's name on these routes: the host's device id for the printer it
-	// shows. A printer appears in at most one binding, so it is unique by the module's own
-	// rules, and it is the one fact about a binding the host minted rather than a person.
+	// ID is the binding's name on these routes: the host's device id for the printer it shows
+	// while that printer has one binding, and `<device id>@<light>:<segment>` once it has two.
+	// It is minted once — by identified, or by the migration that introduced it — and never
+	// changed, so a path a screen already holds keeps working.
 	ID string `json:"id"`
 
 	// Position is where the binding sits in the operator's order, counting from one.
@@ -146,6 +155,10 @@ type bindingAnswer struct {
 	// list unreadable.
 	Printer     string `json:"printer"`
 	PrinterName string `json:"printer_name,omitempty"`
+
+	// Light is the controller's name on these routes — its address without the scheme — which is
+	// the noun GET /controllers and the Layout screen address a light by.
+	Light string `json:"light"`
 
 	// Controller is the address as the operator wrote it, and Segment the one it drives with
 	// -1 for the whole controller. Whole says the same thing in the shape a person reads
@@ -180,10 +193,11 @@ type bindingsAnswer struct {
 // answerOf renders one binding for a caller, with the printer's name when there is one.
 func answerOf(b binding, position int, names map[string]string) bindingAnswer {
 	return bindingAnswer{
-		ID:          b.DeviceID,
+		ID:          b.ID,
 		Position:    position,
 		Printer:     b.DeviceID,
 		PrinterName: names[b.DeviceID],
+		Light:       lightName(b.Address),
 		Controller:  b.Address,
 		Segment:     b.Segment,
 		Whole:       b.Segment < 0,
@@ -192,10 +206,10 @@ func answerOf(b binding, position int, names map[string]string) bindingAnswer {
 }
 
 // positionOf is where one binding sits in a set, counting from one, and zero for one the set
-// does not hold.
+// does not hold. It is looked up by the binding's name, which is the only thing that names one.
 func positionOf(set bindings, id string) int {
 	for i, b := range set {
-		if b.DeviceID == id {
+		if b.ID != "" && b.ID == id {
 			return i + 1
 		}
 	}
@@ -273,7 +287,7 @@ func (api bindingAPI) listBindings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// readBinding is GET /bindings/{id}: one binding, by the device id of the printer it shows.
+// readBinding is GET /bindings/{id}: one binding, by its own name.
 func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	set := api.live.set()
@@ -281,15 +295,15 @@ func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 	found, ok := set.find(id)
 	if !ok {
 		refuse(w, r, BindingNotFound.New(
-			"This module drives no binding of that printer. Read GET /bindings for the ones it does.").
-			With(fault.StringParam("printer", id)))
+			"This module drives no binding of that name. Read GET /bindings for the ones it does.").
+			With(fault.StringParam("binding", id)))
 
 		return
 	}
 
 	names, why := api.printerNames(r.Context())
 
-	foundAnswer := answerOf(found, positionOf(set, found.DeviceID), names)
+	foundAnswer := answerOf(found, positionOf(set, found.ID), names)
 
 	answer(w, http.StatusOK, map[string]any{
 		"binding":           foundAnswer,
@@ -346,10 +360,14 @@ func (api bindingAPI) resolveName(ctx context.Context, named string) (string, er
 
 // toSetting turns one request into the binding it asks for, with the defaults the manifest
 // publishes for the fields it left out.
-func toSetting(deviceID string, asked bindingRequest) binding {
+//
+// The name is carried in rather than asked for: a PUT replaces a binding and keeps its name, and
+// a POST passes none so that identified can mint one from the printer and the light.
+func toSetting(id, deviceID string, asked bindingRequest) binding {
 	one := bindingSetting{Controller: asked.Controller, Segment: asked.Segment, Brightness: asked.Brightness}
 
 	return binding{
+		ID:         id,
 		DeviceID:   deviceID,
 		Address:    strings.TrimSpace(one.Controller),
 		Segment:    one.segment(),
@@ -357,7 +375,13 @@ func toSetting(deviceID string, asked bindingRequest) binding {
 	}
 }
 
-// createBinding is POST /bindings: one more printer, shown from now on.
+// createBinding is POST /bindings: one more binding, shown from now on — a second light for a
+// printer already shown, or the first light for one that is not.
+//
+// A printer already shown is no longer a refusal. docs/product-requirements.md §2.2: "A printer
+// may sit on several lights — multi-room status — at the cost of a second steady stream." What is
+// still refused is the same segment of the same controller twice, and bindings.check says so when
+// the set is judged, naming the binding that got there first.
 func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 	asked, err := readBindingRequest(r)
 	if err != nil {
@@ -373,16 +397,19 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	one := toSetting(deviceID, asked)
+	one := toSetting("", deviceID, asked)
+
+	var added binding
 
 	set, err := api.live.revise(api.watchContext(), func(current bindings) (bindings, error) {
-		if _, held := current.find(one.DeviceID); held {
-			return nil, fmt.Errorf(
-				"printer %s is already shown by a binding: one printer is shown by one binding, so change that one with PUT /bindings/%s",
-				one.DeviceID, one.DeviceID)
-		}
+		// Appended and then named across the whole set, in the operator's order: a printer's
+		// first binding is already named with the bare device id, so the second takes the
+		// qualified one and the first keeps the path it answered at before. See identified.
+		next := append(append(bindings(nil), current...), one).identified()
 
-		return current.with(one), nil
+		added = next[len(next)-1]
+
+		return next, nil
 	})
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
@@ -393,7 +420,7 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 	names, why := api.printerNames(r.Context())
 
 	answer(w, http.StatusCreated, map[string]any{
-		"binding":           answerOf(one, positionOf(set, one.DeviceID), names),
+		"binding":           answerOf(added, positionOf(set, added.ID), names),
 		"applied":           true,
 		"persisted":         false,
 		"names_read_failed": why,
@@ -401,12 +428,13 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// updateBinding is PUT /bindings/{id}: the same printer, on a different controller or segment,
-// or at a different brightness.
+// updateBinding is PUT /bindings/{id}: the same binding, on a different controller or segment, or
+// at a different brightness.
 //
-// The printer is the binding's name here, so a body naming a different one is refused rather
-// than quietly moving the id: the answer a caller would look for afterwards is not the one
-// that exists.
+// The name is what a caller addresses, so it does not move: a binding that is moved to another
+// segment keeps the name it had, because a path a screen already holds must keep working. What is
+// refused is a body naming a different printer than this binding shows — that is a different
+// binding, not an edit — and a body that would put this binding on a segment another one drives.
 func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -417,26 +445,40 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(asked.Printer) != "" && strings.TrimSpace(asked.Printer) != id {
-		refuse(w, r, BindingRefused.New(fmt.Sprintf(
-			"a binding is named by the printer it shows and this one shows %s: to show %s instead, delete this binding and add the other",
-			id, strings.TrimSpace(asked.Printer))))
+	// The printer a body names is resolved before the change is taken, because a host read
+	// inside the change would hold the lock the whole watch is rebuilt under.
+	var named string
 
-		return
+	if wanted := strings.TrimSpace(asked.Printer); wanted != "" {
+		named, err = api.resolveName(r.Context(), wanted)
+		if err != nil {
+			refuse(w, r, BindingRefused.New(err.Error()))
+
+			return
+		}
 	}
 
-	one := toSetting(id, asked)
+	var changed binding
 
 	set, err := api.live.revise(api.watchContext(), func(current bindings) (bindings, error) {
-		if _, held := current.find(id); !held {
+		found, held := current.find(id)
+		if !held {
 			return nil, fmt.Errorf("%w: %s", errNoBinding, id)
 		}
 
-		return current.with(one), nil
+		if named != "" && named != found.DeviceID {
+			return nil, fmt.Errorf(
+				"a binding is named once and this one shows printer %s: to show %s instead, delete this binding and add another",
+				found.DeviceID, named)
+		}
+
+		changed = toSetting(found.ID, found.DeviceID, asked)
+
+		return current.with(changed), nil
 	})
 	if err != nil {
 		if errors.Is(err, errNoBinding) {
-			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("printer", id)))
+			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("binding", id)))
 
 			return
 		}
@@ -449,7 +491,7 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	names, why := api.printerNames(r.Context())
 
 	answer(w, http.StatusOK, map[string]any{
-		"binding":           answerOf(one, positionOf(set, id), names),
+		"binding":           answerOf(changed, positionOf(set, changed.ID), names),
 		"applied":           true,
 		"persisted":         false,
 		"names_read_failed": why,
@@ -457,7 +499,8 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// deleteBinding is DELETE /bindings/{id}: this printer stops being shown.
+// deleteBinding is DELETE /bindings/{id}: this binding stops being shown. A printer with two
+// bindings loses one of them, which is the only way back from a second light.
 //
 // The last binding may be deleted. It is a thing an operator may want — the light stops being
 // written to, and is left as the last frame found it — and it is better said than done by
@@ -479,7 +522,7 @@ func (api bindingAPI) deleteBinding(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errNoBinding) {
-			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("printer", id)))
+			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("binding", id)))
 
 			return
 		}
@@ -511,14 +554,25 @@ type printerAnswer struct {
 	// Connected says whether the host holds a session for it now.
 	Connected bool `json:"connected"`
 
-	// Bound is the binding that already shows this printer, and absent when none does. It is
-	// here so that a picker can leave out the printers this module is already showing rather
-	// than offering a second binding the rules would refuse.
+	// Bound is the first binding that shows this printer, and absent when none does. It is the
+	// flat answer a picker wants — "is this printer already on a light, and where" — and it
+	// speaks for the first of several when a printer sits on two.
 	Bound *boundAnswer `json:"bound,omitempty"`
+
+	// BoundCount is how many bindings show this printer: 0 for none, 1 for the ordinary case, and
+	// 2 or more for a printer in more than one room. It is a count rather than a list because the
+	// bindings themselves are GET /bindings' answer, and a second copy of them here would be a
+	// second place to keep in step.
+	BoundCount int `json:"bound_count"`
 }
 
 // boundAnswer is where a printer is already shown.
 type boundAnswer struct {
+	// ID is the binding's name on these routes, Light the controller's name, and the three after
+	// them what the binding drives — which is how two bound answers for one printer are told
+	// apart.
+	ID         string `json:"id"`
+	Light      string `json:"light"`
 	Controller string `json:"controller"`
 	Segment    int    `json:"segment"`
 	Whole      bool   `json:"whole"`
@@ -555,8 +609,18 @@ func (api bindingAPI) listPrinters(w http.ResponseWriter, r *http.Request) {
 	for _, device := range page.Items {
 		one := printerAnswer{ID: device.ID, Name: device.Name, Model: device.Model, Connected: device.Connected}
 
-		if held, ok := set.find(device.ID); ok {
-			one.Bound = &boundAnswer{Controller: held.Address, Segment: held.Segment, Whole: held.Segment < 0}
+		// Every binding that shows this printer, not only the first: a printer on two lights is
+		// the case multi-room exists for, and a count of one beside a strip that is also driving
+		// it would be the answer this whole change was made to stop giving.
+		if held := set.onPrinter(device.ID); len(held) > 0 {
+			one.Bound = &boundAnswer{
+				ID:         held[0].ID,
+				Light:      lightName(held[0].Address),
+				Controller: held[0].Address,
+				Segment:    held[0].Segment,
+				Whole:      held[0].Segment < 0,
+			}
+			one.BoundCount = len(held)
 		}
 
 		out = append(out, one)
@@ -675,7 +739,13 @@ func controllersOf(set bindings) ([]controllerAnswer, error) {
 				one.Segments = append(one.Segments, b.Segment)
 			}
 
-			one.Printers = append(one.Printers, b.DeviceID)
+			// Each printer once, however many segments of this light it is on: this list is what
+			// a screen offers as "the printers on this light", and the same machine twice is one
+			// machine. One printer on two lights still appears on both lists, because each list
+			// is one controller's.
+			if !slices.Contains(one.Printers, b.DeviceID) {
+				one.Printers = append(one.Printers, b.DeviceID)
+			}
 		}
 
 		out = append(out, one)
@@ -805,7 +875,7 @@ func segmentsOf(state wled.State) []segmentAnswer {
 // errNoBinding is a change asked of a binding this module is not driving. It is a value rather
 // than a sentence so that the handler answers 404 by asking the error, and not by looking for
 // words it wrote itself a moment earlier.
-var errNoBinding = errors.New("this module drives no binding of that printer")
+var errNoBinding = errors.New("this module drives no binding of that name")
 
 // appliedNote is what every write on these routes answers with, because the one thing a
 // caller must not be wrong about is whether the change survives a restart.
