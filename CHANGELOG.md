@@ -7,9 +7,11 @@ Write the entry in the same change as the code. One bullet per behaviour a
 person outside this repository can observe: a route, a setting, a screen, a
 refusal. Name the route and the setting key, never a function or a file.
 
-## Unreleased
+## 0.2.0 — 2026-11-19
 
-Waiting on `version:` in `module.yaml`, which is not raised until this is released.
+The module's own page, the moment and state tables, a layout per binding, several lights showing one
+printer, and the presets and identify routes. The store stays at schema version 5: no migration, and a
+rollback to `0.1.0` needs no older document.
 
 ### Added
 
@@ -193,12 +195,12 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   shape and pixel count from the frame the module is drawing, and its segment count; the light's own segments
   with all four bounds, read-only; its own presets, read-only, with an unnamed slot shown as unnamed and a
   light that could not be read saying why; the four proved tests as presses that say before they fire that
-  they paint the real light for a minute; an `identify` that is disabled until the screen is wired to the
-  route below; snapshots with a take-now button, what each file cannot give back, and a restore behind a
-  warning that names the destruction, states that it has **never been run against a real light**, and shows
-  the sections written and the sections withheld; and a paragraph where `Replace this light…` would be, saying
-  there is no replace route and what the swap would have to check. A light that is not answering has every
-  test and its restore switched off, with the reason on the card.
+  they paint the real light for a minute; an `identify` whose button is off, because the route exists below
+  and this card is not wired to it yet; snapshots with a take-now button, what each file cannot give back,
+  and a restore behind a warning that names the destruction, states that it has **never been run against
+  a real light**, and shows the sections written and the sections withheld; and a paragraph where
+  `Replace this light…` would be, saying there is no replace route and what the swap would have to check.
+  A light that is not answering has every test and its restore switched off, with the reason on the card.
 - `GET /devices/{name}/presets` answers the presets the light itself holds, by slot and by name: the list a
   moment's `which` is picked from and the read-only list a light's card shows, read from the controller's
   own `/presets.json` when the route is called. `presets_known` says whether the light answered — a light

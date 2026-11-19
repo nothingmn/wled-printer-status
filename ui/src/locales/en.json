@@ -387,7 +387,7 @@
   "devices.tests_before": "Each of these paints the light itself, for {hold} seconds, and then the module's own picture comes back. Nothing here runs on its own — each one is a press.",
   "devices.test_word": "the word",
   "devices.test_identify": "identify",
-  "devices.identify_no_route": "identify — the light on and off, one second each way, five times — has no route in this build, so the button is off rather than offering one that always fails.",
+  "devices.identify_no_route": "identify — the light on and off, one second each way, five times — has a route on this build, but this button is not wired to it yet, so it is off rather than offering one that always fails.",
   "devices.tests_disabled": "The light is not answering, so its tests are off.",
   "devices.test_fired": "{pattern} is on the light for {hold} seconds. {what}",
   "devices.test_fired_word": "{word} is on the light for {hold} seconds.",

@@ -118,7 +118,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.1.0")
+	release = extension.Version("0.2.0")
 )
 
 const (
