@@ -34,9 +34,12 @@ early beta. The point of it is a light somebody walks past, not a screen somebod
 | Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-3c12d89-20261119T1215Z/` |
 | Signing key | `/home/robchartier/.prusa-signing/wled-printer-status/signing-key.pem`, `0600` in a `0700` dir — **never copy, print or commit it** |
 
-**State at the time of writing:** `HEAD = 69cc791`, working tree clean, level with `origin/main`,
-**376 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and under
-`-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
+**State at the time of writing:** the tree is clean and level with `origin/main`; `git log --oneline -5`
+says where `HEAD` stands. **The deployed release was built from `69cc791`**, and every commit above it is
+documentation or tests — `69cc791`'s own two are tests, so the binary on the host is `5104b90`'s byte for
+byte (`2f3daf3e…`, proved by building both and comparing), while this document and the install-log entry
+sit above the deploy and change no code. **376 top-level tests** (`go test ./... -count=1 -v | grep -E
+'^--- PASS: Test'`), green plain and under `-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
 with two bindings and five empty tables, tag `v0.1.0` pushed, **zero GitHub releases** (so `release.yml`
 has never run).
 
