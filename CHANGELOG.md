@@ -20,8 +20,9 @@ holds the whole light, and keeps holding it.
 
 - `GET /status` answers what the module currently thinks: the printer it watches, how old that reading
   is, the frame it has decided, and what the last write to the light did.
-- The setting `controller_address` names the WLED controller to drive, and is required: the module will
-  not start without it.
+- The setting `controller_address` names the one WLED controller to drive when `bindings` is empty. It is
+  no longer required, because an instance that lists several printers in `bindings` has no single address
+  to name; with neither written the module refuses to start and says so.
 - The setting `printer` picks the printer to watch, by device id or by name. Left empty it takes the only
   printer the instance holds, and refuses to choose between several.
 - The setting `brightness` sets what the module writes to the controller once at start, 0-255.
@@ -53,6 +54,25 @@ holds the whole light, and keeps holding it.
   else's controller, a strip, or a panel too small for the word.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
+- The setting `bindings` carries the whole topology as one JSON list: one line per printer, each with its
+  controller and the segment it is shown on. It wins over `controller_address`, `printer`, `brightness` and
+  `segment` when it is written, and it is the setting that makes two printers on two controllers one
+  install. A line that leaves `segment` out drives the whole controller; a line that names one borrows it
+  and may carry no brightness. A list the module cannot run refuses the start, and the sentence names the
+  line and the field, such as `bindings[1]: json: unknown field "controler"`.
+- `GET /bindings` answers the set of bindings the module is running, in the operator's order, with each
+  printer's name read from the host. `GET /bindings/{id}` answers one, `POST /bindings` adds one,
+  `PUT /bindings/{id}` changes where one printer is shown, and `DELETE /bindings/{id}` stops showing it.
+  Every write takes effect at once — the writer is stopped, a borrowed segment given back, and the watch
+  started again on the new set — so no restart and no reinstall is needed. None of them save anything: the
+  settings belong to the host, so a restart puts back what the settings say, and every answer says so with
+  `"persisted": false`.
+- `GET /printers` answers the host's printers with the binding that already shows each one, which is where
+  a device id comes from: nobody types one. `GET /controllers` answers the same set grouped by controller,
+  with the segments each gives up for it.
+- The binding routes refuse with codes of their own — `BINDING_NOT_FOUND`, `BINDING_REFUSED`,
+  `BINDING_BODY_INVALID`, `CONTROLLER_NOT_FOUND` and `PRINTERS_UNAVAILABLE` — and a refusal leaves the set
+  that was running running.
 - The install asks for `observe`, because the module now reads one printer as itself, and declares two
   outbound connections to the controller in `controller_address`, from this process: port 80, where the
   status colour and the progress are written, and port 4048, where the pixels of the finished word are
@@ -78,5 +98,8 @@ holds the whole light, and keeps holding it.
 - **No animations.** No pulse, no fade, no movement: a state is one colour and a fill, and the one word
   that is drawn sits still.
 - **No layout composer.** The picture is the module's; the operator does not arrange it.
-- **No multi-binding.** One printer per installed module and one controller per instance. A printer this
-  instance does not watch is a printer on no light at all.
+- **No screen, and no picker.** The routes an editor would call exist and answer; nothing in the host draws
+  a form from a module's routes, and this module ships no browser half, so the printer and segment are
+  still written by hand — as one line of `bindings` each.
+- **No saving through the API.** A binding changed through the routes lives until the process restarts.
+  The durable shape is the `bindings` setting.

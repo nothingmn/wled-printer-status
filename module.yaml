@@ -21,11 +21,11 @@ license: MIT
 # filed, and how far along it is. The install copies these into the declaration,
 # so `GET /api/v1/resources` carries them for an installed module.
 #
-# The summary is one sentence on purpose, and every part of it is true: one
-# printer, one controller, a colour, a filled bar. Nothing about a fleet, an
-# animation or a schedule, because none of those exists here yet.
+# The summary is one sentence on purpose, and every part of it is true: a colour, a
+# filled bar, and one segment per printer, which is what the binding list below makes
+# possible. Nothing about an animation or a schedule, because neither exists here yet.
 title: WLED Printer Status
-summary: Shows one Prusa printer's live state as a colour and its progress as a filled bar on a WLED light or matrix panel.
+summary: Shows each Prusa printer's live state as a colour and its progress as a filled bar, on its own segment of a WLED light or matrix panel.
 # Who answers for this module: the GitHub handle that owns the repository.
 codeowner: nothingmn
 # Where a defect is filed: this repository's own issues page.
@@ -66,10 +66,13 @@ options:
     type: string
     default: "Wled Printer Status is serving."
     summary: The line GET /wled-printer-status answers with.
+  # Empty when `bindings` is written, which is the setting below that carries several
+  # printers. It is not required for that reason: a required key has no default, the host
+  # refuses to start a module whose required key is missing, and an instance driving two
+  # lights would then have to name a third controller here just to start.
   - key: controller_address
     type: string
-    required: true
-    summary: The WLED controller to drive, as its base URL such as http://10.0.0.136, with no path and no trailing slash.
+    summary: The one WLED controller to drive when `bindings` is empty, as its base URL such as http://10.0.0.136, with no path and no trailing slash.
   - key: printer
     type: string
     summary: The printer to watch, by the server's device id for it or by the name an operator gave it. Empty watches the only printer the instance holds, and refuses to choose between several.
@@ -101,6 +104,46 @@ options:
     type: int
     default: "-1"
     summary: The number of the one segment to drive on a multi-segment controller, leaving the controller's other segments, its brightness and its power alone. -1 drives the whole strip, which is what this module has always done.
+
+  # The printers this module shows, one line each, and the setting to reach for when there is
+  # more than one printer. It wins over the four keys above when it is written: a list is
+  # the only shape that can say "two printers", and half a list beside a controller_address
+  # would be two answers to one question.
+  #
+  # Its type is `list`, which the settings pane draws as a block of JSON in a text area --
+  # the manifest declares nine value shapes and a list of bindings is the largest of them.
+  # Paste one line per printer, and read the refusal if the host will not start the module:
+  # it names the line and the field, such as
+  # "bindings[1]: json: unknown field "controler"".
+  #
+  #   [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
+  #    {"printer": "Mini",       "controller": "http://10.0.0.136", "segment": 3}]
+  #
+  # Each line carries:
+  #
+  #   printer     the printer to watch, by the host's device id or by the name an operator
+  #               gave it. GET /printers on this module lists both, which is where a device
+  #               id comes from: nobody types one. Required, and one printer appears in one
+  #               line only.
+  #   controller  the WLED controller to drive, as its base URL with no path and no trailing
+  #               slash. Required, and two spellings of one address are one controller.
+  #   segment     the one segment to drive on a controller that carries several. Absent or -1
+  #               drives the whole controller. One segment is driven by one line only, and a
+  #               line naming the whole controller leaves no segment for any other line on it.
+  #   brightness  written once at start, 0-255, and only on a whole-controller line: a
+  #               brightness is controller-wide, so a line that borrows a segment and carries
+  #               one is refused rather than quietly dimming the whole controller. Absent on a
+  #               whole-controller line means 128, which is the default above.
+  #
+  # Two printers on two controllers, or three segments of one, is therefore:
+  #
+  #   [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
+  #    {"printer": "Mini", "controller": "http://10.0.0.253", "segment": 2}]
+  - key: bindings
+    type: list
+    default: "[]"
+    summary: The printers this module shows, one line each, written as a JSON list of objects with a printer key and a controller key. It wins over the four settings above when it is written, and GET /printers on this module lists the printer ids to use.
+
 
 # Every connection this module makes outside Prusa Connect, which the operator
 # reads before they approve the install. Both of them are the controller they

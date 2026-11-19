@@ -3,9 +3,345 @@
   "info": {
     "title": "wled-printer-status",
     "version": "0.1.0",
-    "description": "The routes wled-printer-status serves. Every path is relative to the mount the host assigns, and the host serves this document rebased under it at <mount>/openapi.json."
+    "description": "The routes wled-printer-status serves. Every path is relative to the mount the host assigns, and the host serves this document rebased under it at <mount>/openapi.json. Nothing in the host reads this document to draw a screen: it is what a client generator reads to type these routes, and what a person reads to learn them."
   },
   "paths": {
+    "/bindings": {
+      "get": {
+        "operationId": "list-bindings",
+        "summary": "The printers this module is showing",
+        "description": "Every binding in force, in the operator's order: the printer, the controller, and the segment it drives with -1 for the whole controller. A binding is one printer shown on one segment of one controller, and this is the set the writer is running on now rather than what the settings file says — the source member says which of the two it is. A printer's name comes from the host's own list, so it is absent, with names_read_failed saying why, when the host will not answer: the set is this module's record and must not become unreadable because a name could not be fetched. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The set in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bindings": {
+                      "type": "array",
+                      "description": "Every binding, in the operator's order.",
+                      "items": {"$ref": "#/components/schemas/Binding"}
+                    },
+                    "count": {"type": "integer", "description": "How many bindings the set holds."},
+                    "source": {"type": "string", "description": "Where this set came from: the bindings setting, the four settings that came before it, or a change made through these routes since the module started."},
+                    "persisted": {"type": "boolean", "description": "Always false. Nothing on this surface writes the host's settings, so a change made here lasts until the process restarts or the settings pane is saved."},
+                    "names_read_failed": {"type": "string", "description": "Why a printer's name is missing, absent when the host answered."}
+                  },
+                  "required": ["bindings", "count", "source", "persisted"]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "add-binding",
+        "summary": "Show one more printer",
+        "description": "Adds a binding and puts it into effect at once: the writer is stopped — waiting for a borrowed segment to be given back — and started again on the new set, so no restart and no settings save is needed. Nothing is saved: the host owns the settings, and this module has no call that writes them. The set that would result is held to the module's rules before anything is touched, so two bindings on one segment, two bindings on one printer, a whole controller beside a segment of it, a brightness on a borrowed segment, a printer the host does not hold and an address that is not a controller are all refused with the rule that refused them and the set that was running is left running. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/BindingRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The binding was added and is being driven now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "binding": {"$ref": "#/components/schemas/Binding"},
+                    "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
+                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
+                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                  },
+                  "required": ["binding", "applied", "persisted"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not one binding: not JSON, or a key this module does not read (BINDING_BODY_INVALID).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The set that change would make breaks a rule, or names a printer the host does not hold (BINDING_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "The host's printer list could not be read, so the printer named cannot be resolved (PRINTERS_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bindings/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The binding's name: the host's device id for the printer it shows, which is what GET /bindings carries as id and GET /printers as id. A printer appears in at most one binding, so the printer's id is the whole of a binding's name.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "operationId": "read-binding",
+        "summary": "One binding, by the printer it shows",
+        "description": "The binding this module is driving for one printer, with the position it holds in the operator's order. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The binding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "binding": {"$ref": "#/components/schemas/Binding"},
+                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
+                    "names_read_failed": {"type": "string", "description": "Why the printer's name is missing, absent when the host answered."}
+                  },
+                  "required": ["binding", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "change-binding",
+        "summary": "Point one printer at another controller or segment",
+        "description": "Replaces where one printer is shown: its controller, its segment, its brightness. The printer is the binding's name, so a body naming a different one is refused rather than quietly moving what the id refers to — delete the binding and add the other. The change takes effect at once, in the writer that is already talking to the controller, and it is not saved: a restart or a save of the settings pane puts back what the settings say. The set the change would make is judged before anything is stopped, so a refusal leaves the set that was running running. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/BindingRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The binding now drives what the body asked for, and the writer is running on it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "binding": {"$ref": "#/components/schemas/Binding"},
+                    "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
+                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
+                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                  },
+                  "required": ["binding", "applied", "persisted"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not one binding: not JSON, or a key this module does not read (BINDING_BODY_INVALID).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The set that change would make breaks a rule (BINDING_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete-binding",
+        "summary": "Stop showing one printer",
+        "description": "Takes one binding out of the set and puts the change into effect at once: the writer for that binding stops, and a borrowed segment is given back to the controller it came from before the route answers. The last binding may be deleted, and then this module drives nothing and the light is left as the last frame found it — which is a thing an operator may want and is better said than done by removing a setting and restarting the host. Nothing is saved: the settings still name the binding, and a restart puts it back. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The binding is gone and is no longer driven.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {"type": "string", "description": "The device id of the printer that is no longer shown."},
+                    "remaining": {
+                      "type": "array",
+                      "description": "The set that is running now, which may be empty.",
+                      "items": {"$ref": "#/components/schemas/Binding"}
+                    },
+                    "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
+                    "driving": {"type": "boolean", "description": "Whether this module is driving any light afterwards. False means the last binding was the one deleted."},
+                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
+                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                  },
+                  "required": ["deleted", "remaining", "applied", "driving", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The binding could not be stopped cleanly, so the set that was running is running still (BINDING_REFUSED).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/controllers": {
+      "get": {
+        "operationId": "list-controllers",
+        "summary": "The controllers this module drives, and what each gives up for it",
+        "description": "The running set grouped by controller, one entry per address however many bindings sit on it. A controller has no separate life here: it is an address a binding names, it appears when the first binding names it and it is gone when the last one leaves, which is why this surface has no create, change or delete for one — those are the binding routes, and a second way to write the same thing is a second thing to be wrong. Nothing here asks a controller anything, so segments says which segments are taken and never which ones exist: a controller's segments are what the device reports, and this module reads them when a writer borrows one. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "Every controller the set drives.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "controllers": {
+                      "type": "array",
+                      "items": {"$ref": "#/components/schemas/Controller"}
+                    },
+                    "count": {"type": "integer", "description": "How many controllers the set drives."},
+                    "segments_known": {"type": "boolean", "description": "Always false: which segments exist is the controller's answer, and nothing here asks it."}
+                  },
+                  "required": ["controllers", "count", "segments_known"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/controllers/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The controller's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "operationId": "read-controller",
+        "summary": "One controller, by the name the list gives it",
+        "description": "The same entry GET /controllers carries, for one address. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The controller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "controller": {"$ref": "#/components/schemas/Controller"},
+                    "segments_known": {"type": "boolean", "description": "Always false: nothing here asks a controller which segments it holds."}
+                  },
+                  "required": ["controller", "segments_known"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no controller of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/printers": {
+      "get": {
+        "operationId": "list-printers",
+        "summary": "The printers this host holds, and which of them are already shown",
+        "description": "The host's own printer list, which is where a device id comes from: no one types one, and this is the route a page or a person reads to find out what to name. Each printer carries the binding that already shows it, so that a caller offering a choice can leave out the ones this module is driving rather than offering a second binding the rules would refuse. The list is the host's answer and this module's copy of it is not kept. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "Every printer the host holds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "printers": {
+                      "type": "array",
+                      "items": {"$ref": "#/components/schemas/Printer"}
+                    },
+                    "count": {"type": "integer", "description": "How many printers this answer carries."},
+                    "total": {"type": "integer", "description": "How many the host holds; larger than count when the list was cut."}
+                  },
+                  "required": ["printers", "count", "total"]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The host's printer list could not be read (PRINTERS_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/preview-finished": {
       "post": {
         "operationId": "preview-finished-word",
@@ -62,7 +398,7 @@
       "get": {
         "operationId": "read-status",
         "summary": "What this module currently thinks",
-        "description": "The frame this module has decided for the light, the printer it decided it from, how old that reading is, and what the last write to the controller did — so a person can tell what the module thinks without looking at a light. The host takes view_resource on the module's instance before this is called.",
+        "description": "The frame this module has decided for the light, the printer it decided it from, how old that reading is, and what the last write to the controller did — so a person can tell what the module thinks without looking at a light. An instance driving one binding answers the frame beside the printer it came from; an instance driving several answers a bindings list, one entry per binding, because one body cannot say which of two lights its frame describes. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The module's answer.",
@@ -71,6 +407,11 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "bindings": {
+                      "type": "array",
+                      "description": "One entry per binding, in the order they first published a frame. Present instead of the single frame below when this module drives more than one binding.",
+                      "items": {"$ref": "#/components/schemas/BindingStatus"}
+                    },
                     "printer": {
                       "type": "object",
                       "description": "The printer being watched.",
@@ -132,7 +473,7 @@
             }
           },
           "503": {
-            "description": "The module has not decided a frame yet, which is true only in the moment between its first reading and its first tick.",
+            "description": "The module has not decided a frame yet, which is true only in the moment between its first reading and its first tick (NO_READING_YET).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -174,6 +515,100 @@
             }
           }
         }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Binding": {
+        "type": "object",
+        "description": "One printer, shown on one segment of one controller.",
+        "properties": {
+          "id": {"type": "string", "description": "The binding's name on these routes: the host's device id for the printer it shows."},
+          "position": {"type": "integer", "description": "Where the binding sits in the operator's order, counting from one."},
+          "printer": {"type": "string", "description": "The host's device id for the printer being watched."},
+          "printer_name": {"type": "string", "description": "The name an operator gave the machine, absent when the host could not be read."},
+          "controller": {"type": "string", "description": "The controller as the operator wrote it: a base URL with no path."},
+          "segment": {"type": "integer", "description": "The segment this binding drives, and -1 for the whole controller."},
+          "whole": {"type": "boolean", "description": "True when this binding drives the whole controller, which is the same thing segment -1 says in the shape a person reads."},
+          "brightness": {"type": "integer", "description": "Written once at start, 0-255, and absent on a borrowed segment where nothing writes one."}
+        },
+        "required": ["id", "position", "printer", "controller", "segment", "whole"]
+      },
+      "BindingRequest": {
+        "type": "object",
+        "description": "One binding as a caller writes it: the same four keys one line of the bindings setting carries.",
+        "properties": {
+          "printer": {"type": "string", "description": "The printer to watch, by the device id GET /printers carries or by the name an operator gave it. Ignored by a change, where the printer in the path is the binding's name."},
+          "controller": {"type": "string", "description": "The WLED controller to drive, as its base URL such as http://10.0.0.136, with no path and no trailing slash."},
+          "segment": {"type": "integer", "description": "The one segment to drive on a controller that carries several, or -1 or absent for the whole controller."},
+          "brightness": {"type": "integer", "minimum": 0, "maximum": 255, "description": "Written once at start, and only on a binding that drives the whole controller: a brightness is controller-wide, so one on a borrowed segment is refused. Absent on a whole-controller binding means 128."}
+        },
+        "required": ["controller"]
+      },
+      "Controller": {
+        "type": "object",
+        "description": "One controller the running set drives, and the bindings that drive it.",
+        "properties": {
+          "name": {"type": "string", "description": "The controller's name on these routes: its address without the scheme, so that it is one path segment."},
+          "address": {"type": "string", "description": "The controller as an operator wrote it."},
+          "key": {"type": "string", "description": "The same controller with its scheme and host lowercased, which is what the rules compare so that two spellings of one address are one controller."},
+          "whole": {"type": "string", "description": "The printer whose binding drives the whole controller, absent when none does."},
+          "segments": {"type": "array", "items": {"type": "integer"}, "description": "The segments the bindings on this controller borrow, in the operator's order. Never the segments the controller holds: nothing here asks it."},
+          "printers": {"type": "array", "items": {"type": "string"}, "description": "The device ids of every printer shown on this controller, in the operator's order."}
+        },
+        "required": ["name", "address", "key", "segments", "printers"]
+      },
+      "Printer": {
+        "type": "object",
+        "description": "One printer the host holds.",
+        "properties": {
+          "id": {"type": "string", "description": "The host's id for the printer, which is what a binding names and what survives a rename."},
+          "name": {"type": "string", "description": "The name an operator gave the machine."},
+          "model": {"type": "string", "description": "What the machine is."},
+          "connected": {"type": "boolean", "description": "Whether the host holds a session for it now."},
+          "bound": {"$ref": "#/components/schemas/Bound"}
+        },
+        "required": ["id", "name", "connected"]
+      },
+      "Bound": {
+        "type": "object",
+        "description": "The binding that already shows one printer.",
+        "properties": {
+          "controller": {"type": "string", "description": "The controller it is shown on."},
+          "segment": {"type": "integer", "description": "The segment it drives, and -1 for the whole controller."},
+          "whole": {"type": "boolean", "description": "True when it drives the whole controller."}
+        },
+        "required": ["controller", "segment", "whole"]
+      },
+      "BindingStatus": {
+        "type": "object",
+        "description": "One binding's answer on the status route: the reading, the frame and the last send, with the controller and segment they belong to.",
+        "properties": {
+          "controller": {"type": "string", "description": "The controller as the operator wrote it."},
+          "segment": {"type": "integer", "description": "The segment this binding drives, and -1 for the whole controller."},
+          "printer": {"type": "object", "description": "The printer being watched, as the single-frame answer describes it."},
+          "reading": {"type": "object", "description": "How old the newest fact about the printer is."},
+          "frame": {"type": "object", "description": "What the light is being asked to show."},
+          "last_send": {
+            "type": ["object", "null"],
+            "description": "What the last write to the controller did, and null before the first one has been attempted."
+          }
+        },
+        "required": ["controller", "segment", "printer", "reading", "frame", "last_send"]
+      },
+      "Refusal": {
+        "type": "object",
+        "description": "An RFC 9457 problem naming one of this module's registered codes, as faults.go registers it.",
+        "properties": {
+          "type": {"type": "string", "description": "A URI naming the code."},
+          "title": {"type": "string", "description": "The English title of the code."},
+          "status": {"type": "integer", "description": "The status the answer carried."},
+          "detail": {"type": "string", "description": "What went wrong, in the module's own words."},
+          "code": {"type": "string", "description": "The registered code, such as BINDING_REFUSED. Branch on this and not on the sentence."},
+          "retryable": {"type": "boolean", "description": "Whether sending the same request again can work."}
+        },
+        "required": ["code", "title"]
       }
     }
   }

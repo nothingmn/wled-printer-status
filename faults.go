@@ -81,6 +81,59 @@ var (
 		fault.RetryNever,
 		fault.ShowDetail,
 	))
+
+	// BindingNotFound is a read, a change or a delete of a binding this module is not driving.
+	// A binding is named by the device id of the printer it shows, so the refusal names the id
+	// that missed and says where the list is.
+	BindingNotFound = fault.Register(faultDomain, "BINDING_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module drives no binding of that printer",
+		"Read GET /bindings for the set this module is running. A binding is named by the host's device id for the printer it shows, and GET /printers lists the ones this host holds.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"printer",
+	))
+
+	// BindingRefused is a change the module's own rules refuse: two bindings on one segment, two
+	// bindings on one printer, the whole controller beside a segment of it, a brightness on a
+	// borrowed segment, a printer the host does not hold, or a controller address that is not one.
+	//
+	// It is a 409 and not a 400 because the body is well formed: what is wrong is the set the
+	// change would make, and the sentence names which rule and which two bindings.
+	BindingRefused = fault.Register(faultDomain, "BINDING_REFUSED", http.StatusConflict, fault.Document(
+		"The set that change would make breaks a rule this module holds two bindings to",
+		"One printer is shown by one binding, one segment is shown by one binding, a whole controller leaves no segment for anything else, and a borrowed segment carries no brightness. The detail names the rule and the binding that got there first. Nothing was changed: the set that was running is still running.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// BindingBodyInvalid is a body that is not one binding at all: not JSON, or a key this
+	// module does not read. It is refused rather than ignored, because a misspelt key would
+	// otherwise write a binding with a field left at its zero — a brightness of nothing on the
+	// controller an operator meant to leave alone.
+	BindingBodyInvalid = fault.Register(faultDomain, "BINDING_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not one binding",
+		"Write a JSON object with printer and controller, and with segment or brightness when they are wanted. Every other key is refused rather than ignored, so a misspelt one is reported instead of silently doing nothing.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// PrintersUnavailable is a read of the host's printer list that did not answer, which is what
+	// tells a caller which printers it may name. Nothing about the light was touched.
+	PrintersUnavailable = fault.Register(faultDomain, "PRINTERS_UNAVAILABLE", http.StatusServiceUnavailable, fault.Document(
+		"This module could not read the host's printer list",
+		"The list is the host's, and it is what says which printers exist and what their device ids are. Send the same request again once the host answers.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+	))
+
+	// ControllerNotFound is a read of a controller this module drives no binding on.
+	ControllerNotFound = fault.Register(faultDomain, "CONTROLLER_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module drives no controller of that name",
+		"Read GET /controllers for the ones it does. A controller has no separate existence here: it appears when a binding names it and it is gone when the last binding on it is deleted, so the list is the bindings, grouped.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"controller",
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

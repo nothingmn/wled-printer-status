@@ -1,14 +1,18 @@
-// Command wled-printer-status is a module that watches one printer and drives
-// one WLED controller from what it sees. It is this process and nothing else: it
-// draws no screen, and its whole surface is three routes.
+// Command wled-printer-status is a module that watches printers and drives the
+// WLED controllers they are shown on. It is this process and nothing else: it
+// draws no screen.
 //
 // # The routes
 //
 //	GET /wled-printer-status   the line this module answers with, and who the host says is asking
-//	GET /status                what this module currently thinks: the printer it watches, how old
-//	                           its reading is, the frame it has decided, and the last send to the light
+//	GET /status                what this module currently thinks: the printers it watches, how old
+//	                           their readings are, the frames it has decided, and the last send to each light
 //	POST /preview-finished     the finished word, now: what the light will do when a print ends,
 //	                           without waiting for one. See preview
+//	GET /bindings              the set of bindings this module is running, one printer each
+//	GET /bindings/{id}         one of them, and POST, PUT and DELETE on the same names to change it
+//	GET /printers              the host's printers, which is where a device id comes from
+//	GET /controllers           the same set grouped by controller, read-only. See bindingsapi.go
 //
 // The paths are relative to the mount, so a caller reaches them under
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/. The host decides who may call
@@ -27,8 +31,11 @@
 // setting nobody can find.
 //
 //	message             the line GET /wled-printer-status answers with
-//	controller_address  the WLED controller to drive; the manifest's egress entry names this setting
-//	printer             which printer to watch, by device id or by name; empty takes the only one
+//	bindings            one line per printer: the printer, its controller, and the segment it is shown
+//	                    on. Written, it wins over the four settings below
+//	controller_address  the one WLED controller to drive when bindings is empty; the manifest's egress
+//	                    entry names this setting
+//	printer             which printer to watch then, by device id or by name; empty takes the only one
 //	brightness          the brightness written once at start, 0-255, when the whole strip is driven
 //	segment             the one segment to drive on a multi-segment strip; -1 drives the whole strip
 //
@@ -64,7 +71,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,33 +138,51 @@ type Settings struct {
 	// Message is the line GET /wled-printer-status answers with.
 	Message string `json:"message"`
 
-	// ControllerAddress is the WLED controller this module drives, written as its
-	// base URL: http://10.0.0.136, no path. The manifest's egress entry names this
-	// key, because the host it connects to is one the operator types rather than one
-	// this module could declare.
+	// ControllerAddress is the one WLED controller this module drives when no `bindings`
+	// list is written, as its base URL: http://10.0.0.136, no path. The manifest's egress
+	// entry names this key, because the host it connects to is one the operator types
+	// rather than one this module could declare.
+	//
+	// It is empty and unused when `bindings` is written, which is how one instance drives
+	// several printers on several controllers: an address and a printer are two settings,
+	// and two settings cannot carry two of anything.
 	ControllerAddress string `json:"controller_address"`
 
-	// Printer is the printer to watch, either the host's device id for it or the
-	// name an operator gave it. Empty watches the only printer the instance holds and
-	// refuses to guess when there is more than one.
+	// Printer is the printer to watch when no `bindings` list is written, either the host's
+	// device id for it or the name an operator gave it. Empty watches the only printer the
+	// instance holds and refuses to guess when there is more than one.
 	Printer string `json:"printer"`
 
-	// Brightness is what this module writes to the strip once at start, 0-255.
-	// Nothing else here writes a brightness: the operator sets it and it stays where
-	// they put it. With a segment named it is not written at all, because a brightness
-	// is controller-wide and would move every segment on the controller.
+	// Brightness is what this module writes to the strip once at start, 0-255, when no
+	// `bindings` list is written. Nothing else here writes a brightness: the operator sets it
+	// and it stays where they put it. With a segment named it is not written at all, because a
+	// brightness is controller-wide and would move every segment on the controller.
 	Brightness int `json:"brightness"`
 
-	// Segment is the one segment of a multi-segment controller this module drives: the
-	// operator's own numbering, as the controller reports it. The default, -1, drives the
-	// whole strip as this module always has, and any number the controller holds names one
-	// segment.
+	// Segment is the one segment of a multi-segment controller this module drives when no
+	// `bindings` list is written: the operator's own numbering, as the controller reports it.
+	// The default, -1, drives the whole strip as this module always has, and any number the
+	// controller holds names one segment.
 	//
 	// Named, the module borrows that segment rather than taking it: it reads the segment's
 	// run, colour, effect and name once at start, draws inside that run while it runs, and
 	// writes all of it back when it stops. It writes no brightness and no power in this mode,
 	// and it never writes a second segment.
 	Segment int `json:"segment"`
+
+	// Bindings is the list of printers this module shows, one line each, and it wins over the
+	// four keys above when it is written.
+	//
+	// It is raw JSON rather than a slice of a struct because the payload is decoded strictly
+	// and a strict decode of a slice cannot say which line a misspelt key was in. Each line is
+	// decoded on its own in bindingsFrom, which is what makes the refusal read
+	// "bindings[2]: json: unknown field ..." instead of making a person count lines in a text
+	// area.
+	//
+	// A `list` is the only shape a manifest can offer for this — the settings form draws a
+	// list and an object as a block of JSON in a text area — and the manifest's declaration of
+	// this key says so in the words an operator reads.
+	Bindings []json.RawMessage `json:"bindings"`
 }
 
 // validate refuses settings this module cannot act on, before it acts on them.
@@ -167,7 +191,23 @@ type Settings struct {
 // them, because that is the check the client makes at its first call and a
 // configuration mistake is better named on the instance than discovered as a light
 // that never changes.
+//
+// Everything below the first branch is about the four settings the list replaced, so it
+// applies only while no list is written: refusing a stale brightness of 300 in a key nothing
+// reads would refuse a start over a field that has no effect. Each line of a list is judged
+// where it is parsed, which is where a refusal can name the line.
 func (s Settings) validate() error {
+	if len(s.Bindings) > 0 {
+		_, err := parseBindingEntries(s.Bindings)
+
+		return err
+	}
+
+	if strings.TrimSpace(s.ControllerAddress) == "" {
+		return fmt.Errorf(
+			"this instance drives nothing: write the bindings setting, one line per printer, or name one controller in controller_address")
+	}
+
 	if _, err := wled.New(s.ControllerAddress); err != nil {
 		return err
 	}
@@ -202,17 +242,23 @@ var (
 	fleet      *deviceapi.Client
 	sessionCtx context.Context
 
-	// watchMu guards watch, which is how a second plugin.configure stops the watch
-	// the first one started. The host calls configure once; this exists so that a
-	// second call replaces the first rather than putting a second writer on the same
-	// light.
+	// live is the one watch this process runs, and the set of bindings it runs.
 	//
-	// watchDone is closed when that watch's writer has returned. A stop waits on it,
-	// because the writer gives a borrowed segment back on its way out and a process that
-	// exited first would leave somebody else's segment holding this module's last frame.
-	watchMu   sync.Mutex
-	watch     context.CancelFunc
-	watchDone chan struct{}
+	// It is a value here rather than three variables in this file because a set can now
+	// change while the process runs: the editor's routes add, change and remove a binding,
+	// and each of those has to reach the writer that is already talking to the controller.
+	// See live.go for what a change costs and why the set being replaced is waited for.
+	//
+	// Two of its three closures are built from the connection, which is why they are written
+	// as closures here and filled in later: printer.NewSource takes the session and the fleet
+	// as they are when the watch starts, not as they were when this file was read.
+	live = &runner{
+		newSource: func(b binding) (watchSource, error) {
+			return printer.NewSource(printer.Config{DeviceID: b.DeviceID}, session, fleet)
+		},
+		newLight: func(address string) (strip, error) { return wled.New(address) },
+		logf:     logf,
+	}
 )
 
 // settings is what this module is running on: what the host sent, or the
@@ -222,7 +268,12 @@ func settings() Settings {
 		return *current
 	}
 
-	return Settings{Message: defaultMessage, Brightness: defaultBrightness, Segment: defaultSegment}
+	return Settings{
+		Message:           defaultMessage,
+		ControllerAddress: "",
+		Brightness:        defaultBrightness,
+		Segment:           defaultSegment,
+	}
 }
 
 // openAPI is the fragment describing the routes, with every path relative to
@@ -361,73 +412,34 @@ func configure(ctx context.Context, sent Settings) error {
 		return err
 	}
 
-	// The client is built now and contacts nothing until the writer asks it to.
-	// wled.New refuses a bad address here rather than at the first call.
-	if _, err := wled.New(sent.ControllerAddress); err != nil {
-		return err
-	}
-
 	listing, cancel := context.WithTimeout(ctx, resolveTimeout)
-	deviceID, err := resolvePrinter(listing, fleet, sent.Printer)
+	wanted, err := wantedBindings(listing, fleet, sent)
 	cancel()
 
 	if err != nil {
 		return err
 	}
 
-	held.Store(&sent)
-
-	// The set this build can express from its settings: one printer, on one controller, on one
-	// segment. The core underneath runs a set rather than a pair (bindings.go, watch.go) because
-	// the operator's decision of 2026-11-18 made the segment — not the controller — the unit, and
-	// the surface that writes more than one binding is the UI half rather than a settings block
-	// that cannot express a list. Nothing here decides what a binding is: it hands the core the
-	// one the operator configured and lets the core's own rules judge it.
-	wanted := bindings{{
-		DeviceID:   deviceID,
-		Address:    sent.ControllerAddress,
-		Segment:    sent.Segment,
-		Brightness: sent.Brightness,
-	}}
-
-	// A borrowed binding carries no brightness, whatever the setting says: its default is 128
-	// and a brightness is controller-wide. The writer for this mode has no brightness to write
-	// (see newSegmentWriter), and the set says so rather than carrying a number nothing reads —
-	// bindings.check refuses one here.
-	if sent.Segment >= 0 {
-		wanted[0].Brightness = 0
-	}
-
-	// One watch at a time, and the one being replaced is waited for rather than only
-	// cancelled: a writer gives its segment back on the way out, and a second writer that
-	// borrowed the same segment before that happened would capture this module's own bar as
-	// the segment's original state — and then give that bar back as though it were his.
-	stopWatching()
-
-	// Nothing has been started yet that a refusal here would have to undo: a set that cannot be
-	// run leaves the light as it was and the operator holding the reason, which is the answer
-	// for a configuration mistake.
-	stopWatch, done, err := watchConfig{
-		bindings: wanted,
-		newSource: func(b binding) (watchSource, error) {
-			source, err := printer.NewSource(printer.Config{DeviceID: b.DeviceID}, session, fleet)
-			if err != nil {
-				return nil, err
-			}
-
-			return source, nil
-		},
-		newLight: func(address string) (strip, error) { return wled.New(address) },
-		logf:     logf,
-	}.start(sessionCtx)
-
-	if err != nil {
+	// The set this build can express from its settings: one binding per line of `bindings`,
+	// or the one printer the four older keys name. Nothing here decides what a binding is — the
+	// core underneath runs a set (bindings.go, watch.go) and hands it its own rules.
+	//
+	// A refusal here leaves the light as it was and the operator holding the reason, which is
+	// the answer for a configuration mistake. The settings are stored only once the watch is
+	// running, so a process that refused them does not answer /wled-printer-status with a
+	// message it is not acting on.
+	if err := live.apply(sessionCtx, wanted); err != nil {
 		return err
 	}
 
-	watchMu.Lock()
-	watch, watchDone = stopWatch, done
-	watchMu.Unlock()
+	// Which of the two shapes produced this set, for the answer GET /bindings gives.
+	if len(sent.Bindings) > 0 {
+		live.setOrigin(originSettings)
+	} else {
+		live.setOrigin(originLegacy)
+	}
+
+	held.Store(&sent)
 
 	return nil
 }
@@ -443,26 +455,7 @@ func configure(ctx context.Context, sent Settings) error {
 // Called with no watch in place it does nothing, so the second configure of a process and the
 // deferred stop at the end of run can both call it without asking first.
 func stopWatching() {
-	watchMu.Lock()
-	cancel, done := watch, watchDone
-	watch, watchDone = nil, nil
-	watchMu.Unlock()
-
-	if cancel == nil || done == nil {
-		return
-	}
-
-	cancel()
-
-	wait, stop := context.WithTimeout(context.Background(), shutdownGrace)
-	defer stop()
-
-	select {
-	case <-done:
-	case <-wait.Done():
-		logf("%s: the watch had not stopped within %s of being asked, so a borrowed segment may still be holding this module's last frame",
-			name, shutdownGrace)
-	}
+	live.stop()
 }
 
 // devices is the one read resolvePrinter makes of the host's fleet.
@@ -535,8 +528,26 @@ func resolvePrinter(ctx context.Context, fleet devices, setting string) (string,
 // routes is the surface this module serves, written as any Go program writes
 // one. The paths carry no prefix: /status here is
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/status to a caller.
+//
+// The binding editor's routes are mounted from bindingsapi.go, which says what they are for and
+// what a change through them costs.
 func routes() http.Handler {
 	mux := http.NewServeMux()
+
+	// The editor's routes. They are mounted with the fleet as a function rather than a value:
+	// this process has no connection to the host when this handler is built in a test, and the
+	// honest answer then is that the printer list cannot be read.
+	bindingAPI{
+		live: live,
+		fleet: func() devices {
+			if fleet == nil {
+				return nil
+			}
+
+			return fleet
+		},
+		parent: func() context.Context { return sessionCtx },
+	}.mount(mux)
 
 	mux.HandleFunc("GET /wled-printer-status", func(w http.ResponseWriter, r *http.Request) {
 		answer(w, http.StatusOK, map[string]any{

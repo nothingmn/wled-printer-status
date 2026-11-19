@@ -1,15 +1,18 @@
 # wled-printer-status
 
-A Prusa Connect module that turns a WLED light into a status display for one 3D printer.
+A Prusa Connect module that turns WLED lights into status displays for 3D printers.
 
-It runs as a service module: a small Go program the Prusa Connect server launches, which reads one
+It runs as a service module: a small Go program the Prusa Connect server launches, which reads each
 printer's state from that server and paints a light — a strip along a desk, or a panel on a wall — so
-that somebody walking past can tell what the printer is doing without opening an app.
+that somebody walking past can tell what the printer is doing without opening an app. One instance
+shows as many printers as the `bindings` setting lists, each on its own segment of its own controller.
 
 ## Status
 
 **This module reads one printer through Prusa Connect and drives one WLED controller, and it has done
-that for the length of a real print: an MK4 on a 256×64 panel, watched from 0 % to `FINISHED`.** The
+that for the length of a real print: an MK4 on a 256×64 panel, watched from 0 % to `FINISHED`.** Several
+printers on several controllers is the shape the code has now and the shape the settings express; one
+printer on one panel is what has been watched, end to end, on hardware. The
 program the server launches reads the printer, decides what the light should show, and writes it to the
 controller named in its settings, with nobody standing at the panel. `GET /status` answers what it
 currently thinks — the printer, how old its reading is, the frame it has decided, and what the last write
@@ -180,6 +183,17 @@ It refuses, with a code and a sentence, in the three cases where the light canno
 The route asks the host for `operate_resource` on the module's instance, because it changes what the light
 shows.
 
+The binding routes refuse with codes of their own, and a caller branches on the code rather than on the
+sentence:
+
+| answer | code | why |
+| --- | --- | --- |
+| 404 | `BINDING_NOT_FOUND` | no binding of that printer; the detail names the id and points at `GET /bindings` |
+| 409 | `BINDING_REFUSED` | the set that change would make breaks a rule, names a printer the host does not hold, or names an address that is not a controller. Nothing was changed |
+| 400 | `BINDING_BODY_INVALID` | the body is not one binding: not JSON, or a key this module does not read |
+| 404 | `CONTROLLER_NOT_FOUND` | no binding drives that controller |
+| 503 | `PRINTERS_UNAVAILABLE` | the host's printer list could not be read, so no printer could be resolved |
+
 ## What you need
 
 - **A Prusa Connect instance you run yourself**, because that server is what launches a service module.
@@ -227,7 +241,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **177 tests** — 74 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **189 tests** — 86 in
 the root package, 20 in `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in
 `internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
 or a real controller:
@@ -261,16 +275,110 @@ connection: the WLED controller named in `controller_address`, on port 80, from 
 
 ## Binding a printer to a light
 
-The rule is one controller per printer, and at most one printer per controller. Not because it is
-convenient, but because two writers to one controller interleave: WLED has one small web server and
-promises nothing about concurrent writes, so two printers sharing a strip produce a fight, and a module's
-mutex only serialises its own calls. A progress bar belonging to two jobs is not a bar.
+A binding is one printer, one controller, and the segment of that controller it is shown on. The
+**segment** is the unit, not the controller: a controller may carry as many bindings as it has segments it
+is willing to give up, and a printer appears in at most one binding. Two bindings on one segment would
+overwrite each other on every frame and neither log line would say so, so the module refuses that rather
+than leaving it to be discovered — and a binding driving the whole of a controller leaves no segment for
+anything else on it.
+
+That replaces the older rule of one controller per printer. It is worth knowing why the older one was
+there: two writers to one controller do interleave, because WLED has one small web server and promises
+nothing about concurrent writes. What answers that now is one client per controller with one gate in
+front of it — writes to one box take turns — while each binding still decides its own frame.
 
 The address is **typed in, not discovered**. Automatic discovery does not work from inside a container
 on Docker's default bridge — see below — and the module does not attempt it.
 
-The address is the setting `controller_address`, and it is required: the module refuses to start until one
-is written and says so on the instance, rather than running and never mentioning why the light is dark.
+### Two printers, two controllers: the `bindings` setting
+
+One printer is one line of the `bindings` setting, which is a JSON list. This is the whole of it — an
+instance showing `Hermes MK4` on the panel and `Mini` on segment 3 of the panel beside it:
+
+```yaml
+resources:
+  sink:
+    wled-printer-status:
+      config:
+        bindings:
+          - printer: Hermes MK4
+            controller: http://10.0.0.136
+          - printer: Mini
+            controller: http://10.0.0.136
+            segment: 3
+```
+
+On the settings pane the same thing is one field, because a manifest declares nine value shapes and a list
+is the largest of them: paste it as JSON in the text area for `bindings`.
+
+```json
+[{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
+ {"printer": "Mini", "controller": "http://10.0.0.136", "segment": 3}]
+```
+
+Each line carries `printer` (the device id or the name an operator gave it), `controller` (a base URL), and
+optionally `segment` and `brightness`. A line that leaves `segment` out drives the whole controller; a line
+that names one borrows it and may carry no brightness at all, because a brightness is controller-wide.
+
+`bindings` **wins** over `controller_address`, `printer`, `brightness` and `segment` when it is written. The
+four older keys stay in the manifest because an install that has been running for a week carries them in
+its config block, and they are not merged into a list: half a list beside one address would be two answers
+to one question.
+
+A list this module cannot run refuses the start, and the sentence names the line and the field —
+`bindings[1]: json: unknown field "controler"`, or `binding 2 drives segment 3 of http://10.0.0.136, which
+binding 1 already drives`. That message is on the instance, where a person is already looking.
+
+### The device id question
+
+A printer is named by the device id the server minted for it, which is a GUID, and nothing in a settings
+form offers a list of them. Nobody types one: read them from the module itself.
+
+```bash
+curl -s http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/printers
+{"count":3,"total":3,"printers":[
+  {"id":"07e893bb-b922-4ff0-9ad3-061b957400c3","name":"Hermes MK4","model":"MK4","connected":true,
+   "bound":{"controller":"http://10.0.0.136","segment":-1,"whole":true}},
+  {"id":"1c0f...","name":"Mini","model":"MINI","connected":true},
+  …]}
+```
+
+`bound` is the binding already showing that printer, so a choice can leave it out. This is the answer to
+"where would someone get that GUID": from the module, not from memory.
+
+### Changing bindings while it runs
+
+The module serves the set it is running, and edits it:
+
+| request | what it does |
+| --- | --- |
+| `GET /bindings` | the set in force, in the operator's order, with printer names read from the host |
+| `GET /bindings/{id}` | one binding, by the printer's device id |
+| `POST /bindings` | `{"printer": "Mini", "controller": "http://10.0.0.253", "segment": 2}` |
+| `PUT /bindings/{id}` | the same body, for a binding that exists; the printer in the path is its name |
+| `DELETE /bindings/{id}` | stop showing one printer, and give a borrowed segment back |
+| `GET /printers` | the host's printers, each with the binding that already shows it |
+| `GET /controllers` | the same set grouped by controller, with the segments each gives up |
+
+Every write takes effect **at once**: the watch is stopped — waiting for a borrowed segment to be given
+back — and started again on the new set, so no restart and no reinstall is needed. What it does **not** do
+is save: the settings belong to the host, a module has no call that writes them, and a restart or a save
+of the settings pane puts back what the settings say. Every write's answer carries `"persisted": false`
+and says so in words.
+
+A refusal means nothing changed: the set that was running is running still. The whole watch is rebuilt on
+every change, so a borrowed segment beside the one you changed is given back and borrowed again — a
+flicker of the module's own frame, not a binding that was disturbed.
+
+`GET /controllers` has no create, change or delete. A controller has no separate existence here: it
+appears when the first binding names it and is gone when the last one leaves, so those are the binding
+routes, and a second way to write the same thing would be a second thing to be wrong.
+
+### The four older settings
+
+`controller_address` is empty and unused when `bindings` is written, and it is no longer required for that
+reason. Written alone, it behaves as it always has: the module refuses to start with no address and no
+list and says so on the instance, rather than running and never mentioning why the light is dark.
 `printer` names the printer to watch, by the server's device id or by the name an operator gave it; left
 empty it takes the only printer the instance holds, and refuses to choose between several rather than
 put somebody's strip on the wrong machine. `brightness` is what the module writes to the controller once at
@@ -363,9 +471,10 @@ outlives WLED's 2500 ms realtime timeout — and it is still not a stream: the b
 
 ## What it deliberately will not do
 
-- **Fleets.** One printer, one light. The printer half takes a single device id and has no list in it.
-- **More than one printer per light, or more than one light per printer.** The write model and the budget
-  are built for one writer.
+- **Fleets.** A list of bindings is not a fleet: each line names one machine and one segment, there is no
+  discovery, and nothing is chosen for you.
+- **Two printers on one segment, or one printer on two.** A segment is shown by one binding and a printer
+  by one binding, and the module refuses either way round rather than letting two frames undo each other.
 - **Priorities.** If a finished print and an overheating hotend both want the light, there is no
   arbitration, because nobody has decided what wins. That is one of the open questions in the
   requirements.

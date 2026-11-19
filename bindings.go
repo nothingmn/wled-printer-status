@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -231,4 +234,230 @@ func (bs bindings) controllers() ([]controller, error) {
 	}
 
 	return order, nil
+}
+
+// find is the binding one printer is shown by, and false for a printer this module does not
+// drive. A printer appears in at most one binding, so the device id is the whole of a
+// binding's name: it survives a rename of the machine, it survives the controller being
+// swapped for another, and it is the one thing about a binding the host minted rather than the
+// operator.
+func (bs bindings) find(id string) (binding, bool) {
+	for _, b := range bs {
+		if b.DeviceID == id {
+			return b, true
+		}
+	}
+
+	return binding{}, false
+}
+
+// without is the set with one binding taken out, in the operator's order. A set that does not
+// hold the id is returned unchanged, and false says so.
+func (bs bindings) without(id string) (bindings, bool) {
+	kept := make(bindings, 0, len(bs))
+
+	for _, b := range bs {
+		if b.DeviceID != id {
+			kept = append(kept, b)
+		}
+	}
+
+	if len(kept) == len(bs) {
+		return bs, false
+	}
+
+	return kept, true
+}
+
+// with is the set with one binding put where the one it replaces was, or at the end when the
+// set does not hold it yet. Keeping the position is what stops an edit from moving a line on
+// the list a person is reading.
+func (bs bindings) with(b binding) bindings {
+	for i := range bs {
+		if bs[i].DeviceID == b.DeviceID {
+			next := append(bindings(nil), bs...)
+			next[i] = b
+
+			return next
+		}
+	}
+
+	return append(append(bindings(nil), bs...), b)
+}
+
+// bindingSetting is one entry of the `bindings` setting: the shape an operator writes in the
+// one JSON field the manifest can offer.
+//
+// It exists because a manifest declares nine value shapes — string, int, number, bool,
+// duration, url, secret, list, object — and the settings form draws the last two as a block of
+// JSON in a text area. A list of bindings is therefore the most a setting can be, and this is
+// what one line of it looks like:
+//
+//	[{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
+//	 {"printer": "Mini",       "controller": "http://10.0.0.136", "segment": 3}]
+//
+// Segment and brightness are pointers so that a line that leaves them out is not read as zero.
+// Zero is a real answer to both — segment 0 is the first segment a controller holds, and a
+// brightness of 0 is a strip switched off — so an absent one has to be told apart from a
+// written one, and it is the difference between driving the whole controller and borrowing its
+// first segment.
+type bindingSetting struct {
+	// Printer is the printer to watch, by the host's device id or by the name an operator gave
+	// it. The id is the better answer: a name is not unique until the host says it is.
+	Printer string `json:"printer"`
+
+	// Controller is the WLED controller to drive, as its base URL: http://10.0.0.136, no path.
+	Controller string `json:"controller"`
+
+	// Segment is the one segment to drive on a controller that carries several. Absent or -1
+	// drives the whole controller, which is what this module did before a segment could be
+	// named.
+	Segment *int `json:"segment"`
+
+	// Brightness is what is written once at start, 0-255, and only on a whole-controller
+	// binding: a brightness is controller-wide and would move every segment somebody else is
+	// using. Absent on a whole-controller binding means defaultBrightness; on a borrowed
+	// segment it must be absent or zero, and check refuses anything else.
+	Brightness *int `json:"brightness"`
+}
+
+// segment is the segment this entry drives, with "the whole controller" written as -1.
+func (s bindingSetting) segment() int {
+	if s.Segment == nil {
+		return defaultSegment
+	}
+
+	return *s.Segment
+}
+
+// brightness is the brightness this entry asks for, with the module's own default on a whole
+// controller and nothing at all on a borrowed segment.
+func (s bindingSetting) brightness() int {
+	if s.Brightness != nil {
+		return *s.Brightness
+	}
+
+	if s.segment() < 0 {
+		return defaultBrightness
+	}
+
+	return 0
+}
+
+// parseBindingEntries reads the `bindings` setting into the entries it holds.
+//
+// The list arrives as raw JSON because the settings payload is decoded strictly, and a strict
+// decode of a slice cannot say which entry a misspelt key was in: "json: unknown field
+// \"controler\"" leaves a person counting entries in a text area. Decoding one entry at a time
+// is what makes the refusal read "bindings[2]: json: unknown field \"controler\"" — the place
+// in the field as well as the field.
+func parseBindingEntries(entries []json.RawMessage) ([]bindingSetting, error) {
+	parsed := make([]bindingSetting, 0, len(entries))
+
+	for i, raw := range entries {
+		var one bindingSetting
+
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+
+		if err := decoder.Decode(&one); err != nil {
+			return nil, fmt.Errorf("bindings[%d]: %w: every line carries printer and controller, and may carry segment and brightness", i, err)
+		}
+
+		parsed = append(parsed, one)
+	}
+
+	return parsed, nil
+}
+
+// bindingsFrom is the set the `bindings` setting describes, with every printer resolved to the
+// one machine the host holds and every default the manifest publishes applied.
+//
+// Each refusal names the entry it is about, because the operator wrote a list and is reading a
+// one-line message on the instance: "bindings[1] names no printer" is something to act on, and
+// "no printer" is not.
+func bindingsFrom(ctx context.Context, fleet devices, entries []json.RawMessage) (bindings, error) {
+	parsed, err := parseBindingEntries(entries)
+	if err != nil {
+		return nil, err
+	}
+
+	set := make(bindings, 0, len(parsed))
+
+	for i, one := range parsed {
+		if strings.TrimSpace(one.Printer) == "" {
+			return nil, fmt.Errorf("bindings[%d] names no printer: write the printer's device id, or the name an operator gave it", i)
+		}
+
+		deviceID, err := resolvePrinter(ctx, fleet, one.Printer)
+		if err != nil {
+			return nil, fmt.Errorf("bindings[%d]: %w", i, err)
+		}
+
+		set = append(set, binding{
+			DeviceID:   deviceID,
+			Address:    one.Controller,
+			Segment:    one.segment(),
+			Brightness: one.brightness(),
+		})
+	}
+
+	if err := set.check(); err != nil {
+		return nil, err
+	}
+
+	return set, nil
+}
+
+// wantedBindings is the set one settings block asks for.
+//
+// `bindings` wins over the four settings that came before it, because the manifest still
+// declares them and an install that has been running for a week carries them: an operator who
+// writes a list gets the list, and the single printer the old keys name is not silently added
+// to it or silently left driving. That is said here, in the manifest beside the setting, and in
+// the answer the editor's routes give, rather than left for somebody to work out from two
+// lights on one strip.
+func wantedBindings(ctx context.Context, fleet devices, sent Settings) (bindings, error) {
+	if len(sent.Bindings) > 0 {
+		return bindingsFrom(ctx, fleet, sent.Bindings)
+	}
+
+	if strings.TrimSpace(sent.ControllerAddress) == "" {
+		return nil, fmt.Errorf(
+			"this instance drives nothing: write the bindings setting, which carries one line per printer, or name one controller in controller_address")
+	}
+
+	// The client is built now and contacts nothing until the writer asks it to. wled.New
+	// refuses a bad address here rather than at the first call.
+	if _, err := wled.New(sent.ControllerAddress); err != nil {
+		return nil, err
+	}
+
+	deviceID, err := resolvePrinter(ctx, fleet, sent.Printer)
+	if err != nil {
+		return nil, err
+	}
+
+	one := binding{
+		DeviceID:   deviceID,
+		Address:    sent.ControllerAddress,
+		Segment:    sent.Segment,
+		Brightness: sent.Brightness,
+	}
+
+	// A borrowed binding carries no brightness, whatever the setting says: its default is 128
+	// and a brightness is controller-wide. The writer for this mode has no brightness to write
+	// (see newSegmentWriter), and the set says so rather than carrying a number nothing reads —
+	// bindings.check refuses one.
+	if one.Segment >= 0 {
+		one.Brightness = 0
+	}
+
+	set := bindings{one}
+
+	if err := set.check(); err != nil {
+		return nil, err
+	}
+
+	return set, nil
 }
