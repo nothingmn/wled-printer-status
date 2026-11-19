@@ -998,6 +998,121 @@ experiment. What is proved is that the routes answer, that the frames leave, tha
 each one into realtime for the hold asked for, and that the light comes back to the picture it was
 holding. `AGENTS.md` §8 says the rest.
 
+**Fourteenth run, 2026-11-19 05:51Z, from `8b67c7e`.** The change from *a panel filled with the state
+colour* to *a composed picture*, and the setting that arranges it: a twelve-row bar at the bottom of the
+panel, the percentage in digits, and the job's own name on the other half of a fifteen-second rotation —
+`POST /preview-frame` draws exactly what a printing panel draws, from the same function. Built from
+`git archive HEAD` for the reason run six gives, into a build tree of its own under `/tmp` with `.core`
+pointed at the mounted core checkout, because the release directory is checksummed and must carry ten files
+and nothing else. Release `/config/config.d/wled-release-8b67c7e`; its `linux_amd64` digest is
+`967bdf068d37f143d9d9fadadf915727c3202df1ea9924930e189adf72fe5318` and is what the installed binary reads
+back.
+
+`ui/` was carried from `wled-release-ui-e8bc059` as in the runs before this one, since the bundle is built
+outside this repository. `module add` answered `10 files verified against checksums.txt`,
+`memory 32 MiB, set by the author`, `enabled yes`, and printed **nine** settings, the new one among them:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-8b67c7e \
+    -settings /config/config.d/wled-settings.json -approve
+  setting     layout (object, default {}). The arrangement of a panel, as one JSON object with the keys
+              bar, bar_band, bar_rows, percent, name, remaining and rotate_seconds. …
+  checksums   10 files verified against checksums.txt
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+```
+
+The settings file was **not** changed: it carries no `layout` key, which is the case this release had to
+work for an existing install. `docker restart prusa_connect` at **05:51:10Z** was `healthy` twelve seconds
+later, readiness answered `serving 4 declared 4 blocked []` with this instance `ready`, and the OpenAPI
+document reported **paths=10** — nine before this release:
+
+```console
+… wled-printer-status 0.1.0 is serving on stdio as pid 23
+… the module's OpenAPI document is served … paths=10
+… the module's files are serving … draws=true
+… watching printer 07e893bb-… and driving http://10.0.0.136 at the brightness of brightness_schedule …
+… the light's brightness is 128, the 00:00-23:59 window of America/Denver, where it is 22:51 MST
+… the controller drives 16384 LEDs
+… the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+**The new picture was on the panel before any preview was fired**, because the printer was printing. Read at
+**05:51:32Z**, twenty seconds after the start:
+
+```console
+$ curl -s …/status
+"frame":{"colour":{"r":0,"g":170,"b":0},"lit":983,"total":16384,"percent":6,
+         "name":"5_1_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode","reason":"progress"},
+"last_send":{"at":"2026-11-19T05:51:13.3222857Z","ok":true}
+$ curl -s http://10.0.0.136/json/info   →  live true
+$ curl -s http://10.0.0.136/json/state
+seg 0  start 0 stop 256  rows 0..64  on true   fx 0  n None  col [[0,0,0],…]
+seg 1  start 15 stop 256 rows 0..64  on false  fx 0  n None  col [[0,0,0],…]
+```
+
+That is the composed establishing body, exactly as designed: segment 0 the whole panel in the background
+colour with its name **cleared**, segment 1 switched off, and `live: true` because the pixels are on their
+way over DDP. `last_send` is the one JSON write that put the body there; `percent` and `name` are the two
+facts the picture is composed from, on the route for the first time.
+
+**`preview-frame`, fired twice.** The first at `percent=41&name=MK4IS&hold=120`, the second at
+`percent=100&hold=120` — three digits and no name, which is the other half of the same question:
+
+```console
+$ date -u +"BEFORE %H:%M:%SZ"          # 05:51:41Z   live=true before the fire
+$ curl -s -X POST "…/preview-frame?percent=41&name=MK4IS&hold=120"      # FIRED 05:51:41Z
+{"controller":"http://10.0.0.136","halves":["41%","MK4IS"],"holds_seconds":120,
+ "layout":{"bar":true,"bar_band":"bottom","bar_rows":12,"percent":true,"name":true,
+           "rotate_seconds":15},
+ "name":"MK4IS","percent":41,"rotation_seconds":15}
+$ …/status    # 05:51:46Z
+"last_send":{"at":"2026-11-19T05:51:41.531862518Z","ok":true}
+$ …/json/state  # 05:51:43Z, inside the hold
+seg 0  start 0 stop 256 rows 0..64 on true  n None
+seg 1  start 15 stop 256 rows 0..64 on false
+$ …/json/info at 05:51:43Z, 05:53:44Z, 05:53:49Z  →  live true, live true, live true
+
+$ curl -s -X POST "…/preview-frame?percent=100&hold=120"                # FIRED 05:53:49Z
+{"controller":"http://10.0.0.136","halves":["100%"],"holds_seconds":120,
+ "layout":{…},"name":"","percent":100,"rotation_seconds":15}
+$ …/status    # 05:53:54Z
+"last_send":{"at":"2026-11-19T05:53:49.694789608Z","ok":true}
+$ …/json/info at 05:53:51Z, 05:55:52Z, 05:55:57Z  →  live true, live true, live true
+```
+
+Both answered `202`, both echoed the layout this instance is running, and both wrote **one** body — the
+establishing body — at the second they were fired. `halves` is what a person can read without walking
+anywhere: the first preview shows the digits and then the name, the second only the digits, because a
+preview with no name has nothing to rotate to.
+
+**What the reads prove and what they cannot.** `live` is true before, during and after both previews — and
+that is this release working, not the preview's hand-back: the printer is printing, so the panel is held
+over DDP by the composed picture the whole time, and the module's own picture is what it went back to when
+each hold ended. Twenty samples three seconds apart, taken straight after the second hold, show the steady
+state and are the strongest evidence in this record that the transport decision is the right one:
+
+```console
+05:56:20Z live=true 10 | 2026-11-19T05:53:49.694789608Z | progress
+… sixteen more samples, live=true, percent 10 …
+05:57:03Z live=true 11 | 2026-11-19T05:53:49.694789608Z | progress
+… four more samples, live=true, percent 11 …
+```
+
+Fifty-eight seconds, the progress moved from 10 % to 11 %, the panel stayed in realtime throughout, and
+`last_send` did not move at all: **the picture changed and not one JSON body was written.** The composed
+frame is carried entirely by the once-a-second push, and the controller's web server saw exactly two writes
+in the four minutes the two previews ran.
+
+What this run does **not** prove is the picture itself. No pixel is readable on `14.7.0-mdev` — the segment
+keys still carry no `i` array — so whether the bar is twelve rows at the bottom, whether `41%` is 85 by 35
+pixels in the right place, whether the name reads `MK4IS 0.4N 0.2MM PLA` on a real light, and whether the
+rotation actually swaps every fifteen seconds are all questions for a person standing in front of it.
+`AGENTS.md` §8 says so; the tests say what the arithmetic is.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
