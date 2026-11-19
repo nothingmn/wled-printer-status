@@ -478,7 +478,6 @@ type restorePlan struct {
 	Withheld []withheldSection `json:"withheld"`
 	Network  sentNetwork       `json:"nw"`
 	Presets  bool              `json:"presets"`
-	Absent   []string          `json:"sections_absent,omitempty"`
 }
 
 // restoreBody is the body a restore sends for one snapshot.

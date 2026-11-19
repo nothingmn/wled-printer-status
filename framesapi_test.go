@@ -31,8 +31,7 @@ var framesAt = time.Date(2026, time.November, 19, 18, 30, 0, 0, time.UTC)
 // framesUnderTest is GET /frames over the per-binding store, with nothing else running: every fact
 // the route answers with is what a watch published, which is the whole point of it.
 type framesUnderTest struct {
-	mux   http.Handler
-	cache *frameCache
+	mux http.Handler
 }
 
 // newFramesUnderTest builds the route over the set a test says it is running.
@@ -65,7 +64,7 @@ func newFramesUnderTest(t *testing.T, set bindings) *framesUnderTest {
 		cache: cache,
 	}.mount(mux)
 
-	return &framesUnderTest{mux: mux, cache: cache}
+	return &framesUnderTest{mux: mux}
 }
 
 // do runs one request and answers with the status and the body.
