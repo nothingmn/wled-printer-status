@@ -1192,6 +1192,97 @@ the diagnostic ladder cannot be fired at all. The frames' own pixels were not re
 this firmware exposes them — and both lights are still on the printer's finished green, so a composed
 layout and a progress bar remain questions for a print.
 
+**Sixteenth run, 2026-11-19 12:17Z, from `69cc791`.** The two defects the two-light sweep found, and the
+one test the previous wave left uncommitted. `5104b90` makes all four preview routes fire at every light
+the module drives and makes a word set on a state that is already showing hold from the write; `1d5bb59`
+and `69cc791` are **test-only** commits on top of it, and that is a claim with a command behind it rather
+than a hope:
+
+```console
+$ docker run --rm … golang:1.26.11 sh -c 'CGO_ENABLED=0 go build -trimpath -o /work/…-check/from-5104b90 .'   # from git archive 5104b90
+$ sha256sum …/from-5104b90 …/wled-build-69cc791/release/wled-printer-status_linux_amd64
+2f3daf3ea55bf79e4b23ef9921e81fd5fa7eea2121c8100093c5c25d066625ab  …/from-5104b90
+2f3daf3ea55bf79e4b23ef9921e81fd5fa7eea2121c8100093c5c25d066625ab  …/release/wled-printer-status_linux_amd64
+```
+
+Version **0.1.0**, release `/config/config.d/wled-release-69cc791`, ten files and `sha256sum -c` OK inside
+the container before the install. **The UI half was not rebuilt**: `git diff --stat 3c12d89..HEAD -- ui/`
+is empty, so the bundle was copied out of the running release and `cmp` reports it byte-identical —
+`ui/index.js` `a46ac73bf2bf5d224f9313f63e3059dd43a2f31d911d833dcfb7fb43859d118a` on both sides. The same
+version was accepted for the fourth time (`installed … as sink:wled-printer-status … checksums 10 files
+verified … enabled yes`), and one restart at **12:17:46Z** brought it back healthy in six seconds with the
+status route answering `200`.
+
+**The store, in three lines** — the schema change is the part a healthy module proves nothing about:
+
+```console
+$ docker logs prusa_connect 2>&1 | grep -a 'was upgraded from schema version'
+12:17:48.995Z … the configuration store at …/config.json was upgraded from schema version 4 to 5 …
+12:17:48.997Z … the set this start runs is the one in this module's own store …, schema version 5 (2 bindings) …
+12:17:48.984Z … wled-printer-status 0.1.0 is serving on stdio as pid 15 …
+```
+
+**The ladder, on both lights, at once.** `POST /preview-pattern?pattern=quarters&hold=8` answered `202`
+with `count: 2` and both lights named, each carrying its own sentence about what the picture answers; then
+`?pattern=solid&hold=8&light=10.0.0.253` answered with **one** light. What the lights were actually
+displaying was taken off the wire, because a picture never appears in `/json/state` (see §7's fact about
+DDP): a `tcpdump` in a `--net=host` container on `udp port 4048`, reassembled by DDP offset.
+
+```console
+WINDOW A — the quarters request, aimed at both lights
+  10.0.0.136 panel: 245 datagrams, 16384 pixels
+    corners: TL (255,0,0)  TR (0,255,0)  BL (0,0,255)  BR (255,255,255)
+    areas:   (255,0,0) x4096, (0,255,0) x4096, (0,0,255) x4096, (255,255,255) x4096
+  10.0.0.253 strip: 8 datagrams, 48 pixels
+    band 0 (pixels  0-11): (255,0,0) x12
+    band 1 (pixels 12-23): (0,255,0) x12
+    band 2 (pixels 24-35): (0,0,255) x12
+    band 3 (pixels 36-47): (255,255,255) x12
+WINDOW B — the solid request, aimed at the strip alone
+  10.0.0.136 panel: 0 datagrams, 0 pixels          ← untouched, which is what light= promises
+  10.0.0.253 strip: 8 datagrams, 48 pixels, all (255,255,255)
+```
+
+The controller's own documents agree with the picture and cannot show it: during the hold both answered
+`/json/info` `live=true lm='DDP'`, and `/json/state` carried the establishing body — `seg0 n='quarters'
+start=0 stop=48` on the strip, `0..256` with the remainder segment off on the panel. After the hold both
+were back on their own segments, green, with the name cleared.
+
+**A word on the long-running state.** The printer finished hours before this, so `FINISHED` had been in
+force far longer than any hold — the case that used to spend the word before anybody could read it.
+
+```console
+$ PUT …/states/FINISHED {"word":"QA","holds":"60s"}
+  {"applied":true,"note":"The word \"QA\" is on the light now, for 60 more second(s), until 2026-11-19T12:22:35Z. …"}
+$ curl -s http://10.0.0.136/json/state    # 3 s later, the panel's own document
+  seg0 n='QA' start=0 stop=256     /json/info live=true lm='DDP'
+$ GET …/frames    panel png 259 B  ef8511f3c365de64  →  331 B  42246fdc7d0f1efe     (changed)
+                  strip png  86 B  03fe38e28f44551d  →   86 B  03fe38e28f44551d     (a strip cannot draw a word)
+$ docker exec prusa_connect cat …/config.json
+  {"state": "FINISHED", "word": "QA", "holds": "30s", "set_at": "2026-11-19T12:24:33.160940222Z"}
+$ DELETE …/states/FINISHED   → removed true
+```
+
+The word appears and the panel goes back to plain green — with one thing to know: the return is not always
+at the instant the hold ends. Measured three times, the panel was back to green at the hold's end once and
+**13 s and 15 s late** twice, and in that gap it is not green but black — the establishing body with the
+word's name still on segment 0, waiting for the module's sixty-second repaint heartbeat to put the steady
+frame back. The frame digest returns to `ef8511f3c365de64` exactly.
+
+**What was left running.** Both lights solid green at brightness 128 with the finished colour
+(`[0,170,0]`), `live=false` on both, no pause (`GET /pause` → `paused false, pauses []`), no state
+overrides (`GET /states` → 12 rows, 0 overridden), and the store at version 5 with two bindings and five
+empty tables. Both controllers' `/json/cfg` were compared against the copies taken before the install and
+are **byte-identical** — 5,182 bytes for the panel, 4,185 for the strip, the `ins` members stored empty in
+both. Configuration did not move; only pixels did.
+
+**The way back** is `3c12d89`, copied out before the install as
+`/home/robchartier/wled-rollback/wled-release-0.1.0-3c12d89-20261119T1212Z.tar.gz` with
+`ROLLBACK-3c12d89.md` beside it. That note matters more than the earlier ones: `3c12d89` writes **schema
+4** and refuses a version-5 document by name, so its restore puts the saved version-4 store back **before**
+the restart. Rolling back also gives up the ladder — `3c12d89` still refuses every preview route on a
+two-light install.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console

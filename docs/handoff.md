@@ -1,8 +1,12 @@
 # Handoff — wled-printer-status
 
-Written 2026-11-19 by the program-manager seat that built most of what is described here. **Read this
-first, then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant to stand alone: if
+Written 2026-11-19 by the wave that installed `69cc791` on the operator's two lights. **Read this first,
+then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant to stand alone: if
 something is missing from it, the incoming agent has no other context.
+
+The nine backend items this file used to list as *built as design, not code* are code now, deployed, and
+proved on the two lights. What is genuinely open is a short list at the end of §5 — read that before
+believing anything is finished.
 
 ---
 
@@ -21,14 +25,20 @@ early beta. The point of it is a light somebody walks past, not a screen somebod
 | Repository on the host | `/home/robchartier/prusa/wled-printer-status`, branch `main` |
 | Public remote | `github.com/nothingmn/wled-printer-status` |
 | Connect instance | Docker container `prusa_connect`; module CLI is `docker exec prusa_connect /prusa_connect module …` |
-| Module status route | `localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/status` — **the `.aux.` matters, omit it and you get a 404** |
+| Module routes | `http://10.0.0.160:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/…` — **the `.aux.` matters, omit it and you get a 404** |
+| Module's own store | `/config/config.d/module-data/wled-printer-status/config.json`, **schema version 5** |
 | Panel | `morpheus` `http://10.0.0.136` — 256 × 64, 16,384 pixels, WLED `14.7.0-mdev` |
 | Strip | `CyberDesk` `http://10.0.0.253` — 48 LEDs, six named zones, WLED `16.0.1` |
+| The running release | `/config/config.d/wled-release-69cc791` (built from `69cc791`) |
+| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-3c12d89.md` and its archive are the step back from what runs |
+| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-3c12d89-20261119T1215Z/` |
 | Signing key | `/home/robchartier/.prusa-signing/wled-printer-status/signing-key.pem`, `0600` in a `0700` dir — **never copy, print or commit it** |
-| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/` |
 
-**State at the time of writing:** `HEAD = 9d68394`, working tree clean, level with `origin/main`,
-**229 tests**, tag **`v0.1.0`** pushed, **zero GitHub releases** (so `release.yml` has never run).
+**State at the time of writing:** `HEAD = 69cc791`, working tree clean, level with `origin/main`,
+**376 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and under
+`-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
+with two bindings and five empty tables, tag `v0.1.0` pushed, **zero GitHub releases** (so `release.yml`
+has never run).
 
 ## 3. How to build, and how to prove
 
@@ -41,9 +51,25 @@ docker run --rm --user $(id -u):$(id -g) \
   golang:1.26.11 go test ./... -count=1
 ```
 
-Four gates before any commit: `go build ./...`, `go vet ./...`, `go test ./... -count=1`,
-`gofmt -l .` (any output is a failure), plus `-race` with `CGO_ENABLED=1`. Binaries are static
-(`CGO_ENABLED=0`); the process runs inside the container as a child of its PID 1.
+Add `-e CGO_ENABLED=1` and `-race` for the race run. A **bare `git archive` export cannot build** until
+`.core` is recreated inside it as `ln -s /work/prusa-connect <src>/.core` — the `go.mod` replace points at
+`./.core/sdk`, and a symlink to a host path does not resolve inside the container.
+
+Four gates before any commit: `go build ./...`, `go vet ./...`, `go test ./... -count=1`, `gofmt -l .` (any
+output is a failure), plus `-race` with `CGO_ENABLED=1`. Binaries are static (`CGO_ENABLED=0`); the process
+runs inside the container as a child of its PID 1.
+
+**Build a release from `git archive HEAD`, never from a dirty tree** — another writer has been seen
+restoring files in this checkout. `/home/robchartier/prusa/build-release-69cc791.sh` is the script this
+wave used and is worth copying:
+
+- the four platform binaries come out of the export in `golang:1.26.11`, `-trimpath`;
+- **the UI half is only rebuilt when `git diff --stat <installed sha>..HEAD -- ui/` is non-empty.** When
+  that diff is empty the bundle is copied out of the release that is already installed and `cmp` is used to
+  record that it is byte-identical — a stale bundle is a stale screen with every checksum still passing, and
+  a needless rebuild is a new digest nobody can explain. This wave reused `ui/index.js`
+  `a46ac73b…`, identical to what was running;
+- `checksums.txt` covers every file but itself, then `sha256sum -c` inside the container after the copy in.
 
 **Install / update** (in place, needs one restart — the host reads `config/config.d/resources.json` only
 at start):
@@ -54,22 +80,40 @@ docker exec prusa_connect /prusa_connect module add github.com/nothingmn/wled-pr
 docker restart prusa_connect
 ```
 
-Build the release directory from `git archive HEAD`, never from a dirty tree — **another writer has been
-seen restoring files in this checkout**.
+The same version has now been accepted four times; the host compares the manifest string to the child's
+own `extension.Version("0.1.0")` exactly, so a version bump is a decision, not a detail.
 
-**Proving the display without eyes is impossible on this firmware** (see §6). What exists instead:
+**The diagnostic ladder** — the four preview routes fire at every light the module drives, and `light=`,
+the name `GET /controllers` answers with, aims one request at one light:
 
 ```bash
 B=http://10.0.0.160:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
-curl -s -X POST "$B/preview-finished?hold=180"                    # the word FINISHED
-curl -s -X POST "$B/preview-pattern?pattern=solid&hold=180"       # whole panel white → transport
-curl -s -X POST "$B/preview-pattern?pattern=border&hold=180"      # 2px white edge  → LED map
-curl -s -X POST "$B/preview-pattern?pattern=quarters&hold=180"    # R/G/B/W corners → orientation
-curl -s -X POST "$B/preview-frame?percent=41&name=MK4IS&hold=180" # the composed steady frame
+curl -s -X POST "$B/preview-pattern?pattern=solid&hold=180"                       # whole panel white → transport
+curl -s -X POST "$B/preview-pattern?pattern=border&hold=180"                     # 2px white edge  → LED map
+curl -s -X POST "$B/preview-pattern?pattern=quarters&hold=180"                   # R/G/B/W bands   → orientation
+curl -s -X POST "$B/preview-pattern?pattern=solid&hold=8&light=10.0.0.253"       # one light only
+curl -s -X POST "$B/preview-finished?hold=180"                                   # the word FINISHED
+curl -s -X POST "$B/preview-frame?percent=41&name=MK4IS&hold=8"                  # the composed steady frame
 ```
 
-That ladder is what closed the biggest open question in the project — one look answered transport, LED
-map and orientation at once. Use it before doubting the code.
+That ladder is what closed the biggest open question in the project — one look answered transport, LED map
+and orientation at once — and it refused every request on a two-light install until `5104b90`.
+
+**What an answer proves.** Every picture this module draws, including all four patterns, goes out **over
+DDP with an establishing body underneath** (§6). So the controller's `/json/state` will *never* show the
+pixels: it shows segment 0 carrying the picture's name, the bounds it was given, and `live` in
+`/json/info` while the stream runs. To see the actual bands, capture the datagrams:
+
+```bash
+docker run -d --name ddpcap --net=host --cap-add=NET_RAW --cap-add=NET_ADMIN \
+  -v /tmp/ddp:/out alpine:3 sh -c 'apk add -q tcpdump >/dev/null 2>&1; \
+    exec tcpdump -i enp4s0 -n -s0 -U -w /out/ddp.pcap udp port 4048'
+# fire a preview, wait out the hold, then: docker stop ddpcap
+```
+
+Each datagram is a 10-byte DDP header (offset at bytes 4–8 big-endian, length at 8–10) followed by RGB
+triples from `offset/3`. Reassemble by offset and the frame is yours, pixel for pixel. `tcpdump` on the
+host itself is not allowed (`sudo` needs a password); the container with `--net=host` is.
 
 ## 4. What is settled — do not re-litigate
 
@@ -83,7 +127,8 @@ working mockup in `docs/design/v2/`. Highlights that have already cost arguments
 - **Presets are WLED's.** Our UI only names one. No preset gallery, no effect/speed/palette editor.
 - **A state may carry a word**, and that word **beats the Layout composer**.
 - **A pause switches the light off** — not frozen — with `10 min / 1 hour / 6 hours / 1 day / 3 days /
-  forever`. Exception: a borrowed zone is **handed back**, never powered off.
+  forever`. Exception: a borrowed zone is **handed back**, never powered off, and that has no exception for
+  a silent printer (proved by `TestAPauseOnABorrowedZoneHandsItBackWhenThePrinterIsStale`).
 - **One printer may sit on several lights** (multi-room). A **segment** carries one printer only.
 - **Replacing a light requires identical hardware** — same shape, same pixel count — and matches segments
   **by name only**.
@@ -92,59 +137,100 @@ working mockup in `docs/design/v2/`. Highlights that have already cost arguments
 
 ## 5. What is built, and what is not
 
-**Built and proved on hardware:** the steady frame (bar, percentage, job name), the `FINISHED` word over
-DDP, the stale-name clear, the finished-job-holds-its-colour rule, the composed panel, the four test
-patterns, and config snapshot/restore (see §6).
+**All nine items of the old backend list are code, deployed on two lights at schema 5.** What each one is,
+in the order the UI needed them:
 
-**Built as design, not code** — the backend work list, in the order the UI needs it:
+1. **`GET /controllers/{name}`** — a light's own segments, so every segment picker has something to offer.
+2. **`GET /frames`** — one picture per binding for the Overview thumbnails: the frame the painter decided,
+   the reading's age, the last write, and the PNG in base64, drawn by the same code that draws the light.
+3. **`GET /devices/{name}/snapshot`, `GET …/snapshot/{id}`, `POST …/restore`** — configuration snapshots
+   with an explicit confirmation, a safety snapshot before the write and a wait for the light to answer.
+4. **The moment table** — `GET /lights/{light}/moments`, `GET/PUT/DELETE /moments/{moment}`: per
+   (light, printer) × moment, colour, word, preset or effect.
+5. **The state table** — `GET /states`, `GET/PUT/DELETE /states/{state}`: colour, word and `holds`
+   (`forever`, `30s`, `60s`, `5m`) with `colour_origin` / `word_origin` saying what was the operator's.
+   The answer carries `word_shows` and `word_until`, because a bare 200 cannot say a word was spent before
+   anybody read it.
+6. **Layout storage per binding** — `GET/PUT/DELETE /bindings/{id}/layout` and `GET /lights/{light}/layouts`:
+   bar, bar band and rows, percentage, name, remaining, rotation, take-turns or side-by-side.
+7. **Brightness windows by route** — `GET/POST /windows`, `PUT/DELETE /windows/{index}`, judged in the zone
+   the settings name and never defaulted to the process's clock.
+8. **Pause, global and per binding** — `GET/PUT/DELETE /pause`, persisted with a timed expiry, with the
+   borrowed-zone exception above.
+9. **A versioned store** — schema 5 on disk, every version's upgrade an explicit step with its own reader,
+   and a document from a *newer* release refused by name and both versions.
 
-1. `GET /controllers/{name}` returning the light's **own segments** — every segment picker is empty today.
-2. `GET /frames` — one frame per binding, for the Overview thumbnails.
-3. `GET /devices/{name}/snapshot` + `POST …/restore`.
-4. The moment table: CRUD for (light, printer) × moment.
-5. The state table CRUD (colour, word, `holds`).
-6. Layout storage per binding, including `rotation: take-turns | side-by-side` (side-by-side needs a build).
-7. Brightness windows edited by route rather than JSON.
-8. Pause: global and per binding, persisted with a timed expiry.
-9. A **versioned** configuration store (version it from the first commit — the shape will change).
+Around them: the binding routes (`GET/POST /bindings`, `GET/PUT/DELETE /bindings/{id}`), `/printers`,
+`/controllers`, the four preview routes, `/status`, `/wled-printer-status`, and a Svelte UI bundle served
+from the module's own `ui/`.
+
+**Genuinely open — do not report these as done:**
+
+- **Multi-room's per-binding pause is still keyed on the printer.** Two bindings driven from one printer
+  cannot be paused independently: the pause row's scope names the printer, and the printer is the same for
+  both lights. The store shape and `pause.go` accept a per-binding scope; the route and the key are what
+  have not been separated.
+- **`light-lost` never fires.** A binding whose controller stops answering is logged and survives, and its
+  thumbnail goes stale, but no state or moment says "this light is gone", so nothing on the wall shows it.
+- **`error-or-attention` vs `filament-change` on ATTENTION.** The printer reports one ATTENTION word for
+  both a filament change and an error a person must clear, and this module cannot tell them apart, so both
+  draw the ATTENTION colour and neither carries a word. Distinguishing them needs the printer's own error
+  code mapped, which has not been done.
+- **Snapshot retention.** Snapshots are taken before every restore and never pruned: how many are kept, for
+  how long, and who deletes them is an open question, not a bug.
+- **The word's return.** A state's word shows within a second and comes off by itself, but the panel can
+  stay black — the establishing body, with the word's name still on segment 0 — for up to about fifteen
+  seconds before the steady frame is repainted (§6). Measured three times: at the hold's end once, 13 s and
+  15 s late twice. Worth a look before the operator's eyes find it.
 
 ## 6. Measured facts — the expensive knowledge
 
 Each cost real time to learn; none should be re-derived.
 
 - **The controller's pixels cannot be read back.** `/json/state` has no `i` array, `/peek` is 404, and
-  `pwr` reads **0 even with the whole panel solid red**. A picture is verified by eye, or not at all.
-- **WLED's own text effect (id 122) does not work on the panel.** Four groupings, every parameter set:
-  only the left-hand columns ever lit. Text is drawn by this module instead (`internal/text`, 5×7 glyphs).
-- **Individual pixels over the JSON API are silently ignored** on this firmware. Four bodies, HTTP 200,
-  nothing lit. The per-LED call was deleted; the evidence is in `AGENTS.md` §5.4.
-- **DDP works.** Whole panel = 35 datagrams (34×480 px + one of 64), 10-byte header, big-endian channel
-  offset, push flag on the last only. Realtime dies `realtimeTimeoutMs` = 2500 ms after the last datagram,
-  so a still picture is repeated **once a second** — about 50 kB/s, ~400 kbit/s.
+  `pwr` reads **0 even with the whole panel solid red**. A picture is verified by eye, by the DDP capture
+  in §3, or not at all.
+- **Every picture goes over DDP, patterns included.** `paintEvent` writes one establishing body — segment 0
+  given the whole geometry, in the background colour, named with the picture's word and otherwise with its
+  name cleared; segment 1 the frame's remainder, off — and then pushes pixels. Which is why `/json/state`
+  during a `quarters` preview reads `seg0 n='quarters' start=0 stop=48` on the strip and `0..256` plus a
+  remainder segment on the panel, all in black, with the bands visible only on the wire.
+- **The strip's `quarters` is four bands of twelve, red→green→blue→white, in that order** — captured off
+  the wire on 2026-11-19: pixels 0–11 `(255,0,0)`, 12–23 `(0,255,0)`, 24–35 `(0,0,255)`,
+  36–47 `(255,255,255)`. The panel's is four 128 × 32 quadrants, 4096 pixels each, the same four colours.
+- **Realtime dies 2.5 s after the last datagram**, so a still picture is repeated **once a second** —
+  about 50 kB/s, ~400 kbit/s.
 - **The panel's LED map is row-major `y*width+x`** and correctly oriented — proved with the `quarters`
   pattern, not assumed.
 - **A config write does not reboot** (WLED 16.0.1, measured): `POST /json/cfg` accepts full or **partial**
   bodies, answers `200 {"success":true}` in 65 ms, and needs `"rb":true` in the body or a separate
-  `POST /json/state {"rb":true}`. **A reboot takes 5.7 s** (first refusal 0.635 s, first answer 5.667 s,
-  same IP). An identity restore caused **no outage at all** — 0 failed polls of 90.
+  `POST /json/state {"rb":true}`. **A reboot takes 5.7 s.** An identity restore caused **no outage at all**.
+  Nothing in this module posts `/json/cfg`; pixels are its job, configuration is not.
 - **Omitting the `nw` section makes WLED clear `nw.linked_remote`** (`cfg.cpp:64`). Send **`nw` minus
-  `ins`** — keep the section, never the credential. **The WiFi PSK is not in a config dump at all**
-  (`ssid` present, `psk` absent on both lights), so a literal 100% clone is impossible.
-- **A prerelease version cannot install.** A child reports `extension.Version("0.1.0")` and the host
-  compares the manifest string to it exactly, so `0.1.0-beta.1` parses, installs and never starts. The beta
-  is expressed by a GitHub **pre-release** on the same `0.1.0`.
-- **The Connect host renders nothing from a module's OpenAPI.** A real page needs a `ui:` bundle built
-  against `@prusa/connect-ui` — which is public, and **belongs in CI**, not on the host.
-- **A module page's settings are nine closed types**, no enum, no colour; `list`/`object` render as a
-  one-line JSON box. This is why the product needs its own UI.
-- **Commit messages truncate at a backtick** when passed over ssh. Use `git commit -F -` with a heredoc.
+  `ins`** — keep the section, never the credential. **The WiFi PSK is not in a config dump at all**, so a
+  literal 100 % clone is impossible.
+- **A prerelease version cannot install.** `0.1.0-beta.1` parses, installs and never starts. The beta is
+  expressed by a GitHub **pre-release** on the same `0.1.0`.
+- **The Connect host renders nothing from a module's OpenAPI**, and a module page's settings are nine
+  closed types with no enum and no colour. This is why the product needs its own UI.
+- **A word's `set_at` is what makes a word on a long-running state visible.** The hold runs from the later
+  of the state's entry and the write, and the write's instant is kept in the store — measured at schema 5:
+  `{"state":"FINISHED","word":"QA","holds":"30s","set_at":"2026-11-19T12:24:33.160940222Z"}`.
+- **A test that stamps a fixture with a fixed noon and lets the writer keep `time.Now` is a time bomb.**
+  `TestAPauseOnABorrowedZoneHandsItBackAndPowersNothingOff` passed all morning and failed every run after
+  12:10 UTC, because its pause had silently expired; the writers a pause test builds must be given
+  `newFakeClock(at)` and `clock.watch(pen)`. Fixed in `69cc791`, with a stale-printer sibling beside it.
+- **Commit messages truncate at a backtick** when passed over ssh. Use `git commit -F -` with a heredoc, or
+  a message written to a file.
 
 ## 7. What the operator still owes
 
 - **The v0.1.0 release**, whenever he wants the marketplace beta: Draft a new release → existing tag
-  `v0.1.0` → paste the prepared body → **tick "Set as a pre-release"** → Publish. That fires
-  `release.yml`.
-- Judgement on things only eyes can settle — see the "Not proved" list in the requirements §6.
+  `v0.1.0` → paste the prepared body → **tick "Set as a pre-release"** → Publish. That fires `release.yml`.
+- **A QA round on the two lights** — the ladder through both, a word set on `FINISHED` and cleared, and the
+  four open items in §5 judged: only his eyes settle what a light is showing, and §6 says why no route can.
+- **`AGENTS.md`** still carries a stale test count and the sentence about a printer appearing in at most one
+  binding. That file is the operator's to release; a policy guard blocks an agent editing it.
 
 ## 8. Rules that will bite you
 
@@ -153,15 +239,19 @@ never share one segment; **secrets never enter tracked files**; scope every writ
 agents work in this checkout); never `git reset --hard`, `git checkout -- .` or `git clean`; **no claim
 without the command and its output beside it**, and write "unverified" where the evidence is missing.
 
-Two habits this project rewarded: **measure rather than reason** (three of the six biggest discoveries
-were guesses that turned out to be false), and **say what the light will actually do** rather than what the
-code intends.
+Two habits this project rewarded: **measure rather than reason** (three of the six biggest discoveries were
+guesses that turned out to be false), and **say what the light will actually do** rather than what the code
+intends.
 
 ## 9. Where the evidence is
 
+- `docs/installing-locally.md` — the install log, run by run, with the commands and their output. The
+  sixteenth run is this deploy: `69cc791`, binary `2f3daf3e…`, store 4 → 5.
+- `docs/handoff.md` (this file) — the starting point, and §5's open list.
 - `docs/program/portfolio.md` in the program-manager tree — the decision register, every entry with the
   operator's own words and the command output that proved it.
 - `docs/program/wled-printer-status-v2-requirements.md` — the locked requirements.
 - `docs/program/wled-printer-status-test-sheet.md` — what needs the operator's eyes, item by item.
 - `docs/design/v2/` in the repository — the eight approved mockups.
-- `/home/robchartier/wled-backups/` — device configuration snapshots taken before any write.
+- `/home/robchartier/wled-rollback/` — every release archive, its rollback note, and the pre-install copies
+  of both controllers.
