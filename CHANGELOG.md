@@ -10,12 +10,12 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
-## Unreleased
+## 0.5.0 — 2026-11-19
 
 The Lights screen is three levels deep — the screen, then **In-Use / Available / Ignored**, then one tab per
 light — and a light can be **ignored**, which keeps it and takes it out of every other list. **The store moves
-to schema 8**, so both halves of the version have to move together in the release that ships this: a 0.4.0
-build refuses a document this one writes, by name.
+to schema 8**: an upgrade steps the document forward, and a 0.4.0 build refuses a document this
+one writes, by name — so a way back needs the store restored beside the older binary, not the binary alone.
 
 ### Added
 
@@ -32,6 +32,13 @@ build refuses a document this one writes, by name.
 
 ### Changed
 
+- **Every screen is drawn from one design system, and the design system is the host's own.** The module
+  reads its colours, spacing, corners and type from Connect's own variables, so its pages follow the
+  instance's light or dark theme — a theme switched while a page is open is followed with no reload — and
+  no screen can drift from the rest of the app. `docs/style-guide.md` is the guide this is checked against.
+- **A printer is its name and its address, both links** — `Hermes MK4 (…/printers/07e893bb-…)`, the shape
+  the Lights screen already gave a light — on every screen that names one: Overview, Bindings and its
+  list of printers with no light, the Lights screen's segment column, Events, Layout and Diagnostics.
 - **The Lights screen is three levels, not one long stack.** *Lights* is the screen; under it **In-Use** (a
   light with at least one binding), **Available** (known, nothing on it, not ignored) and **Ignored**; and
   inside a bucket, **one tab per light**. The screen opens on In-Use, and after adding a light or bringing one
