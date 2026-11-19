@@ -1,9 +1,10 @@
 # Handoff — wled-printer-status
 
-Written 2026-11-19 by the wave that installed `531e73c` on the operator's two lights — the release that
-fixed a held word's hand-back, which is the last defect a live deploy measured. **Read this first,
-then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant to stand alone: if
-something is missing from it, the incoming agent has no other context.
+Written 2026-11-19 by the wave that shipped and installed **`0.2.0`** (`905454f`, tag `v0.2.0`) on the
+operator's two lights — the release that puts the module's own page on it: seven screens, the moment and
+state tables, a layout per binding, several lights showing one printer, and the presets and identify
+routes. **Read this first, then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant
+to stand alone: if something is missing from it, the incoming agent has no other context.
 
 The nine backend items this file used to list as *built as design, not code* are code now, deployed, and
 proved on the two lights. What is genuinely open is a short list at the end of §5 — read that before
@@ -30,20 +31,23 @@ early beta. The point of it is a light somebody walks past, not a screen somebod
 | Module's own store | `/config/config.d/module-data/wled-printer-status/config.json`, **schema version 5** |
 | Panel | `morpheus` `http://10.0.0.136` — 256 × 64, 16,384 pixels, WLED `14.7.0-mdev` |
 | Strip | `CyberDesk` `http://10.0.0.253` — 48 LEDs, six named zones, WLED `16.0.1` |
-| The running release | `/config/config.d/wled-release-531e73c` (built from `531e73c`) |
-| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-69cc791.md` and its archive are the step back from what runs |
-| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-69cc791-20261119T1238Z/` |
+| The running release | `/config/config.d/wled-release-905454f` (built from `905454f`, version `0.2.0`) |
+| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-531e73c.md` and its archive are the step back from what runs |
+| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-531e73c-20261119T1812Z/` |
 | Signing key | `/home/robchartier/.prusa-signing/wled-printer-status/signing-key.pem`, `0600` in a `0700` dir — **never copy, print or commit it** |
 
-**State at the time of writing:** the tree is clean; `git log --oneline -5` says where `HEAD` stands. **The
-deployed release was built from `531e73c`** and its installed `linux_amd64` digest is
-`17189a45fcd9094b88dfab6c2bfb2dc0b277b124eab79fd69a564686da61d6a3`; the commits above it are
-documentation, and the UI bundle was not rebuilt because nothing under `ui/` changed between the previous
-release and this one — the shipped `ui/index.js` is `a46ac73b…`, proved `cmp`-identical rather than assumed.
-**378 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and under
-`-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
-with two bindings and five empty tables, tag `v0.1.0` pushed, **zero GitHub releases** (so `release.yml`
-has never run).
+**State at the time of writing:** the tree is clean at `905454f`, level with `origin/main`. **The deployed
+release is `0.2.0`**, built from `905454f` and staged at `/config/config.d/wled-release-905454f`; its
+installed `linux_amd64` digest is
+`1b0629e3be718ec10d90fa16d510eb3cacdb2b7801c45153681ca61ead18f3a2`.
+The UI was **rebuilt** for this release — `ui/dist/ui/index.js` is 217,153 bytes and hashes to
+`4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872`, against the previous bundle’s
+`a46ac73b…` — and the asset the host serves was hashed and compared with the shipped file rather than
+assumed. **395 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and
+under `-race`. Version **0.2.0**, annotated tag `v0.2.0` at `905454f` pushed, `v0.1.0` untouched at
+`701d090`; installed and driving **two** lights under **one** printer, store at **schema 5** with two
+bindings and five empty tables, **zero GitHub releases** (so `release.yml` has never run). The bundle
+carries **seven screens** — the eighth the requirements name has no component yet, see §5.
 
 ## 3. How to build, and how to prove
 
@@ -167,14 +171,29 @@ in the order the UI needed them:
 
 Around them: the binding routes (`GET/POST /bindings`, `GET/PUT/DELETE /bindings/{id}`), `/printers`,
 `/controllers`, `GET /devices/{name}/presets` (a light's own presets, by slot and name, read-only, which
-is the list a moment's `which` is picked from), `POST /devices/{name}/identify` (built in this tree and
-**not yet deployed**: the flash that says which light a name means — on and off, one second in each state,
-five times, then put back exactly as it was found; it answers `202` as the flash starts because ten seconds
-does not fit the host's ten-second call), the four preview routes, `/status`,
+is the list a moment's `which` is picked from), `POST /devices/{name}/identify` (**deployed since `0.2.0`**: the flash that says which light a name means
+— on and off, one second in each state, five times, then put back exactly as it was found; it answers `202`
+as the flash starts because ten seconds does not fit the host's ten-second call. Proved once on the strip:
+the light's `/json/state` was byte-identical across it, and the log carried the line when it was back),
+the four preview routes, `/status`,
 `/wled-printer-status`, and a Svelte UI bundle served from the module's own `ui/`.
+
+**The page carries seven of the requirements' eight screens.** `ui/src/screens.ts` is the whole list —
+Right now, Bindings, Events, Colours, Layout, Devices, Diagnostics — and the built bundle holds each id and
+its catalogue key, proved by grepping the shipped `index.js` rather than the source. **Settings (§2.8) has
+no component in this tree**: there is no `settings.svelte`, no `screen.settings` key in the bundle, and no
+rail entry for it. That is the one gap between §2 and the page, and it is the first item of UI work rather
+than a defect to hide. The Devices card's `identify` button is also still **off**: its route answers (above)
+and the card is not wired to it, which the card now says in as many words instead of claiming the route
+does not exist.
 
 **Genuinely open — do not report these as done:**
 
+- **The Settings screen (§2.8) is not built.** The page holds seven of the eight screens the requirements
+  name. There is no component, no catalogue key and no rail entry for it, so a person cannot read the
+  version, the memory budget, the permissions or the egress from the page, and cannot set the timezone
+  there — that one is still a manifest setting the host draws. Building it is UI work with no backend
+  behind it: every fact it shows is already answered by `/status`, `/windows` and the declaration.
 - **Multi-room's per-binding pause is still keyed on the printer.** Two bindings driven from one printer
   cannot be paused independently: the pause row's scope names the printer, and the printer is the same for
   both lights. The store shape and `pause.go` accept a per-binding scope; the route and the key are what

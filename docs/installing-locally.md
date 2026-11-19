@@ -1340,6 +1340,191 @@ controllers' `/json/cfg` **byte-identical** to the copies taken before the insta
 `ROLLBACK-69cc791.md` beside it. Unlike the `3c12d89` note, this restore needs no store step: both builds
 read schema 5, so the saved document is for a damaged file and not for a version mismatch.
 
+**Seventeenth run, 2026-11-19 18:15Z, from `905454f`.** The release that puts a page on the module and
+gives the module a version of its own: **`0.2.0`**, tagged `v0.2.0` as a new annotated tag on a new commit.
+`v0.1.0` is published at `701d090` — the eight-route module from before all of this — and a published tag
+is not ours to rewrite, so this is a second tag rather than a moved one.
+
+**The version is two declarations, and they have to agree.** After the bump the manifest said `0.2.0` while
+the process still reported `0.1.0` through `extension.Version`. The host compares the manifest's `version`
+against the child's own answer as exact text, so that pair installs cleanly and then **never starts**. Both
+moved in the one commit:
+
+```console
+$ git diff c621984..905454f --stat
+ CHANGELOG.md           | 10 ++++++----
+ main.go                |  2 +-
+ module.yaml            |  2 +-
+ ui/src/locales/en.json |  2 +-
+ 4 files changed, 10 insertions(+), 6 deletions(-)
+```
+
+**The way back was taken before anything was installed**, out of the config volume and through the
+container: `wled-release-0.1.0-531e73c-20261119T1812Z.tar.gz` (sha256 `4a6fe68d…`, ten files `OK` on a
+`sha256sum -c` of the archive re-extracted after packing), the store at schema 5 with two bindings
+(`config-v5-531e73c-20261119T1812Z.json`), the settings file every install since `9f95c11` has been given
+(`882f2cb6…`), and both controllers' `/json/cfg`, `/presets.json` and `/json/state` under
+`lights-531e73c-20261119T1812Z/`, every file proved to parse and every `nw.ins` stored empty. The installed
+binary was `cmp`-identical to the archive's `linux_amd64` (`17189a45…`), so what is archived is the thing
+that was running. `ROLLBACK-531e73c.md` carries the restore line and the store half.
+
+**The bundle was rebuilt, not carried forward.** `ui/src` has changed enormously since the installed
+`a46ac73b…` — one screen, 22,803 bytes:
+
+```console
+$ … pnpm install --frozen-lockfile && pnpm run check && pnpm run build
+svelte-check found 0 errors and 0 warnings
+dist/ui/index.js  217.15 kB │ gzip: 43.68 kB
+✓ built in 573ms
+$ sha256sum ui/dist/ui/index.js ui/dist/ui/locales/en.json
+4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872  ui/dist/ui/index.js
+bac1d3ccaa7093bd187bddea4401ed23efd3655e9e24d05b50a162378755b7c0  ui/dist/ui/locales/en.json
+$ sha256sum /config/config.d/modules/wled-printer-status/bundle/ui/index.js   # what was installed
+a46ac73bf2bf5d224f9313f63e3059dd43a2f31d911d833dcfb7fb43859d118a
+```
+
+The two digests differ, which is the point: a stale copy would have passed every checksum in the release and
+shown the operator the previous screen.
+
+**What the bundle carries is seven screens, not eight.** `ui/src/screens.ts` lists seven, and the built
+bundle holds each one's id and its catalogue key. `screen.settings` appears nowhere in it, because the
+requirements' §2.8 Settings screen has no component in this tree — the rail a person sees has seven
+entries. Read from the shipped file rather than from the source:
+
+```console
+$ python3 - <<'PY'   # findall r'id: "([a-z-]+)",\s*key: "(screen\.[a-z_]+)"' over ui/dist/ui/index.js
+SCREENS entries in the shipped bundle: 7
+  right-now    screen.right_now
+  bindings     screen.bindings
+  events       screen.events
+  colours      screen.colours
+  layout       screen.layout
+  devices      screen.devices
+  diagnostics  screen.diagnostics
+screen.settings present: False
+PY
+```
+
+**The install**, the same four flags as every run above:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.2.0 \
+    -from /config/config.d/wled-release-905454f \
+    -settings /config/config.d/wled-settings.json -approve; echo "MODULE_ADD_EXIT=$?"
+installed com.github.aux.nothingmn.wled-printer-status/wled-printer-status as sink:wled-printer-status
+  files       config/config.d/modules/wled-printer-status
+  namespace   com.github.aux.nothingmn.wled-printer-status
+  checksums   10 files verified against checksums.txt
+  … one `setting` line per option in module.yaml …
+  connects to the host in the setting controller_address port 80 from the process: …
+  connects to the host in the setting controller_address port 4048 from the process: …
+  granted     org:local#viewer@sink:wled-printer-status for observe. The viewer role also carries
+              view_resource, read_storage
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+```
+
+It asked for nothing new — no `new` line, because `observe` was already granted and the data directory
+already approved. `docker restart prusa_connect` came back `Up (healthy)`, `/status` answered `200`, and the
+log named the release from both ends:
+
+```console
+$ docker logs --since 5m prusa_connect | grep -E 'is serving on stdio|plugin_version|own store'
+msg="wled-printer-status 0.2.0 is serving on stdio as pid 32" instance=sink:wled-printer-status
+msg="… the set this start runs is the one in this module's own store at
+     /config/config.d/module-data/wled-printer-status/config.json, schema version 5 (2 bindings);
+     the settings are a migration source and are not applied again"
+… plugin=wled-printer-status plugin_version=0.2.0 contract=1.1.0 wire_minor=0 mount=/api/v1/modules/…
+msg="the module's OpenAPI document is served" … paths=26
+msg="the module's files are serving" … draws=true
+```
+
+**Every route the work names, answered by the installed build.** Reads only, one line of each body, taken
+at 18:16–18:18Z:
+
+| route | status | what it answered |
+|---|---|---|
+| `GET /status` | `200` | two bindings, `PRINTING`, frame `[0,170,0]`, `reason: progress`, `stale: false` |
+| `GET /controllers` | `200` | both lights by address, `10.0.0.136` and `10.0.0.253` |
+| `GET /controllers/10.0.0.136` | `200` | `segments_known: true`, the panel's own segment list |
+| `GET /controllers/10.0.0.253` | `200` | `segments_known: true`, the strip's six zones |
+| `GET /printers` | `200` | `Hermes MK4`, `bound_count: 2` |
+| `GET /bindings` | `200` | `count: 2`, `persisted: true`, `source: … its own configuration store` |
+| `GET /bindings/07e893bb-…` | `200` | the panel's binding, `whole: true`, `brightness: 128` |
+| `GET /bindings/07e893bb-…@10.0.0.253:whole` | `200` | the strip's binding, minted rather than the printer's id |
+| `GET /states` | `200` | twelve rows: ten states, then `Disconnected` and `Stale` as conditions |
+| `GET /states/PRINTING` | `200` | `[0,170,0]`, `holds: forever`, `word_shows: none` |
+| `GET /lights/10.0.0.136/moments` | `200` | the panel's moment table, one printer on it |
+| `GET /lights/10.0.0.253/moments` | `200` | the strip's, keyed on the composite binding id |
+| `GET /bindings/…/layout` | `200` | `bar: true`, `bar_band: bottom`, every value with its origin |
+| `GET /bindings/…@10.0.0.253:whole/layout` | `200` | the strip's own layout, not the panel's |
+| `GET /windows` | `200` | `count: 0`, `judged_in: America/Denver` |
+| `GET /pause` | `200` | both bindings `paused: false`, `effect: off` |
+| `GET /frames` | `200` | panel 256 × 64 PNG 379 B, strip 48 × 1 PNG 91 B, both `last_send.ok: true` |
+| `GET /devices/10.0.0.136/presets` | `200` | `presets_known: true`, the panel's own presets by slot and name |
+| `GET /devices/10.0.0.253/presets` | `200` | `presets_known: true`, three presets, slot 0 deliberately absent |
+| `GET /devices/10.0.0.136/snapshot` | `200` | `count: 0`, `persisted: true` |
+| `GET /devices/10.0.0.253/snapshot` | `200` | `count: 0`, `persisted: true` |
+
+`/devices/{name}` keys on the **light**, not on the printer: asking it for the printer's device id answers
+`404 CONTROLLER_NOT_FOUND` with "This module drives no light of that name. It drives 10.0.0.136,
+10.0.0.253." — which is the route telling you the right parameter. The presets route is new in this release
+and answered `ROUTE_NOT_FOUND` on the build it replaced.
+
+**Identify, fired exactly once, on the strip** — never on the panel. It answers `202` as the flash starts,
+because ten seconds does not fit the host's ten-second call, so the proof is the light's own document read
+on both sides of it:
+
+```console
+$ curl -s http://10.0.0.253/json/state | jq -c '{on,bri,seg0:{col:.seg[0].col[0],stop:.seg[0].stop}}'
+{"on":true,"bri":128,"seg0":{"col":[0,170,0],"stop":23}}           ← 18:16:52Z
+$ curl -s -o id.json -w '%{http_code}' -X POST …/devices/10.0.0.253/identify
+202
+$ jq -c . id.json
+{"controller":"http://10.0.0.253","light":"10.0.0.253","flashing":true,"already":false,"flashes":5,
+ "seconds_per_state":1,"seconds":10,"was_on":true,"ends_at":"2026-11-19T18:17:02Z","note":"…"}
+$ sleep 14; curl -s http://10.0.0.253/json/state | jq -c '{on,bri,seg0:{col:.seg[0].col[0],stop:.seg[0].stop}}'
+{"on":true,"bri":128,"seg0":{"col":[0,170,0],"stop":23}}           ← 18:17:06Z
+$ sha256sum /tmp/strip-{before,after}.json     # the same document, volatile members dropped
+6faddf76f34f19e490ca153ed17d2e3c94c376b1ac2b4c2fc3fc3a44c2c3bc34  /tmp/strip-before.json
+6faddf76f34f19e490ca153ed17d2e3c94c376b1ac2b4c2fc3fc3a44c2c3bc34  /tmp/strip-after.json
+```
+
+The module's own log said when it was back: `the light went on and off 5 times, one second in each state,
+and was put back as it was found: power on, brightness 128, 6 segment(s)` at `18:17:02.922Z`.
+
+**The page is served, and it is the bytes that were shipped.** The bundle root is the module's `ui/`, and
+`ui.entry` is `ui/index.js` relative to it, so the asset sits at the doubled `ui/ui`:
+
+```console
+$ curl -s -o /tmp/served.js -w 'HTTP %{http_code}  size=%{size_download}\n' \
+    http://10.0.0.160:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/ui/ui/index.js
+HTTP 200  size=217153
+$ sha256sum /tmp/served.js /home/robchartier/build-wled-905454f/release/ui/index.js
+4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872  /tmp/served.js
+4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872  …/release/ui/index.js
+$ curl -s -o /dev/null -w 'HTTP %{http_code}  size=%{size_download}\n' \
+    http://10.0.0.160:8080/            # the Connect SPA, not the module
+HTTP 200  size=3431
+```
+
+**What was left running.** Both lights on at **brightness 128** with the printing colour `[0,170,0]` and a
+progress fill — 49 % of the print, so a bar rather than a solid fill: 8,028 of 16,384 pixels on the panel and
+23 of 48 on the strip. Nothing paused (`/pause` → both `paused: false`), every table in the store empty
+(`states`, `moments`, `layouts`, `windows`, `pauses` all `0`), the store at schema 5 with two bindings, and
+both controllers' `/json/cfg` **byte-identical** to the copies taken before the install. One measured
+wrinkle worth knowing: the strip was at `bri 255` when the rollback was taken and the module's start write
+put it back to `128`; the brightness is written once at start and never touched again, so a controller
+somebody else dimmed stays where they left it until the next restart.
+
+**What this run does not prove.** That a person saw the page — **no browser was opened against it.** What is
+proved is that the asset answers `200`, is 217,153 bytes, hashes to the shipped file, and carries seven
+screens; whether those seven draw correctly is what the browser was not used for. Nor does it prove the
+panel is painting: its `/json/state` segment colour is the establishing body (`[0,0,0]`, `stop 256`),
+because a panel's frame arrives over DDP, and only `/status` and `/frames` describe what was drawn.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
