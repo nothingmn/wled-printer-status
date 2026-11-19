@@ -500,7 +500,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 7 {
+	if found.Config.Version != storeVersion || storeVersion != 8 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -1010,7 +1010,7 @@ func TestAVersionFourStoreStepsToFiveAndKeepsEveryTable(t *testing.T) {
 // and the row would grow a key nobody wrote on every install that had ever been laid out.
 //
 // Version 7 is the lights list, which a version-5 document reaches through the version-6 step and
-// then the one above it.
+// then the one above it, and version 8 is the ignored flag every one of those rows carries, false.
 func TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine(t *testing.T) {
 	const panel = "07e893bb-b922-4ff0-9ad3-061b957400c3"
 
@@ -1037,8 +1037,8 @@ func TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 5")
 	}
 
-	if found.Config.Version != 7 || storeVersion != 7 {
-		t.Fatalf("the upgraded document is at version %d, want 7", found.Config.Version)
+	if found.Config.Version != storeVersion || storeVersion != 8 {
+		t.Fatalf("the upgraded document is at version %d, want 8", found.Config.Version)
 	}
 
 	// The address the binding names became a light, with no facts on it: the migration has the
@@ -1097,8 +1097,8 @@ func TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine(t *testing.T) {
 //
 // It is skipped unless WLED_STORE_FIXTURE names a directory holding one, because the document it
 // steps up is the operator's own and must not be a fixture this repository invents: the point of
-// the test is that the file an install is actually running on reaches schema version 7 with its
-// bindings intact and one light per address they name. The copy is made into a temporary directory
+// the test is that the file an install is actually running on reaches this build's schema version
+// with its bindings intact and one light per address they name. The copy is made into a temporary directory
 // first, so a read here can never write over the document that is in use.
 //
 // The command, run on the host that has the module's store in its container:

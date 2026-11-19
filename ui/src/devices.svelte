@@ -53,6 +53,31 @@
 	//
 	// A light that is not answering has its test buttons off, with the reason on the card: offering a
 	// button that cannot reach the light teaches somebody to distrust the tests that do work.
+	//
+	// # Three levels, because the page was overloaded
+	//
+	// His words, 2026-11-19: *"im actually thinking sub-sub-tabs on the lights main tab. top level is
+	// 'Lights', then 'In-Use', 'Available', 'Ignored', and then a new sub-sub tab for each light, where
+	// the name of the light (or if not available its IP) is the title of the tab. i think this because
+	// the page is very overloaded.. hard to clearly see the difference between the lights."*
+	//
+	// So the screen is the first level, and it holds three buckets:
+	//
+	//   - **In-Use** — a light with at least one binding. This module is writing to it;
+	//   - **Available** — known, no binding, not ignored. Every list that offers a light offers these;
+	//   - **Ignored** — known, no binding, and pushed out of the way. Kept, readable, and out of every
+	//     other list in the module, which is the whole point of the flag: his network answers with
+	//     about nineteen WLED instances and he cares about two.
+	//
+	// Inside a bucket, each light is a tab of its own, titled with the name it calls itself — or, when
+	// it has never answered, its address — and the card that used to be one of a stack is that tab's
+	// whole content. **A tab is keyed by the light's address and labelled by its name**, so a rename
+	// changes a word and never moves a tab; and **a strip that grows scrolls rather than wraps**,
+	// because nineteen lights in a wrapped strip would rebuild the overload one level down.
+	//
+	// The rule that makes ignoring safe is the route's, and this screen says it in the same words: a
+	// light a binding drives cannot be ignored, and the button says so instead of failing. Un-ignoring
+	// is always available, from the Ignored bucket, and brings the light back everywhere.
 	import { onMount } from 'svelte';
 
 	import { Badge, Button } from '@prusa/connect-ui/primitives';
@@ -72,7 +97,16 @@
 	import PrinterLink from './printer-link.svelte';
 	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
-	import { addressOf, known, lights, loadKnownLights, nameOf, type LightFacts } from './lights.svelte';
+	import {
+		addressOf,
+		inBucket,
+		known,
+		lights,
+		loadKnownLights,
+		nameOf,
+		type LightBucket,
+		type LightFacts,
+	} from './lights.svelte';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -127,6 +161,21 @@
 	let addFailed = $state('');
 	/** One line per light, saying what the last removal did, or why it could not. */
 	let removeSaid = $state<Record<string, string>>({});
+	/** One line per light, saying what the last ignore or un-ignore did. */
+	let ignoreSaid = $state<Record<string, string>>({});
+
+	/**
+	 * Which bucket is open, and which light inside it. The light is held by its **address**, not by
+	 * its name: a name is what the light calls itself and it can change, and a tab that moved when
+	 * somebody renamed a light in WLED would be a tab that moved for no reason a person did here.
+	 *
+	 * `selected` empty means "the first light in the bucket", which is what makes the screen land
+	 * on something after a load without a second piece of state to keep in step.
+	 */
+	let bucket = $state<LightBucket>('in-use');
+	let selected = $state('');
+	/** Whether the screen has chosen where to open. It does that once, and never moves underfoot. */
+	let landed = $state(false);
 
 	/** The row this module keeps for one light: its address and what it last said about itself. */
 	const knownOf = (one: LightFacts): KnownLight | undefined =>
@@ -157,12 +206,70 @@
 	const keptOf = (one: LightFacts): SnapshotsBody | undefined => snapshots[nameOf(one)];
 
 	/**
-	 * The lights no binding names — the ones drawn first, under their own band — and the ones that do
-	 * have a printer. A light with a printer on one of its zones has a binding and is not in the first
-	 * list: the test is a binding, not room, which is the rule Overview's gap list records too.
+	 * The three buckets, in the order the screen draws them, with the key of each one's name. The
+	 * key is a table and not a template string so that every word this screen says is in the
+	 * catalogue where a translator can find it.
 	 */
-	const unbound = $derived(lights.list.filter((one) => one.bindings.length === 0));
-	const bound = $derived(lights.list.filter((one) => one.bindings.length > 0));
+	const BUCKETS: { id: LightBucket; key: string }[] = [
+		{ id: 'in-use', key: 'devices.bucket_in_use' },
+		{ id: 'available', key: 'devices.bucket_available' },
+		{ id: 'ignored', key: 'devices.bucket_ignored' },
+	];
+
+	/** The lights in one bucket, in the operator's order. */
+	const lightsIn = (id: LightBucket): LightFacts[] => inBucket(lights.list, id);
+
+	/**
+	 * The light whose tab is open in one bucket: the one asked for, or the first in the bucket when
+	 * nothing has been asked for — or when the light that was asked for has just moved out of it.
+	 *
+	 * A function of the bucket and not a derived, so the panel is drawn from the bucket it is
+	 * headed by in the same expression: a tab strip and the panel under it cannot then disagree
+	 * about which bucket they are showing.
+	 */
+	const currentIn = (id: LightBucket): LightFacts | undefined => {
+		const list = lightsIn(id);
+
+		return list.find((one) => lightName(addressOf(one)) === lightName(selected)) ?? list[0];
+	};
+
+	/**
+	 * The light whose tab is open, as a list of none or one: an `{#each}` over that list draws the
+	 * panel without a cast and without a second condition, so the panel cannot be drawn for a light
+	 * the strip above it does not have.
+	 */
+	const openIn = (id: LightBucket): LightFacts[] => {
+		const one = currentIn(id);
+
+		return one === undefined ? [] : [one];
+	};
+
+	/** What one bucket holds, said under its strip so no tab has to carry an explanation. */
+	const noteOf = (id: LightBucket): string => {
+		if (id === 'in-use') return t('devices.bucket_note_in_use');
+		if (id === 'available') return t('devices.bucket_note_available');
+
+		return t('devices.bucket_note_ignored');
+	};
+
+	/** What an empty bucket says. Empty is a fact, and each of the three is a different one. */
+	const emptyOf = (id: LightBucket): string => {
+		if (id === 'in-use') return t('devices.bucket_empty_in_use');
+		if (id === 'available') return t('devices.bucket_empty_available');
+
+		return t('devices.bucket_empty_ignored');
+	};
+
+	/**
+	 * A light's tab is titled with the name it calls itself, and with its address when it has never
+	 * answered — his words, and the same rule the card's heading follows. The address is what is
+	 * left when a light has no name, and it is still the thing a person recognises on a network.
+	 */
+	const titledOf = (one: LightFacts): string => {
+		const called = calledOf(one);
+
+		return called === '' ? addressOf(one) : called;
+	};
 
 	/** One snapshot's detail, when the operator has asked to see what a restore would write. */
 	const detailOf = (light: string, id: string): SnapshotDetailBody | undefined => details[`${light}|${id}`];
@@ -292,11 +399,29 @@
 					]);
 				}),
 			);
+
+			landOnce();
 		} catch (problem) {
 			failure = `${t('devices.load_failed')}: ${describe(problem)}`;
 		} finally {
 			loading = false;
 		}
+	};
+
+	/**
+	 * Where the screen opens, the first time it has anything to open.
+	 *
+	 * **In-Use first**, because that is the page's job and the calmest landing; **Available** when
+	 * nothing is in use, and **Ignored** when that is all there is. It happens once and only once:
+	 * after it, a bucket stays where the person put it, so a light moving out of a bucket never
+	 * moves the screen under his hand.
+	 */
+	const landOnce = (): void => {
+		if (landed) return;
+
+		const order: LightBucket[] = ['in-use', 'available', 'ignored'];
+		bucket = order.find((one) => inBucket(lights.list, one).length > 0) ?? 'in-use';
+		landed = true;
 	};
 
 	/** Fires one test on one light. The light is named, so a press paints that light and not both. */
@@ -448,10 +573,52 @@
 
 			typed = '';
 			await load();
+
+			// The light somebody just added is the one he wants to look at, so the screen goes to
+			// the tab it landed on rather than leaving it behind a bucket he has to guess. A light
+			// that has never answered has no name yet, and its tab is titled by its address — which
+			// is exactly the light he is looking at.
+			bucket = 'available';
+			selected = light.address;
 		} catch (problem) {
 			addFailed = t('devices.add_refused', { why: describe(problem) });
 		} finally {
 			adding = false;
+		}
+	};
+
+	/**
+	 * Puts one light out of the way, or brings it back.
+	 *
+	 * The route refuses ignoring a light a binding drives, and the button is off in exactly that
+	 * case — but the refusal is still read here, because a light can be bound in another window
+	 * between this screen's read and the press, and a refusal nobody prints is a press that did
+	 * nothing.
+	 *
+	 * After either decision the screen follows the light to the bucket it landed in, so the result
+	 * of the press is in front of the person rather than gone from the tab he was on.
+	 */
+	const setIgnored = async (one: LightFacts, ignored: boolean): Promise<void> => {
+		const light = nameOf(one);
+		const address = addressOf(one);
+
+		busy[light] = true;
+		ignoreSaid[light] = '';
+
+		try {
+			const answer = ignored ? await api.ignoreLight(light) : await api.unignoreLight(light);
+
+			ignoreSaid[light] = answer.note;
+			await load();
+
+			bucket = ignored ? 'ignored' : 'available';
+			selected = address;
+		} catch (problem) {
+			ignoreSaid[light] = t(ignored ? 'devices.ignore_refused' : 'devices.unignore_refused', {
+				why: describe(problem),
+			});
+		} finally {
+			busy[light] = false;
 		}
 	};
 
@@ -821,6 +988,42 @@
 					{/if}
 				</div>
 
+				<!-- Ignoring: offered on a light nothing is bound to, and off with the reason on one a
+				     binding drives — the route refuses that case in the same words, so the button and the
+				     refusal cannot disagree. Un-ignoring is always offered, from the Ignored bucket,
+				     because the way back has to be as easy as the way in. -->
+				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
+					{#if one.ignored}
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={busy[light] === true}
+							onclick={() => void setIgnored(one, false)}
+						>
+							{t('devices.unignore_button')}
+						</Button>
+						<span class="text-[10px] opacity-60">{t('devices.unignore_note')}</span>
+					{:else}
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy[light] === true || one.bindings.length > 0}
+							onclick={() => void setIgnored(one, true)}
+						>
+							{t('devices.ignore_button')}
+						</Button>
+						<span class="text-[10px] opacity-60">
+							{one.bindings.length > 0
+								? t('devices.ignore_bound', { count: one.bindings.length })
+								: t('devices.ignore_note')}
+						</span>
+					{/if}
+				</div>
+
+				{#if (ignoreSaid[light] ?? '') !== ''}
+					<p class="text-[11px]" role="status">{ignoreSaid[light]}</p>
+				{/if}
+
 				<!-- Taking the light off the list. Off while a binding still writes to it, with the
 				     reason beside it, and the route refuses it too if it is called some other way. -->
 				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
@@ -843,43 +1046,87 @@
 			</article>
 	{/snippet}
 
-	<!-- The lights no printer is on, first and under their own band: a light somebody has just
-	     added is the first thing on the screen, and never one card lost among the working ones.
-	     The idiom is Overview's gap list — a bordered block, a band naming the gap with its count,
-	     and the rows inside — so the two screens say "this one isn't doing anything yet" the same
-	     way. The area stays drawn when it is empty and says so in one line, as Overview's does. -->
-	<div class="overflow-hidden rounded border" data-area="unbound">
-		<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-			<span>{t('devices.unbound_heading')}</span>
-			<span class="ml-auto font-normal opacity-60">{t('devices.lights_count', { count: unbound.length })}</span>
-		</div>
-		<p class="border-b px-3 py-2 text-xs opacity-70">{t('devices.unbound_note')}</p>
-		{#if unbound.length === 0}
-			<p class="px-3 py-3 text-sm opacity-70">{t('devices.unbound_none')}</p>
-		{:else}
-			<div class="flex flex-col gap-3 p-3">
-				{#each unbound as one (nameOf(one))}
-					{@render card(one)}
-				{/each}
-			</div>
-		{/if}
-	</div>
+	<!-- The screen, level by level. **Lights** is this page; under it the three buckets; under a
+	     bucket, one tab per light. It replaces two stacked areas of cards, which is what he could not
+	     tell apart: "the page is very overloaded.. hard to clearly see the different between the
+	     lights and such".
 
-	<!-- The lights a printer is on, the same shape, below. -->
-	<div class="overflow-hidden rounded border" data-area="bound">
-		<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-			<span>{t('devices.bound_heading')}</span>
-			<span class="ml-auto font-normal opacity-60">{t('devices.lights_count', { count: bound.length })}</span>
+	     Every strip is `flex-nowrap` inside `overflow-x-auto` and every tab is `shrink-0`: a strip
+	     that grows **scrolls and never wraps**. Nineteen lights in a wrapped strip would rebuild the
+	     overload one level down, and his network answers with about nineteen. -->
+	<div class="overflow-hidden rounded border">
+		<div
+			class="flex flex-nowrap gap-1 overflow-x-auto border-b px-2 py-1"
+			role="tablist"
+			aria-label={t('devices.buckets_label')}
+			data-strip="buckets"
+		>
+			{#each BUCKETS as one (one.id)}
+				{@const count = inBucket(lights.list, one.id).length}
+				<button
+					type="button"
+					role="tab"
+					id={`bucket-${one.id}`}
+					aria-selected={bucket === one.id}
+					aria-controls="bucket-panel"
+					data-bucket-tab={one.id}
+					class={bucket === one.id
+						? 'flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-current px-3 py-1.5 text-sm font-medium'
+						: 'flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-3 py-1.5 text-sm opacity-70 hover:opacity-100'}
+					onclick={() => {
+						bucket = one.id;
+						selected = '';
+					}}
+				>
+					<span>{t(one.key)}</span>
+					<span class="text-xs font-normal opacity-60" data-bucket-count={one.id}>{count}</span>
+				</button>
+			{/each}
 		</div>
-		{#if bound.length === 0}
-			<p class="px-3 py-3 text-sm opacity-70">{t('devices.bound_none')}</p>
-		{:else}
-			<div class="flex flex-col gap-3 p-3">
-				{#each bound as one (nameOf(one))}
-					{@render card(one)}
+
+		<div id="bucket-panel" role="tabpanel" aria-labelledby={`bucket-${bucket}`}>
+			<!-- What this bucket holds, in one line, so no tab has to carry an explanation. -->
+			<p class="border-b px-3 py-2 text-xs opacity-70" data-bucket-note={bucket}>{noteOf(bucket)}</p>
+
+			{#if lightsIn(bucket).length === 0}
+				<p class="px-3 py-4 text-sm opacity-70" data-bucket-empty={bucket}>{emptyOf(bucket)}</p>
+			{:else}
+				<!-- Level three: one tab per light, **keyed by address and labelled by name**. A rename
+				     in WLED changes a word on a tab and never moves the tab, and a light that has never
+				     answered is titled by its address, which is the only name it has. -->
+				<div
+					class="flex flex-nowrap gap-1 overflow-x-auto border-b px-2 py-1"
+					role="tablist"
+					aria-label={t('devices.lights_label')}
+					data-strip="lights"
+				>
+					{#each lightsIn(bucket) as one (addressOf(one))}
+						{@const open = currentIn(bucket)}
+						<button
+							type="button"
+							role="tab"
+							id={`light-${nameOf(one)}`}
+							aria-selected={open !== undefined && addressOf(open) === addressOf(one)}
+							aria-controls="light-panel"
+							data-light-tab={addressOf(one)}
+							title={titledOf(one)}
+							class={open !== undefined && addressOf(open) === addressOf(one)
+								? 'flex shrink-0 items-center whitespace-nowrap rounded-t border-b-2 border-current bg-black/5 px-3 py-1.5 text-sm font-medium dark:bg-white/10'
+								: 'flex shrink-0 items-center whitespace-nowrap rounded-t border-b-2 border-transparent px-3 py-1.5 text-sm opacity-70 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10'}
+							onclick={() => (selected = addressOf(one))}
+						>
+							{titledOf(one)}
+						</button>
+					{/each}
+				</div>
+
+				{#each openIn(bucket) as open (addressOf(open))}
+					<div id="light-panel" role="tabpanel" class="p-3" data-light-panel={addressOf(open)}>
+						{@render card(open)}
+					</div>
 				{/each}
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
 
 	<!-- §2.6's swap, once for the page rather than once per card: there is no replace route, and a

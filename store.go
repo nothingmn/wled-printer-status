@@ -93,7 +93,15 @@ const (
 	// step from 6 is a step with data in it: every address a binding already names becomes a row,
 	// so the lights an install is already driving appear on their own, with the address the
 	// operator wrote and no facts invented (seededLights).
-	storeVersion = 7
+	//
+	// Version 8 is this module's own decision about a light: `ignored` on a light row, written
+	// false on every light an older document holds. A network can answer with nineteen WLED
+	// instances where two matter, and the operator's words were "lights which dont make sense and
+	// i want to push out" — so a light can be kept and left out of every list that offers one,
+	// rather than removed and forgotten. The step from 7 writes the flag as false on every row and
+	// invents nothing else: a version-7 document carries no such key, and the light it describes
+	// was not ignored because there was nothing to ignore it with.
+	storeVersion = 8
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -240,6 +248,25 @@ type storedConfigV6 struct {
 	Moments  []storedMoment     `json:"moments"`
 	Layouts  []storedLayout     `json:"layouts"`
 	Windows  []brightnessWindow `json:"windows"`
+	Pauses   []storedPause      `json:"pauses"`
+}
+
+// storedConfigV7 is the document at schema version 7: everything version 8 holds, with the lights
+// list and no `ignored` flag on a light. Both the step that writes it and the step that reads it
+// use it; nothing else does.
+//
+// It is a type of its own for the reason storedConfigV6 is. The step from 6 writes version 7, and
+// the step from 7 reads it back; if the first wrote the current shape, the second would refuse the
+// document it had just produced — a light row carrying `"ignored": false` is not a version-7 row,
+// and the strict decode is what says so.
+type storedConfigV7 struct {
+	Version  int                `json:"version"`
+	Bindings []json.RawMessage  `json:"bindings"`
+	States   []storedState      `json:"states"`
+	Moments  []storedMoment     `json:"moments"`
+	Layouts  []storedLayout     `json:"layouts"`
+	Windows  []brightnessWindow `json:"windows"`
+	Lights   []storedLightV7    `json:"lights"`
 	Pauses   []storedPause      `json:"pauses"`
 }
 
@@ -514,7 +541,17 @@ var storeUpgrades = []storeUpgrade{
 				return nil, err
 			}
 
-			return json.Marshal(storedConfig{
+			// At version 7 and not at the shape this build writes: the step above this one reads a
+			// version-7 document strictly, and a light row carrying an `ignored` flag is not one.
+			// The rows are converted, not invented — the same addresses, the same facts, the same
+			// order.
+			rows := make([]storedLightV7, 0, len(lights))
+
+			for _, one := range lights {
+				rows = append(rows, one.atVersion7())
+			}
+
+			return json.Marshal(storedConfigV7{
 				Version:  7,
 				Bindings: sixth.Bindings,
 				States:   sixth.States,
@@ -522,6 +559,43 @@ var storeUpgrades = []storeUpgrade{
 				Layouts:  sixth.Layouts,
 				Windows:  sixth.Windows,
 				Pauses:   sixth.Pauses,
+				Lights:   rows,
+			})
+		},
+	},
+	{
+		from: 7,
+		why:  "every light gains the ignored flag, false, so this module can put one out of the way without forgetting it",
+		step: func(raw []byte) ([]byte, error) {
+			// The one thing this step writes is the flag, and it writes it false on every row: a
+			// version-7 document has no such key because version 7's build had no way to ignore a
+			// light, so no light it describes was ignored. Nothing else is touched — the address,
+			// the name the light calls itself, its firmware, its pixels, its shape and the moment it
+			// was read all travel exactly as they were.
+			//
+			// It is written on the row rather than left out to mean false. Absent-means-default is
+			// this store's rule for the tables a person edits, where a default belongs to the code;
+			// this flag belongs to the document, and a person who opens config.json to see why a
+			// light is not on a screen should find the word there.
+			var seventh storedConfigV7
+			if err := decodeStrictly(raw, &seventh); err != nil {
+				return nil, err
+			}
+
+			lights := make([]storedLight, 0, len(seventh.Lights))
+
+			for _, one := range seventh.Lights {
+				lights = append(lights, one.toStored())
+			}
+
+			return json.Marshal(storedConfig{
+				Version:  8,
+				Bindings: seventh.Bindings,
+				States:   seventh.States,
+				Moments:  seventh.Moments,
+				Layouts:  seventh.Layouts,
+				Windows:  seventh.Windows,
+				Pauses:   seventh.Pauses,
 				Lights:   lights,
 			})
 		},

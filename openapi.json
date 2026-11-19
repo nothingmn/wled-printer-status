@@ -469,6 +469,101 @@
         }
       }
     },
+    "/lights/{name}/ignore": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, which is the name GET /lights gives it. http://10.0.0.99 is 10.0.0.99 here.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "post": {
+        "operationId": "ignore-light",
+        "summary": "Put a light out of the way without forgetting it",
+        "description": "Ignores one light: it stays in this module's store and in GET /lights — which is what the Lights screen's Ignored bucket is built from — and it is left out of every list that offers a light to act on: the Overview's lights with no printer, the pickers on Bindings, and this module's own In-Use and Available buckets. It is a decision this module records about a light, and not a change to the light: nothing is written to it and none of the facts it reported are lost. It is refused while a binding still names the light, with the bindings named in the refusal, because a binding is this module's promise to write to that light and a light it is writing to is not one it may hide. The reason it exists at all: a network can answer with roughly nineteen WLED instances where two are wanted, and this is how the other seventeen stop being offered. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light is ignored. It is still on the list, with ignored true.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"$ref": "#/components/schemas/Light"},
+                    "note": {"type": "string", "description": "Where the light went, that nothing was written to it, and how to bring it back."}
+                  },
+                  "required": ["light", "note"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module knows no light of that name (LIGHT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "A binding still names the light, so it cannot be ignored (LIGHT_REFUSED). The refusal names the bindings. Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unignore-light",
+        "summary": "Bring an ignored light back",
+        "description": "Takes the ignored flag off one light, so every list that offers a light offers this one again. It is always allowed, on any light, ignored or not: the way out has to be as easy as the way in, and a light a binding drives is never held out of the UI because it was ignored once. A light that was not ignored answers with its row as it stands rather than refusing, because a second press of bring it back is not a mistake. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light is not ignored. It is on the list, with ignored false.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"$ref": "#/components/schemas/Light"},
+                    "note": {"type": "string", "description": "That the light is offered everywhere again, and that nothing about the light itself changed."}
+                  },
+                  "required": ["light", "note"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module knows no light of that name (LIGHT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/lights/{light}/moments": {
       "parameters": [
         {
@@ -2229,9 +2324,10 @@
           "height": {"type": "integer", "description": "The panel's height in pixels, and zero on a strip."},
           "probed_at": {"type": "string", "description": "When those facts were read, in UTC and RFC 3339. Absent means the light has never answered here — the row a migration writes for every address a binding already names — and a page then shows the address and says the facts have not been read yet."},
           "facts_known": {"type": "boolean", "description": "True when the facts above are the light's own answer. False is a light this module knows of but has not heard from, which is not the same as a light that answered with an empty name."},
+          "ignored": {"type": "boolean", "description": "This module's own decision about the light, and not the light's. An ignored light is kept here and left out of every list that offers a light to act on — the Overview's lights with no printer, the pickers on Bindings, and the Lights screen's In-Use and Available buckets — because the point of it is to push a light out of the way, not to forget it. It stays readable on this route, which is what the Ignored bucket is drawn from, and un-ignoring is always allowed. A light a binding drives is never ignored: POST /lights/{name}/ignore refuses that in words."},
           "note": {"type": "string", "description": "What a card must not leave a reader to assume, when there is something: absent on a light whose facts are known."}
         },
-        "required": ["name", "address", "pixels", "facts_known"]
+        "required": ["name", "address", "pixels", "facts_known", "ignored"]
       },
       "State": {
         "type": "object",

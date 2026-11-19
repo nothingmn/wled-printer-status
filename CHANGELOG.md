@@ -10,6 +10,47 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## Unreleased
+
+The Lights screen is three levels deep — the screen, then **In-Use / Available / Ignored**, then one tab per
+light — and a light can be **ignored**, which keeps it and takes it out of every other list. **The store moves
+to schema 8**, so both halves of the version have to move together in the release that ships this: a 0.4.0
+build refuses a document this one writes, by name.
+
+### Added
+
+- **`POST /lights/{name}/ignore` puts a light out of the way, and `DELETE /lights/{name}/ignore` brings it
+  back.** An ignored light stays in the store and stays on `GET /lights` — with its address, its facts and
+  whether it answers — and it is left out of every list that offers a light to act on: the Overview's *lights
+  with no printer*, the pickers on Bindings, and the Lights screen's own In-Use and Available tabs. Nothing is
+  written to the light, and none of its facts are lost. Bringing one back is always allowed, on any light.
+- **Ignoring a light a binding drives is refused, and the refusal names the bindings.** A binding is this
+  module's promise to write to that light, so a light it is writing to is not one the module may hide. The
+  screen's button is off in exactly that case and says why.
+- **`GET /lights` carries `ignored` on every light.** The flag is the only thing that says a light has been
+  pushed out of the way, and the Ignored list is drawn from this route rather than from a second source.
+
+### Changed
+
+- **The Lights screen is three levels, not one long stack.** *Lights* is the screen; under it **In-Use** (a
+  light with at least one binding), **Available** (known, nothing on it, not ignored) and **Ignored**; and
+  inside a bucket, **one tab per light**. The screen opens on In-Use, and after adding a light or bringing one
+  back it follows the light to the tab it landed on.
+- **A light is a tab of its own, titled with the name it calls itself** — or, for a light that has never
+  answered, with its address. The tab is keyed by the light's address, so renaming a light in WLED changes a
+  word on a tab and never moves it. The card that used to be one of a stack is that tab's whole content:
+  segments, presets, snapshots, the four proved tests, the disclosure and the remove control are all still
+  there.
+- **A tab strip that grows scrolls sideways and never wraps**, because a network can answer with nineteen
+  WLED instances and a wrapped strip would rebuild the crowding the tabs exist to remove.
+- **The Overview's gap list and the Bindings pickers leave ignored lights out**, so a light pushed out of the
+  way is not offered anywhere else in the module.
+
+### Fixed
+
+- **A bucket's explanation and its strip can no longer disagree about which bucket is open**: the panel is
+  drawn from the same bucket as the strip above it.
+
 ## 0.4.0 — 2026-11-19
 
 Nothing about the store, the routes or the manifest's grants changed: this release is screens, copy and

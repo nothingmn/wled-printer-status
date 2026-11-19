@@ -30,7 +30,16 @@
 	import { moduleApi, type BindingRequest, type Frame, type PausedBinding, type Printer } from './api';
 	import { ageText, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
-	import { loadKnownLights, known, lights, addressOf, freeSegments, roomOn, type LightFacts } from './lights.svelte';
+	import {
+		addressOf,
+		freeSegments,
+		known,
+		lights,
+		loadKnownLights,
+		offered,
+		roomOn,
+		type LightFacts,
+	} from './lights.svelte';
 	import {
 		LENGTHS,
 		fateOf,
@@ -142,6 +151,12 @@
 	};
 
 	/**
+	 * Every light this screen may offer, which is every light the module knows except the ones the
+	 * operator has pushed out of the way on the Lights screen.
+	 */
+	const offeredLights = $derived(offered(lights.list));
+
+	/**
 	 * The printers no binding names: §2.1's first gap list, in his own words.
 	 *
 	 * Read from the bindings rather than from a printer's own `bound`, because that field
@@ -150,7 +165,7 @@
 	 */
 	const freePrinters = $derived(
 		printers.filter(
-			(one) => !lights.list.some((light) => light.bindings.some((held) => held.printer === one.id)),
+			(one) => !offeredLights.some((light) => light.bindings.some((held) => held.printer === one.id)),
 		),
 	);
 
@@ -162,8 +177,12 @@
 	 * here. That is the distinction that made the old "0 with room" reading useless: room is
 	 * not the test, a binding is, and a light wearing one printer on one zone is a light
 	 * somebody has already given a job to.
+	 *
+	 * **And a light pushed out of the way is not here either.** `offeredLights` is the one rule for
+	 * "a light this module offers", shared with the Bindings pickers, so ignoring a light on the
+	 * Lights screen takes it out of this list without a second decision being written here.
 	 */
-	const freeLights = $derived(lights.list.filter((one) => one.bindings.length === 0));
+	const freeLights = $derived(offeredLights.filter((one) => one.bindings.length === 0));
 
 	/**
 	 * Whether there is a pair to make, which is when a bind button and the defaults behind it
@@ -544,6 +563,8 @@
 				<p class="px-3 py-3 text-sm" role="alert">{t('overview.lights_unreadable', { why: lights.failure })}</p>
 			{:else if lights.list.length === 0}
 				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_lights')}</p>
+			{:else if offeredLights.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_offered_lights')}</p>
 			{:else if freeLights.length === 0}
 				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_lights')}</p>
 			{:else}

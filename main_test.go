@@ -155,6 +155,7 @@ func TestTheFragmentParses(t *testing.T) {
 		"/lights/{light}/moments",
 		"/lights/{light}/moments/{moment}",
 		"/lights/{name}",
+		"/lights/{name}/ignore",
 		"/pause",
 		"/preview-finished",
 		"/preview-frame",

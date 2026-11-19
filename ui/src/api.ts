@@ -130,6 +130,13 @@ export interface KnownLight {
   probed_at?: string;
   /** True when the facts above are the light's own answer. */
   facts_known: boolean;
+  /**
+   * This module's own decision about the light, and not the light's: an ignored light is kept
+   * here and left out of every list that offers a light to act on. It is on this answer rather
+   * than off the list, because the Lights screen's Ignored bucket is drawn from this list — a
+   * light that vanished from it could not be brought back.
+   */
+  ignored: boolean;
   /** What the card must not leave a reader to assume, when there is something. */
   note?: string;
 }
@@ -811,6 +818,12 @@ const routes = (namespace: string) => {
     listLights: operation('list-lights', 'GET', `${base}/lights`, 'json'),
     addLight: operation('add-light', 'POST', `${base}/lights`, 'json', 'application/json'),
     removeLight: operation('remove-light', 'DELETE', `${base}/lights/{name}`, 'json'),
+
+    // Putting one light out of the way, and bringing it back. Two verbs on one noun, the way the
+    // rest of this surface works: the light is the thing, and the method is the decision. Ignoring
+    // is refused while a binding drives the light; un-ignoring is always allowed.
+    ignoreLight: operation('ignore-light', 'POST', `${base}/lights/{name}/ignore`, 'json'),
+    unignoreLight: operation('unignore-light', 'DELETE', `${base}/lights/{name}/ignore`, 'json'),
     readStatus: operation('read-status', 'GET', `${base}/status`, 'json'),
     listFrames: operation('list-frames', 'GET', `${base}/frames`, 'json'),
 
@@ -942,6 +955,17 @@ export const moduleApi = (host: ModuleHost) => {
         { path: { name } },
         host.signal,
       ),
+
+    /**
+     * Puts one light out of the way: it stays on the list and off every screen that offers a
+     * light. Refused while a binding drives it, and the refusal names the bindings.
+     */
+    ignoreLight: (name: string) =>
+      transport.call<{ light: KnownLight; note: string }>(held.ignoreLight, { path: { name } }, host.signal),
+
+    /** Brings an ignored light back everywhere. Always allowed, on any light. */
+    unignoreLight: (name: string) =>
+      transport.call<{ light: KnownLight; note: string }>(held.unignoreLight, { path: { name } }, host.signal),
 
     readStatus: () => transport.call<StatusBody>(held.readStatus, {}, host.signal),
 

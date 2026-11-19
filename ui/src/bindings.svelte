@@ -62,6 +62,7 @@
 		freeSegments,
 		loadLights,
 		lights,
+		offered,
 		wholeTaker,
 		type LightFacts,
 	} from './lights.svelte';
@@ -142,14 +143,23 @@
 		return { ok: true, said: t('bindings.answered_ago', { age: ageText(t, newest.at) ?? t('common.just_now') }) };
 	};
 
+	/** Every light this screen may offer: known, and not pushed out of the way. */
+	const offeredLights = $derived(offered(lights.list));
+
 	/** The printers Connect knows that nothing shows yet: §2.2's own list. */
 	const unbound = $derived(
-		printers.filter((one) => !lights.list.some((light) => light.bindings.some((held) => held.printer === one.id))),
+		printers.filter((one) => !offeredLights.some((light) => light.bindings.some((held) => held.printer === one.id))),
 	);
 
-	/** The lights a new binding can still go on, which is what the whole-light add needs. */
+	/**
+	 * The lights a new binding can still go on, which is what the whole-light add needs.
+	 *
+	 * `offeredLights` and not `lights.list`: a light pushed out of the way is not offered here,
+	 * which is the same rule the Overview's gap list follows. A light a binding drives is never
+	 * ignored, so nothing this picker could have chosen is removed from it by that rule.
+	 */
 	const withRoom = $derived(
-		lights.list.filter((one) => freeSegments(one).length > 0 || one.bindings.length === 0),
+		offeredLights.filter((one) => freeSegments(one).length > 0 || one.bindings.length === 0),
 	);
 
 	const load = async (): Promise<void> => {
@@ -280,7 +290,7 @@
 			<p class="text-sm opacity-70">{t('bindings.empty_body')}</p>
 		</div>
 	{:else}
-		{#each lights.list as one (addressOf(one))}
+		{#each offeredLights as one (addressOf(one))}
 			{@const reach = reachOf(one)}
 			{@const free = freeSegments(one).length}
 			{@const room = free > 0 || one.bindings.length === 0}

@@ -27,7 +27,36 @@ export interface LightFacts {
 	segmentsUnread: string;
 	/** Every binding on this light, in the operator's order. */
 	bindings: Binding[];
+	/**
+	 * Whether the operator has pushed this light out of the way. It is a decision kept in the
+	 * module's own store, and it is a fact about the light and not about a screen: every list that
+	 * offers a light to act on leaves these out, and the Lights screen keeps them in their own
+	 * bucket so they can be brought back.
+	 */
+	ignored: boolean;
 }
+
+/**
+ * Which of the Lights screen's three buckets one light belongs to, in the order the rule is
+ * decided — and it is decided in that order for a reason.
+ *
+ * **In use wins.** A light a binding drives is in use whatever its flag says, so a flag that
+ * somehow outlived a binding can never hide a light this module is writing to. **Ignored comes
+ * next**, and only for a light with no binding, which is the only kind the route will ignore.
+ * Everything else is **available**: known, nothing on it, and offered everywhere.
+ */
+export type LightBucket = 'in-use' | 'available' | 'ignored';
+
+/** One light's bucket, by the rule above. It is the only place that rule is written. */
+export const bucketOf = (one: LightFacts): LightBucket => {
+	if (one.bindings.length > 0) return 'in-use';
+
+	return one.ignored ? 'ignored' : 'available';
+};
+
+/** The lights in one bucket, in the operator's order. */
+export const inBucket = (list: LightFacts[], bucket: LightBucket): LightFacts[] =>
+	list.filter((one) => bucketOf(one) === bucket);
 
 export const lights = $state<{ list: LightFacts[]; failure: string; loading: boolean; loaded: boolean }>({
 	list: [],
@@ -35,6 +64,20 @@ export const lights = $state<{ list: LightFacts[]; failure: string; loading: boo
 	loading: false,
 	loaded: false,
 });
+
+/**
+ * The lights every other screen may offer: known, and not pushed out of the way.
+ *
+ * One rule, in one place, because "show this light" has to mean the same thing on every screen —
+ * the Overview's lights with no printer, the Bindings pickers, and the Lights screen's own In-Use
+ * and Available buckets. An ignored light is not gone: it is still in `lights.list`, which is what
+ * the Lights screen's Ignored bucket is drawn from, and one call brings it back.
+ *
+ * A function rather than an exported `$derived`: a module cannot export derived state, and this
+ * way each screen derives the list itself and reads `lights.list` inside its own derivation —
+ * which is what makes it reactive in that screen rather than in this file.
+ */
+export const offered = (list: LightFacts[]): LightFacts[] => list.filter((one) => !one.ignored);
 
 /** Reads the lights, their segments and the bindings on them, in that order. */
 export const loadLights = async (): Promise<void> => {
@@ -74,6 +117,9 @@ export const loadLights = async (): Promise<void> => {
 				bindings: set.bindings.filter(
 					(one) => one.light === detail.controller?.name || one.light === named,
 				),
+				// This list is the driven set — GET /controllers is derived from the bindings — so
+				// every light on it is in use, and a light in use is never an ignored one.
+				ignored: false,
 			};
 		});
 
@@ -115,7 +161,7 @@ export const loadKnownLights = async (): Promise<void> => {
 		known.note = all.note;
 
 		const details = await Promise.all(
-			all.lights.map(async (one): Promise<ControllerDetail> => {
+			all.lights.map(async (one, index): Promise<ControllerDetail> => {
 				try {
 					return await api.readController(one.name);
 				} catch (problem) {
@@ -129,7 +175,7 @@ export const loadKnownLights = async (): Promise<void> => {
 			}),
 		);
 
-		lights.list = details.map((detail) => {
+		lights.list = details.map((detail, index) => {
 			const named = lightName(detail.controller?.address ?? '');
 
 			return {
@@ -140,6 +186,11 @@ export const loadKnownLights = async (): Promise<void> => {
 				bindings: set.bindings.filter(
 					(one) => one.light === detail.controller?.name || one.light === named,
 				),
+				// The flag is the store's own row, and `details` is built by mapping `all.lights`
+				// in order — Promise.all keeps the order — so the row for one light is at the same
+				// index as the detail read for it. It is carried rather than derived from the
+				// address so that two spellings of one address cannot disagree about it.
+				ignored: all.lights[index]?.ignored === true,
 			};
 		});
 

@@ -158,8 +158,8 @@ func TestAVersionSixStoreGainsOneLightPerAddressItsBindingsName(t *testing.T) {
 			found.Version, found.Upgraded)
 	}
 
-	if found.Config.Version != 7 {
-		t.Fatalf("the stepped document is at version %d, want 7", found.Config.Version)
+	if found.Config.Version != storeVersion {
+		t.Fatalf("the stepped document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
 	if len(found.Config.Lights) != 2 {
@@ -209,7 +209,7 @@ func TestAVersionSixStoreGainsOneLightPerAddressItsBindingsName(t *testing.T) {
 
 	again, err := loadStore(dir)
 	if err != nil {
-		t.Fatalf("read the document back at version 7: %v", err)
+		t.Fatalf("read the document back at this build's version: %v", err)
 	}
 
 	if again.Upgraded {
@@ -678,5 +678,280 @@ func TestAddingARealLightByItsAddress(t *testing.T) {
 		t.Fatalf("read the store after the refused add: %v", err)
 	} else if len(after.Config.Lights) != 1 {
 		t.Fatalf("the refused second add left %d lights, want the one it had", len(after.Config.Lights))
+	}
+}
+
+// TestIgnoringALightKeepsItOutOfTheWayAndBringingItBackUndoesIt is the third bucket's whole
+// mechanism at the route: a light nothing drives can be put out of the way, the row stays in the
+// store and in GET /lights — which is where the Lights screen builds its Ignored list from — and
+// one call brings it back.
+//
+// The proof that it is a decision the document holds and not the answer of one request is made the
+// way the bindings were: the file on disk is read for the literal, and then handed to a reader that
+// has never seen this process's memory.
+func TestIgnoringALightKeepsItOutOfTheWayAndBringingItBackUndoesIt(t *testing.T) {
+	api := newLightsOverStore(t, nil, storedConfig{
+		Version: storeVersion,
+		Lights: []storedLight{
+			{Address: "http://10.0.0.136", CallsItself: "morpheus", Firmware: "16.0.1", Pixels: 16384, Kind: lightKindPanel, Width: 256, Height: 64, ProbedAt: "2026-11-19T20:00:00Z"},
+			{Address: "http://10.0.0.99", CallsItself: "DamonAward", Firmware: "16.0.1", Pixels: 24, Kind: lightKindStrip, ProbedAt: "2026-11-19T20:00:00Z"},
+		},
+	})
+
+	status, body := api.do(t, http.MethodPost, "/lights/10.0.0.99/ignore", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST /lights/10.0.0.99/ignore answered %d, want 200: %v", status, body)
+	}
+
+	light, ok := body["light"].(map[string]any)
+	if !ok {
+		t.Fatalf("the answer carries no light: %v", body)
+	}
+
+	if light["ignored"] != true || light["address"] != "http://10.0.0.99" {
+		t.Fatalf("the answer reads %v, want the ignored light and its address", light)
+	}
+
+	// The row kept its facts. Ignoring is a decision about a light and not a wipe of it: the
+	// address, the name it calls itself, its firmware and when it was last read all stay, because
+	// the Ignored bucket is the only place a person can find it again.
+	if light["calls_itself"] != "DamonAward" || light["facts_known"] != true {
+		t.Fatalf("ignoring the light threw away what it says about itself: %v", light)
+	}
+
+	if note, _ := body["note"].(string); !strings.Contains(note, "Ignored") || !strings.Contains(note, "DELETE /lights/10.0.0.99/ignore") {
+		t.Fatalf("the note reads %q, want where the light went and how to bring it back", note)
+	}
+
+	// The document itself, read as bytes: the flag is on that light's row and on no other.
+	saved, err := os.ReadFile(storePath(api.dir))
+	if err != nil {
+		t.Fatalf("read the document the route wrote: %v", err)
+	}
+
+	var document struct {
+		Lights []map[string]any `json:"lights"`
+	}
+
+	if err := json.Unmarshal(saved, &document); err != nil {
+		t.Fatalf("the document is not JSON: %v", err)
+	}
+
+	flags := map[string]any{}
+	for _, row := range document.Lights {
+		flags[row["address"].(string)] = row["ignored"]
+	}
+
+	if flags["http://10.0.0.99"] != true {
+		t.Fatalf("the document holds ignored=%v for the light that was ignored, want true: %v", flags["http://10.0.0.99"], saved)
+	}
+
+	if flags["http://10.0.0.136"] != false {
+		t.Fatalf("the document holds ignored=%v for the light nobody ignored, want false", flags["http://10.0.0.136"])
+	}
+
+	// And a reader that has never seen this process's memory, granted the directory the file is in,
+	// reads the flag back. That is what a restart does.
+	fresh := &configTables{}
+	fresh.grant(api.dir)
+
+	reloaded, err := fresh.load()
+	if err != nil {
+		t.Fatalf("a fresh reader was refused the document: %v", err)
+	}
+
+	if len(reloaded.Lights) != 2 {
+		t.Fatalf("the reloaded document holds %d lights, want the two it had", len(reloaded.Lights))
+	}
+
+	found := false
+
+	for _, one := range reloaded.Lights {
+		if one.key() != lightKey("http://10.0.0.99") {
+			if one.Ignored {
+				t.Fatalf("the reload gave the ignored flag to %s, which nobody ignored", one.Address)
+			}
+
+			continue
+		}
+
+		found = true
+
+		if !one.Ignored {
+			t.Fatalf("the reload lost the ignored flag on %s: %+v", one.Address, one)
+		}
+	}
+
+	if !found {
+		t.Fatal("the reload lost the light that was ignored")
+	}
+
+	// The list still carries it, because the Ignored bucket is built from this list: a light that
+	// vanished from GET /lights could not be brought back by any screen.
+	status, body = api.do(t, http.MethodGet, "/lights", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /lights answered %d after an ignore: %v", status, body)
+	}
+
+	listed, _ := body["lights"].([]any)
+	if len(listed) != 2 {
+		t.Fatalf("GET /lights answers %d lights, want both: %v", len(listed), listed)
+	}
+
+	for _, one := range listed {
+		row, _ := one.(map[string]any)
+		if row["address"] == "http://10.0.0.99" && row["ignored"] != true {
+			t.Fatalf("GET /lights does not mark the ignored light: %v", row)
+		}
+	}
+
+	// Bringing it back is always allowed, and it is the same flag with the other value.
+	status, body = api.do(t, http.MethodDelete, "/lights/10.0.0.99/ignore", "")
+	if status != http.StatusOK {
+		t.Fatalf("DELETE /lights/10.0.0.99/ignore answered %d, want 200: %v", status, body)
+	}
+
+	if light, _ := body["light"].(map[string]any); light["ignored"] != false {
+		t.Fatalf("the light that was brought back reads %v, want ignored=false", body["light"])
+	}
+
+	reloaded, err = fresh.load()
+	if err != nil {
+		t.Fatalf("the fresh reader was refused the document after the light came back: %v", err)
+	}
+
+	for _, one := range reloaded.Lights {
+		if one.key() == lightKey("http://10.0.0.99") && one.Ignored {
+			t.Fatalf("the light is still ignored on disk after being brought back: %+v", one)
+		}
+	}
+}
+
+// TestIgnoringALightABindingDrivesIsRefusedWithTheBindingNamed is the rule that makes the flag
+// safe: this module may not hide a light it is writing to. A flag that could would leave every
+// screen with nothing to say about where those writes go.
+func TestIgnoringALightABindingDrivesIsRefusedWithTheBindingNamed(t *testing.T) {
+	const printer = "printer-a"
+	whole := wholeStrip
+
+	api := newLightsOverStore(t, nil, storedConfig{
+		Version: storeVersion,
+		Bindings: []json.RawMessage{rawBinding(t, storedEntry{
+			ID: "office", Printer: printer, Controller: "http://10.0.0.253", Segment: &whole,
+		})},
+		Lights: []storedLight{{Address: "http://10.0.0.253"}},
+	})
+
+	status, body := api.do(t, http.MethodPost, "/lights/10.0.0.253/ignore", "")
+	if status != http.StatusConflict {
+		t.Fatalf("ignoring a light a binding drives answered %d, want 409: %v", status, body)
+	}
+
+	if got := code(t, body); got != LightRefused.Code().String() {
+		t.Fatalf("the refusal carries %q, want %q: %v", got, LightRefused.Code().String(), body)
+	}
+
+	if said := detail(body); !strings.Contains(said, "office") || !strings.Contains(said, "cannot be ignored") {
+		t.Fatalf("the refusal reads %q, want it to name the binding that drives the light", said)
+	}
+
+	held := api.storedLights(t)
+	if len(held) != 1 || held[0].Ignored {
+		t.Fatalf("the refused ignore changed the document: %+v", held)
+	}
+
+	// And bringing it back is never refused, even on a light in use: the way out has to be as
+	// reachable as the way in.
+	status, body = api.do(t, http.MethodDelete, "/lights/10.0.0.253/ignore", "")
+	if status != http.StatusOK {
+		t.Fatalf("DELETE /lights/10.0.0.253/ignore on a light in use answered %d, want 200: %v", status, body)
+	}
+
+	// A name the list does not hold is still a 404, on both verbs.
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		status, body = api.do(t, method, "/lights/10.0.0.99/ignore", "")
+		if status != http.StatusNotFound {
+			t.Fatalf("%s /lights/10.0.0.99/ignore answered %d, want 404: %v", method, status, body)
+		}
+	}
+}
+
+// TestAVersionSevenStoreGainsTheIgnoredFlagIsFalseAndInventsNothingElse is the migration: every
+// light a version-7 document holds comes through with its facts and `ignored` written false.
+func TestAVersionSevenStoreGainsTheIgnoredFlagIsFalseAndInventsNothingElse(t *testing.T) {
+	dir := writeStoreFile(t, `{
+  "version": 7,
+  "bindings": [],
+  "states": [],
+  "moments": [],
+  "layouts": [],
+  "windows": [],
+  "pauses": [],
+  "lights": [
+    {"address": "http://10.0.0.136", "calls_itself": "morpheus", "firmware": "16.0.1", "pixels": 16384, "kind": "panel", "width": 256, "height": 64, "probed_at": "2026-11-19T20:00:00Z"},
+    {"address": "http://10.0.0.253"}
+  ]
+}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 7 document was refused: %v", err)
+	}
+
+	if found.Version != 7 || !found.Upgraded {
+		t.Fatalf("the read says the document carried version %d and upgraded %v, want 7 and true",
+			found.Version, found.Upgraded)
+	}
+
+	if found.Config.Version != 8 {
+		t.Fatalf("the stepped document is at version %d, want 8", found.Config.Version)
+	}
+
+	if len(found.Config.Lights) != 2 {
+		t.Fatalf("the stepped document holds %d lights, want 2", len(found.Config.Lights))
+	}
+
+	for _, one := range found.Config.Lights {
+		if one.Ignored {
+			t.Fatalf("the migration ignored a light nobody ignored: %+v", one)
+		}
+	}
+
+	first := found.Config.Lights[0]
+	if first.CallsItself != "morpheus" || first.Firmware != "16.0.1" || first.Pixels != 16384 ||
+		first.Width != 256 || first.Height != 64 || first.ProbedAt == "" {
+		t.Fatalf("the migration lost what the light said about itself: %+v", first)
+	}
+
+	// Written back, the flag is on every row as a word — not absent, and not left to be guessed.
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the stepped store back: %v", err)
+	}
+
+	saved, err := os.ReadFile(storePath(dir))
+	if err != nil {
+		t.Fatalf("read the document back: %v", err)
+	}
+
+	for _, address := range []string{"http://10.0.0.136", "http://10.0.0.253"} {
+		if !strings.Contains(string(saved), `"address": "`+address+`"`) {
+			t.Fatalf("the written document lost the light at %s: %s", address, saved)
+		}
+	}
+
+	if strings.Count(string(saved), `"ignored": false`) != 2 {
+		t.Fatalf("the written document carries %d ignored flags, want false on both lights: %s",
+			strings.Count(string(saved), `"ignored": false`), saved)
+	}
+
+	// And it reads again without being stepped: a document at this version is this version.
+	again, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("read the document back at this build's version: %v", err)
+	}
+
+	if again.Upgraded || again.Config.Version != storeVersion {
+		t.Fatalf("the document at rest reads version %d and upgraded %v, want %d and false",
+			again.Config.Version, again.Upgraded, storeVersion)
 	}
 }

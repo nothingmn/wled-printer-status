@@ -108,6 +108,69 @@ type storedLight struct {
 	// never answered here — which is the row a migration writes — and a page says so with the age
 	// of its last reading rather than drawing a guess.
 	ProbedAt string `json:"probed_at,omitempty"`
+
+	// Ignored is this module's own decision about the light, and not the light's: it says the
+	// operator does not want this one offered anywhere. The row stays, and the light stays
+	// readable, because "push it out of the way" is not "forget it" — a light ignored by mistake
+	// has to be findable and bringable back.
+	//
+	// It is written on every row rather than left out to mean false: the flag belongs to the
+	// document, and a person opening config.json to see why a light is missing from a screen
+	// should find the word. Schema version 8 introduced it; the upgrade from 7 writes it false on
+	// every light, which is what every light then was.
+	Ignored bool `json:"ignored"`
+
+	// A light cannot be ignored while a binding drives it (lights.go, ignoreLight). That is the
+	// rule that keeps this flag from being able to hide something the module is writing to.
+}
+
+// storedLightV7 is one light as schema version 7 wrote it: the address and what the light said
+// about itself, and no `ignored` flag, because version 7 had no way to put a light out of the way.
+//
+// A type of its own rather than a pointer field, for the reason storedLayoutV3 is: the upgrades
+// decode strictly, and a version-7 row read into the current shape would be the current shape
+// wearing a version it did not have.
+type storedLightV7 struct {
+	Address     string `json:"address"`
+	CallsItself string `json:"calls_itself,omitempty"`
+	Firmware    string `json:"firmware,omitempty"`
+	Pixels      int    `json:"pixels,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	ProbedAt    string `json:"probed_at,omitempty"`
+}
+
+// atVersion7 is this row as version 7 wrote it, for the step from 6 to 7: the same facts and no
+// flag. It is a conversion and not a second row — every field travels unchanged.
+func (l storedLight) atVersion7() storedLightV7 {
+	return storedLightV7{
+		Address:     l.Address,
+		CallsItself: l.CallsItself,
+		Firmware:    l.Firmware,
+		Pixels:      l.Pixels,
+		Kind:        l.Kind,
+		Width:       l.Width,
+		Height:      l.Height,
+		ProbedAt:    l.ProbedAt,
+	}
+}
+
+// toStored is this row at version 8: the same facts, and not ignored. That is the whole of what
+// the step from 7 decides, and it is not an invention — version 7 had no flag, so no light it
+// describes was ignored.
+func (l storedLightV7) toStored() storedLight {
+	return storedLight{
+		Address:     l.Address,
+		CallsItself: l.CallsItself,
+		Firmware:    l.Firmware,
+		Pixels:      l.Pixels,
+		Kind:        l.Kind,
+		Width:       l.Width,
+		Height:      l.Height,
+		ProbedAt:    l.ProbedAt,
+		Ignored:     false,
+	}
 }
 
 // key is this light's identity for the rules that must not see one light twice. It is the same rule
@@ -377,6 +440,12 @@ func (api lightsAPI) mount(mux *http.ServeMux) {
 
 	// A light taken off the list, refused while a binding still drives it.
 	mux.HandleFunc("DELETE /lights/{name}", api.removeLight)
+
+	// A light put out of the way — kept, and left out of every list that offers one — and the
+	// same light brought back. The two verbs are the two decisions, in the shape this surface
+	// already uses: the light is the noun, and what happens to it is the method.
+	mux.HandleFunc("POST /lights/{name}/ignore", api.ignoreLight)
+	mux.HandleFunc("DELETE /lights/{name}/ignore", api.unignoreLight)
 }
 
 // lightAnswer is one light as a caller reads it: its name on these routes, its address, and what it
@@ -406,6 +475,13 @@ type lightAnswer struct {
 	// FactsKnown is true when the facts above are the light's own answer.
 	FactsKnown bool `json:"facts_known"`
 
+	// Ignored is this module's own decision about the light: it is kept here, and left out of
+	// every list that offers a light to act on — the Overview's gap list, the pickers on
+	// Bindings, and the Lights screen's own In-Use and Available buckets. It is on this answer
+	// rather than left out of it, because the Ignored bucket is built from this list: a light
+	// that vanished from GET /lights could not be brought back.
+	Ignored bool `json:"ignored"`
+
 	// Note is the one thing a card must not leave a reader to assume, when there is one.
 	Note string `json:"note,omitempty"`
 }
@@ -423,6 +499,7 @@ func lightAnswerOf(light storedLight) lightAnswer {
 		Height:      light.Height,
 		ProbedAt:    light.ProbedAt,
 		FactsKnown:  light.read(),
+		Ignored:     light.Ignored,
 	}
 
 	if !said.FactsKnown {
@@ -685,6 +762,130 @@ func (api lightsAPI) removeLight(w http.ResponseWriter, r *http.Request) {
 		"note": "The light was taken off the list. Its snapshots are still in this module's data directory, " +
 			"where they are the last copy of a light nobody can read any more.",
 	})
+}
+
+// ignoreLight is POST /lights/{name}/ignore: put one light out of the way without forgetting it.
+//
+// The rule is the refusal, and it is the whole of what makes this safe: **a light a binding drives
+// cannot be ignored.** A binding is this module's promise to write to that light, and a flag that
+// hid it would leave every screen with nothing to say about where those writes are going. So the
+// check runs first, and a light that is in use is refused with the bindings named.
+//
+// What it does instead of refusing is one flag on one row. The light stays in the store, stays
+// readable through GET /lights and on the Lights screen's Ignored bucket, and keeps its address and
+// the age of its last reading — so a light ignored by mistake can be found and brought back
+// (unignoreLight), which is the difference between this and removing it.
+func (api lightsAPI) ignoreLight(w http.ResponseWriter, r *http.Request) {
+	api.setIgnored(w, r, true)
+}
+
+// unignoreLight is DELETE /lights/{name}/ignore: bring one light back everywhere.
+//
+// It is always allowed, on any light, for the reason the rule above exists: the way out has to be
+// as easy as the way in. A light that was not ignored answers with its row as it stands, because a
+// second press of "bring it back" is not a mistake worth a refusal.
+func (api lightsAPI) unignoreLight(w http.ResponseWriter, r *http.Request) {
+	api.setIgnored(w, r, false)
+}
+
+// setIgnored is the one decision the two routes make, and the one write.
+func (api lightsAPI) setIgnored(w http.ResponseWriter, r *http.Request, ignored bool) {
+	if api.tables == nil {
+		refuse(w, r, StoreUnavailable.New(noStoreNote))
+
+		return
+	}
+
+	named := strings.TrimSpace(r.PathValue("name"))
+
+	known, ok := api.tables.knownLightNamed(named)
+	if !ok {
+		refuse(w, r, LightNotFound.New(fmt.Sprintf(
+			"This module knows no light called %q. Read GET /lights for the ones it knows.", named)).
+			With(fault.StringParam("light", named)))
+
+		return
+	}
+
+	// The check that makes the flag safe, and it is only made on the way in: a light already
+	// ignored has no binding — it could not have been ignored if it had — and a light somebody is
+	// bringing back must never be held out of the UI because a binding appeared meanwhile.
+	if ignored {
+		users, err := api.bindingsOn(known)
+		if err != nil {
+			refuse(w, r, StoreUnavailable.New(err.Error()))
+
+			return
+		}
+
+		if len(users) > 0 {
+			refuse(w, r, LightRefused.New(fmt.Sprintf(
+				"%s is shown by %s, so it cannot be ignored: a binding is this module's promise to write to that light, "+
+					"and a light it is writing to is not one it may hide. Delete the binding on the Bindings screen first, "+
+					"and then ignore the light. Nothing was changed.",
+				known.name(), strings.Join(users, ", "))).
+				With(fault.StringParam("light", known.name())))
+
+			return
+		}
+	}
+
+	var kept storedLight
+
+	if _, err := api.tables.revise(func(config *storedConfig) {
+		for i := range config.Lights {
+			if config.Lights[i].key() == known.key() {
+				config.Lights[i].Ignored = ignored
+				kept = config.Lights[i]
+			}
+		}
+	}); err != nil {
+		refuse(w, r, StoreUnavailable.New(fmt.Sprintf(
+			"%s was not %s: %v. Nothing was changed.", known.name(), changedWord(ignored), err)))
+
+		return
+	}
+
+	// The light was taken off the list between the read above and the write: answering with a row
+	// that is no longer there would be a screen drawing a light the list does not hold.
+	if strings.TrimSpace(kept.Address) == "" {
+		refuse(w, r, LightNotFound.New(fmt.Sprintf(
+			"%s was taken off the list before it could be %s. Read GET /lights for the ones it knows.",
+			known.name(), changedWord(ignored))).
+			With(fault.StringParam("light", known.name())))
+
+		return
+	}
+
+	answer(w, http.StatusOK, map[string]any{
+		"light": lightAnswerOf(kept),
+		"note":  ignoredNote(kept, ignored),
+	})
+}
+
+// changedWord is what happened to the light, in the tense the refusals above are written in.
+func changedWord(ignored bool) string {
+	if ignored {
+		return "ignored"
+	}
+
+	return "brought back"
+}
+
+// ignoredNote is what the answer says beyond the row: where the light went, and how to undo it.
+func ignoredNote(light storedLight, ignored bool) string {
+	if !ignored {
+		return fmt.Sprintf(
+			"%s is back on the lights list: every screen that offers a light offers this one again. Nothing about the "+
+				"light itself changed — it was only ever left out of those lists.", light.name())
+	}
+
+	return fmt.Sprintf(
+		"%s is ignored: it stays in this module's store and on the Lights screen's Ignored bucket, with its address "+
+			"and the age of its last reading, and it is left out of every list that offers a light — the Overview's "+
+			"lights with no printer, the pickers on Bindings, and this module's own In-Use and Available buckets. "+
+			"Nothing was written to the light. Bring it back with DELETE /lights/%s/ignore.",
+		light.name(), light.name())
 }
 
 // bindingsOn is the bindings that name one light, in the operator's order, as the refusal above
