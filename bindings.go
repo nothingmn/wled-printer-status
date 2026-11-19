@@ -88,15 +88,19 @@ type bindings []binding
 // read the same job and each draws it for the room it is in. What they must not do is share a
 // segment, and that is the first rule above.
 //
+// An empty set is likewise not a refusal, and that is a requirement too. The manifest declares no
+// options (docs/product-requirements.md §4), so a fresh install is configured with nothing at all:
+// it must start, serve its pages and drive nothing until a light is added there. "Nothing to watch"
+// was a refusal while every install had a settings block to write in; with no such block it would be
+// a module that cannot start until somebody writes a setting the host cannot send. `runner.apply`
+// already says the same thing in its own words: an empty set means this module drives nothing, and
+// the light is left as the last frame found it.
+//
 // One further check is not here, because it needs a fact only the controller has: whether the
 // segments two bindings name really exist. The borrow reads /json/state at start and refuses
 // a segment the device does not report (see writer.borrow), so a set naming segments a controller
 // does not hold writes nothing and says why — which is the same answer, one read later.
 func (bs bindings) check() error {
-	if len(bs) == 0 {
-		return fmt.Errorf("no binding: this module has nothing to watch")
-	}
-
 	claims := make(map[string]*claim, len(bs))
 	named := make(map[string]int, len(bs))
 
@@ -407,13 +411,12 @@ func (bs bindings) with(b binding) bindings {
 	return append(append(bindings(nil), bs...), b)
 }
 
-// bindingSetting is one entry of the `bindings` setting: the shape an operator writes in the
-// one JSON field the manifest can offer.
+// bindingSetting is one entry of the `bindings` setting: one printer on one light, as the
+// migration from 0.1.0's settings reads it and as the editor's routes write it.
 //
-// It exists because a manifest declares nine value shapes — string, int, number, bool,
-// duration, url, secret, list, object — and the settings form draws the last two as a block of
-// JSON in a text area. A list of bindings is therefore the most a setting can be, and this is
-// what one line of it looks like:
+// It is a shape of several fields rather than one of a settings block's single values, so a list
+// of them is what the block carried — one line per printer — and this struct decodes one line at
+// a time, so that a refusal can name the line:
 //
 //	[{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
 //	 {"printer": "Mini",       "controller": "http://10.0.0.136", "segment": 3}]
@@ -548,20 +551,24 @@ func bindingsFrom(ctx context.Context, fleet devices, entries []json.RawMessage)
 
 // wantedBindings is the set one settings block asks for.
 //
-// `bindings` wins over the four settings that came before it, because the manifest still
-// declares them and an install that has been running for a week carries them: an operator who
-// writes a list gets the list, and the single printer the old keys name is not silently added
-// to it or silently left driving. That is said here, in the manifest beside the setting, and in
-// the answer the editor's routes give, rather than left for somebody to work out from two
-// lights on one strip.
+// `bindings` wins over the four settings that came before it, because an install that has been
+// running for a week carries them and its store has to be seeded from what it has: an operator
+// who writes a list gets the list, and the single printer the old keys name is not silently
+// added to it or silently left driving. That is said beside the setting and in the answer the
+// editor's routes give, rather than left for somebody to work out from two lights on one strip.
+//
+// A block that names neither a list nor a controller asks for nothing, and an empty set is what
+// this returns for it. That is the fresh install: the manifest declares no options, so the host
+// sends an empty block, and the module must start (docs/product-requirements.md §4 — "If the
+// host settings are absent, defaults apply"). The set is empty on purpose and legal: the runner
+// builds no writer, the pages answer, and the operator's first light arrives through a route.
 func wantedBindings(ctx context.Context, fleet devices, sent Settings) (bindings, error) {
 	if len(sent.Bindings) > 0 {
 		return bindingsFrom(ctx, fleet, sent.Bindings)
 	}
 
 	if strings.TrimSpace(sent.ControllerAddress) == "" {
-		return nil, fmt.Errorf(
-			"this instance drives nothing: write the bindings setting, which carries one line per printer, or name one controller in controller_address")
+		return nil, nil
 	}
 
 	// The client is built now and contacts nothing until the writer asks it to. wled.New

@@ -140,6 +140,11 @@ is half-installed.
 the host checks every key against the manifest when it starts the module, and a key the manifest does not
 name refuses the start.
 
+**Read §4a before repeating any of this.** Every run in this record up to the 0.2.0 deploy installs a
+manifest that declared those options. The manifest no longer declares any, so the flag now carries nine keys
+the host refuses at start; the table below is what the *old* releases read, and `controller_address` in
+particular is a setting a new install does not have.
+
 | key | what it is here |
 | --- | --- |
 | `message` | the default line; left at the manifest's own words |
@@ -161,6 +166,67 @@ $ cat /tmp/wled-settings.json
 }
 $ docker exec -i prusa_connect sh -c "cat > /config/config.d/wled-settings.json" < /tmp/wled-settings.json
 ```
+
+## 4a. The manifest declares no options — what that changes about installing
+
+`docs/product-requirements.md` §4 keeps the manifest to what the host requires — "name, kind, version,
+platforms, permissions, egress, memory, lifecycle. No `options` carrying the product's data model" — and the
+release after 0.2.0 is the first one whose `module.yaml` is actually in that shape. Four consequences, in the
+order a person installing it meets them.
+
+**1. `-settings` is unnecessary, and with the old file it is fatal.** The flag is optional; leaving it off is
+the install a fresh operator wants. Passing the nine-key file is accepted by `module add` — with no options to
+mask, `resource.Restore` copies the block into the declaration unvalidated — and then the module fails to
+start, because every key in it is one the module does not read:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add github.com/nothingmn/wled-printer-status@0.2.0 \
+    -from /config/config.d/wled-release-<sha> -settings /config/config.d/wled-settings.json -approve
+installed com.github.aux.nothingmn.wled-printer-status/wled-printer-status as sink:wled-printer-status
+…
+# then the instance answers, on its first start:
+#   the config block carries a key this type does not read: "bindings", "brightness", "controller_address",
+#   … . This module's manifest declares no settings
+```
+
+That sentence is the host's, from `moduleSettings` in `internal/app/resourcehost/settings.go`; it is read in
+the host's source rather than provoked on this instance, because provoking it costs the operator a restart of a
+working module. A `-settings` file holding `{}` installs cleanly and does nothing.
+
+**2. Leaving it off empties the declaration's `config:` block, and that is correct.** `keptSettings` keeps a
+stored key only where the new manifest declares it with the same type, so a reinstall over 0.2.0 carries none
+of the nine forward. The store on the data directory is untouched and is what the module starts on.
+
+**3. A fresh install starts with nothing configured, and that is a supported state.** No options means no
+settings block, and the module must not refuse a start for want of something the host cannot send. Proved on
+this tree, against a fresh data directory, with `go test`:
+
+```console
+$ docker run --rm --user $(id -u):$(id -g) -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath \
+    -e CGO_ENABLED=0 -v /home/robchartier/prusa:/work -w /work/wled-printer-status golang:1.26.11 \
+    go test -run TestAFreshInstallStartsOnNoSettingsAndAnEmptyDirectory -count=1 -v
+=== RUN   TestAFreshInstallStartsOnNoSettingsAndAnEmptyDirectory
+--- PASS: TestAFreshInstallStartsOnNoSettingsAndAnEmptyDirectory (0.00s)
+PASS
+```
+
+It asserts the start is not refused, that it runs no binding, that the store is written empty at the current
+schema version, and that the second start reads that store instead of looking for settings again. The line the
+start writes is:
+
+```
+wled-printer-status: nothing is configured and nothing was sent, so this start runs on the defaults this module's code holds: its pages answer, it drives no light, and the first light is added on its own Bindings screen. The configuration store was written empty at <data directory>/config.json, schema version 5
+```
+
+The test asserts that line, so a start that stopped saying it fails the suite rather than quietly changing what
+a person reads in the log.
+
+**4. The manifest's egress had to stop naming a setting.** Both entries used to be `option:
+controller_address`, and the host's manifest parser refuses an `option:` that names a setting the manifest does
+not declare. So the two controllers this module is proven against are written out as `host:` entries, each
+naming both ports a WLED controller answers on. That is the one place this manifest speaks about the
+operator's own network, and a store that names a different controller is a connection the block does not
+describe — recorded as a question against the host's manifest schema rather than hidden.
 
 ## 5. Install it, approved
 

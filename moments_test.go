@@ -331,9 +331,16 @@ func TestAPresetMomentBorrowsTheWholeLightAndPutsItBack(t *testing.T) {
 
 	waitFor(t, "the printing frame", func() bool { return painted(strip, render.ColourPrinting) })
 
+	// The mark is taken before the moment fires and the wait for it after the preset has run:
+	// without that, the clock can move while the writer is still inside the write it just made,
+	// and the deadline it arms afterwards is one the test did not mean. That is this test's
+	// ordering, not the module's behaviour — it failed once inside a full run and never alone.
+	mark := clock.mark()
+
 	run.source.show(snapshotOf(printer.StateFinished, true, false, momentsAt))
 
 	waitFor(t, "the preset to be run", func() bool { return len(strip.ranPresets()) == 1 })
+	clock.waitArmed(t, mark)
 
 	// The moment is over. Everything the preset replaced is written back.
 	clock.Advance(31 * time.Second)

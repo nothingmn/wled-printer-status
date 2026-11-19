@@ -1,6 +1,7 @@
 # The manifest for wled-printer-status: the Go process in main.go, and the browser
-# bundle under ui/. The process is the whole of what runs; the bundle is a settings
-# tab that lists and edits the bindings, and the module runs without it.
+# bundle under ui/. The process is the whole of what runs; the bundle is the module's
+# own pages — Overview, Bindings, Events, Colours, Layout, Devices, Diagnostics — and the
+# module runs without it.
 #
 # `prusa-connect module add` reads it out of the release and writes one
 # declaration from it.
@@ -23,7 +24,7 @@ license: MIT
 # so `GET /api/v1/resources` carries them for an installed module.
 #
 # The summary is one sentence on purpose, and every part of it is true: a colour, a
-# filled bar, and one segment per printer, which is what the binding list below makes
+# filled bar, and one segment per printer, which is what the binding list makes
 # possible. Nothing about an animation, because none exists here yet. The brightness
 # schedule is deliberately not in it either: it changes how bright the light is, not what
 # the light says, and a one-line catalogue entry is about the thing a person installs.
@@ -50,237 +51,53 @@ platforms:
   - darwin_arm64
   - windows_amd64
 
-# Every setting this module reads, each with its type, its default and one
-# sentence saying what it controls. The host applies every default, writes the
-# `config:` block of the instance over it key by key, and sends the result on
-# plugin.configure before the first request arrives. A key not named here is
-# refused before the process starts, and nothing in main.go reads an
-# environment variable, so this list is where an operator finds every knob.
+# There is no `options` block, and its absence is the rule rather than an oversight.
+# docs/product-requirements.md §3 decision 1 and §4: the host's settings pane is not an
+# editing surface for this module. The configuration a person edits — the lights, the
+# moments, the state words, the layout, the brightness windows and a pause — lives in
+# this module's own store, in the data directory the host grants it (`needs.data`
+# below), and is edited through this module's own pages and routes. §4's own words:
 #
-# An operator who wants another line writes:
+#   "The manifest keeps only what the host requires: name, kind, version, platforms,
+#    permissions, egress, memory, lifecycle. No `options` carrying the product's data
+#    model."
 #
-#   resources:
-#     sink:
-#       wled-printer-status:
-#         config:
-#           message: Ready.
-options:
-  - key: message
-    type: string
-    default: "Wled Printer Status is serving."
-    summary: The line GET /wled-printer-status answers with.
-  # Empty when `bindings` is written, which is the setting below that carries several
-  # printers. It is not required for that reason: a required key has no default, the host
-  # refuses to start a module whose required key is missing, and an instance driving two
-  # lights would then have to name a third controller here just to start.
-  - key: controller_address
-    type: string
-    summary: The one WLED controller to drive when `bindings` is empty, as its base URL such as http://10.0.0.136, with no path and no trailing slash.
-  - key: printer
-    type: string
-    summary: The printer to watch, by the server's device id for it or by the name an operator gave it. Empty watches the only printer the instance holds, and refuses to choose between several.
-  - key: brightness
-    type: int
-    default: "128"
-    summary: The brightness written to the controller once at start, 0-255, when the whole strip is driven. This module never changes it afterwards, and writes none at all when a segment is named.
-  # The brightness the light runs at, in two halves: the fixed value above, and a value that follows
-  # the time of day. Both are the operator's own words — "1. Just allow the user to set a fixed
-  # brightness for the printer, never change it" and "2. Based on the time of day" — and the second
-  # half is this key.
-  #
-  # Its type is `list`, which the settings pane draws as a block of JSON in a text area, because a
-  # list is the largest value shape the manifest has. One window per line:
-  #
-  #   [{"from": "20:00", "to": "07:00", "brightness": 40},
-  #    {"from": "09:00", "to": "17:00", "brightness": 200, "days": ["sat", "sun"]}]
-  #
-  # Each line carries:
-  #
-  #   from        when the window opens, as a time of day HH:MM. A window is in force from its
-  #               `from` minute.
-  #   to          when it closes, HH:MM, and the minute it names is already outside it: a window
-  #               written 20:00-07:00 is over at 07:00, not at 07:01. A `to` earlier than `from`
-  #               is a window that wraps midnight, which is the evening window almost everybody
-  #               writes first, and `to` equal to `from` is refused rather than guessed at.
-  #   brightness  what the light runs at inside the window, 0-255. Required: zero is a real answer
-  #               — a light off overnight — so an absent one is refused rather than read as zero.
-  #   days        optional, the days it covers: mon, tue, wed, thu, fri, sat, sun. Absent or empty
-  #               covers every day. A day names the calendar day the moment falls on in `timezone`,
-  #               so a window that wraps midnight with `days: ["fri"]` covers Friday evening to
-  #               midnight and not the small hours of Saturday; name both to have both.
-  #
-  # The windows are read in the order they are written and the first one that contains the moment
-  # decides. Where none does, the fixed `brightness` above stands, so a schedule with a gap in it
-  # behaves exactly like the setting this module has always had, and a light is never left dark
-  # between two windows. Absent or empty, nothing changes at all.
-  #
-  # **A window is judged in `timezone`, never in this process's own clock, and a schedule written
-  # without a zone refuses the start.** The module runs inside the Prusa Connect container, whose
-  # clock is almost always UTC, while an operator in Denver is seven hours behind it and shifts
-  # again for daylight saving: read there, "evening, 20:00-07:00" dims the light at lunchtime and
-  # leaves it bright all evening, and nothing on the instance would say which clock had been read.
-  # A zone that will not load is refused the same way, with the name quoted.
-  #
-  # A line this module cannot act on refuses the start and names the line and the field:
-  # `brightness_schedule[1]: from is "25:00", and a time of day is written HH:MM between 00:00 and
-  # 23:59`.
-  - key: brightness_schedule
-    type: list
-    default: "[]"
-    summary: The brightness to run at through the day, one window per line as a JSON list of objects with from, to and brightness, and optionally days. Empty leaves the fixed brightness standing, and a moment no window covers falls back to it.
-  # The zone a `brightness_schedule` is judged in, as an IANA name such as America/Denver.
-  #
-  # Required whenever a schedule is written, and refused when it is missing rather than defaulted
-  # to the container's own clock: a schedule seven hours out is a light that is wrong every evening
-  # and looks healthy, which is the one failure a settings pane cannot show. A name that will not
-  # load is refused too, with the value quoted, even while no schedule is written yet — a zone
-  # accepted today is a start refused tomorrow, on the save that adds the first window.
-  #
-  # The zone database is compiled into this module's binary, so a name is judged against the IANA
-  # data the release shipped with rather than against whatever the container's image happens to
-  # carry.
-  #
-  #   timezone: America/Denver
-  - key: timezone
-    type: string
-    summary: The zone a brightness_schedule is judged in, as an IANA name such as America/Denver. Required when a schedule is written, and never defaulted to the clock of the process's own container.
-  # The one segment to drive on a controller that carries several. -1 is the whole strip,
-  # which is what this module drove before the setting existed, and it is negative rather
-  # than 0 because segment 0 is a segment an operator may legitimately name.
-  #
-  # Named, the module borrows that segment instead of taking it: it reads the segment's run,
-  # colour, effect and name from the controller once at start, draws inside that run while it
-  # runs, and writes them all back when it stops. Two consequences an operator must read
-  # before naming one:
-  #
-  #   - the controller's own brightness and power are NOT written in this mode, at start or
-  #     afterwards. Both are controller-wide, so writing either would move every segment on
-  #     the controller — dimming a desk light to the brightness meant for a status strip, or
-  #     switching on a light somebody turned off;
-  #   - only the named segment is ever written. A body that carried a second one would be one
-  #     of the operator's own.
-  #
-  # The borrowing is for a strip. On a controller that reports a matrix the setting is
-  # refused rather than applied: a panel is drawn as two rectangles across the whole of it,
-  # and two rectangles on a controller carrying somebody else's segments would be two of
-  # theirs. The module drives nothing there and the log says so.
-  - key: segment
-    type: int
-    default: "-1"
-    summary: The number of the one segment to drive on a multi-segment controller, leaving the controller's other segments, its brightness and its power alone. -1 drives the whole strip, which is what this module has always done.
+# Two consequences a reader should not have to work out for themselves:
+#
+#   - the host sends an empty settings block on plugin.configure, and this module starts
+#     on the defaults its own code holds. It serves its pages, it drives nothing, and the
+#     first light is added on its own Bindings screen. Nothing refuses to start for want
+#     of a setting, because there is no setting to want.
+#   - the host settings are still read once, as a migration source. An instance
+#     installed from a release that did carry them seeds the store from them on its
+#     first start and never reads them again — §4 again. That path exists for the one
+#     upgrade and is not a surface anyone edits.
 
-  # The arrangement of a PANEL — a 2D matrix, not a strip. On a strip a frame is one run of LEDs and
-  # there is nothing to arrange, so this setting is read and unused there (§5.4).
-  #
-  # The operator asked for it in his own words: "we could also show the percentage complete, we could
-  # render the name of the print job itself, and a progress bar", "every X number of seconds to swap
-  # over to the name of the print itself", and "be able to choose what we want displayed, for example
-  # to be able to choose a progress bar, say taking up the TOP OR BOTTOM 1 to X pixels across".
-  #
-  # Its type is `object`, which the settings pane draws as a block of JSON in a text area — the
-  # manifest declares nine value shapes and a block of keys is one of them. Every key is optional and
-  # absent means the default, so the whole setting may be left alone:
-  #
-  #   {"bar": true, "bar_band": "bottom", "bar_rows": 12,
-  #    "percent": true, "name": true, "remaining": false, "rotate_seconds": 15}
-  #
-  #   bar             draw a progress bar in a band of the panel. Default true.
-  #   bar_band        "top" or "bottom" — which end of the panel the band is at. Default "bottom".
-  #   bar_rows        how many rows the band takes, 1 to 48 of a 64-row panel. Default 12, which
-  #                   leaves 52 rows for the text. More than 48 is refused: at least 16 rows must
-  #                   stay for the text, or there is no picture left to read.
-  #   percent         the job's progress in digits, such as 41%, at the largest scale that fits the
-  #                   band and never larger than the word FINISHED. Default true.
-  #   name            the job's own name, on the other half of the rotation. Upper-cased, with the
-  #                   characters the font does not hold turned into spaces, and cut at the last word
-  #                   that fits 21 characters across a 256-wide panel. Default true.
-  #   remaining       time remaining. Default false, and true is REFUSED: this build draws none, and a
-  #                   key that asked for a picture and got silence would be a setting that lies.
-  #   rotate_seconds  how long each half holds the panel. Default 15.
-  #
-  # A key this code does not read refuses the start, and so does a value it cannot act on — a band it
-  # does not know, a bar_rows outside 1 to 48, a rotation of no seconds — with the field and the
-  # value in the sentence the instance shows.
-  #
-  # Every part can be switched off, and a layout with bar, percent and name all false draws nothing of
-  # its own: the panel takes the plain frame it has always had — one colour filling it — which is how
-  # an operator puts his panel back exactly as it was before this setting existed.
-  #
-  # The picture is drawn as pixels this module owns, over DDP, for as long as a print is running (§5.4,
-  # §5.7): a panel cannot be given text any other way, and a light that is already holding a print's
-  # picture is live anyway. A frame that is not about a job in progress — idle, finished, stopped, an
-  # error, a printer that has gone quiet — is the state colour filling the panel, unchanged.
-  - key: layout
-    type: object
-    default: "{}"
-    summary: The arrangement of a panel, as one JSON object with the keys bar, bar_band, bar_rows, percent, name, remaining and rotate_seconds. Empty is the default layout — a twelve-row bar at the bottom, the percentage and the job's name rotating every fifteen seconds — and every part can be switched off, which puts the panel back to the plain frame it had before.
-
-
-  # The printers this module shows, one line each, and the setting to reach for when there is
-  # more than one printer. It wins over the four keys above when it is written: a list is
-  # the only shape that can say "two printers", and half a list beside a controller_address
-  # would be two answers to one question.
-  #
-  # Its type is `list`, which the settings pane draws as a block of JSON in a text area --
-  # the manifest declares nine value shapes and a list of bindings is the largest of them.
-  # Paste one line per printer, and read the refusal if the host will not start the module:
-  # it names the line and the field, such as
-  # "bindings[1]: json: unknown field "controler"".
-  #
-  #   [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
-  #    {"printer": "Mini",       "controller": "http://10.0.0.136", "segment": 3}]
-  #
-  # Each line carries:
-  #
-  #   printer     the printer to watch, by the host's device id or by the name an operator
-  #               gave it. GET /printers on this module lists both, which is where a device
-  #               id comes from: nobody types one. Required. One printer may appear on more
-  #               than one line — a panel in one room and a strip in another — as long as no
-  #               two lines take the same segment of the same controller.
-  #   controller  the WLED controller to drive, as its base URL with no path and no trailing
-  #               slash. Required, and two spellings of one address are one controller.
-  #   segment     the one segment to drive on a controller that carries several. Absent or -1
-  #               drives the whole controller. One segment is driven by one line only, and a
-  #               line naming the whole controller leaves no segment for any other line on it.
-  #   brightness  written once at start, 0-255, and only on a whole-controller line: a
-  #               brightness is controller-wide, so a line that borrows a segment and carries
-  #               one is refused rather than quietly dimming the whole controller. Absent on a
-  #               whole-controller line means 128, which is the default above. With a
-  #               brightness_schedule written it is also the value that stands wherever no
-  #               window covers the moment. A borrowed line never follows the schedule: it
-  #               writes no brightness at all, at start or at a window's edge.
-  #
-  # Two printers on two controllers, three segments of one, or one printer on two lights, is
-  # therefore:
-  #
-  #   [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
-  #    {"printer": "Mini", "controller": "http://10.0.0.253", "segment": 2}]
-  - key: bindings
-    type: list
-    default: "[]"
-    summary: The printers this module shows, one line each, written as a JSON list of objects with a printer key and a controller key. It wins over the four settings above when it is written, and GET /printers on this module lists the printer ids to use.
-
-
-# Every connection this module makes outside Prusa Connect, which the operator
-# reads before they approve the install. Both of them are the controller they
-# named above, on the two ports a WLED controller listens on: HTTP for its
-# state, and UDP for its pixels. They are two entries because they are two
-# connections — the install lists one line each — and the schema here has no
-# field for the protocol, so the port is what tells them apart and the `sends`
-# line says which is which. Both are `option:` entries rather than `host:` ones
-# because the address is typed in rather than one this module could declare — a
-# fixed host here would be a module that can only ever drive one light.
+# Every connection this module makes outside Prusa Connect, which the operator reads
+# before they approve the install: the WLED controllers this module drives, on the two
+# ports such a controller listens on — HTTP for its state, and UDP for its pixels.
+#
+# They are written as addresses because a manifest with no `options` has no setting to
+# name here. `option:` was how this block pointed at the address the operator typed, and
+# the addresses are typed into this module's own store now. So this is the one place the
+# manifest speaks about the operator's own network, and it is worth being plain about
+# what that costs: the two addresses below are the two controllers this release was
+# built and proven against — a 256x64 panel and a strip — and an instance whose store
+# names a different controller is a connection this block does not describe. That gap
+# wants a form in the host's manifest schema for "the host this module keeps in its own
+# store"; it is recorded as a question rather than papered over with a wildcard the
+# schema would refuse.
 egress:
-  - option: controller_address
-    ports: [80]
+  - host: 10.0.0.136
+    ports: [80, 4048]
     from: process
-    why: The module drives the WLED controller the operator names, and a WLED controller answers HTTP on its own port 80.
-    sends: The current status colour and progress, as a WLED state write to /json/state, and — when a print finishes — the body that gives the panel its geometry and the word as the segment's name. No printer data, no credentials, and nothing beyond the controller's own /json endpoints.
-  - option: controller_address
-    ports: [4048]
+    why: The module drives this WLED controller, a 256x64 panel, over the two connections such a controller answers on.
+    sends: The current status colour and progress as a WLED state write to /json/state on port 80, and — when a print runs or finishes — the panel's picture as 16,384 pixels over DDP on port 4048. Raw colour bytes, no printer data, no credentials.
+  - host: 10.0.0.253
+    ports: [80, 4048]
     from: process
-    why: The word a finished print shows is pixels this module draws, and a WLED controller takes pixels over DDP — raw UDP datagrams to port 4048, the buffer it draws instead of its own segments.
-    sends: The finished word as one frame of 16,384 pixels over DDP, pushed again once a second for the minute it holds, and nothing else on that port. Raw colour bytes only — no printer data, no credentials, no document.
+    why: The module drives this WLED controller, a strip, over the two connections such a controller answers on.
+    sends: The current status colour and progress, as a WLED state write to /json/state on port 80 — and, when a print finishes, the word as pixels over DDP on port 4048. Raw colour bytes only, no printer data, no credentials, and nothing beyond the controller's own /json endpoints and its DDP buffer.
 
 # The memory in MiB the server may budget for the process, children included.
 # 32 is a measurement, not a guess.
@@ -300,13 +117,17 @@ egress:
 needs:
   # The module's own configuration lives in a writable directory the host chooses, and the
   # operator approves it here. One small JSON document, versioned from its first commit, holds
-  # the configuration a person edits (store.go). It sits beside the installed module on Connect's
-  # writable config volume, so it survives a restart and an upgrade — and a `module purge` or a
-  # fresh install loses it, which is what the per-light `download a backup` is for.
+  # the configuration a person edits (store.go): the bindings, the moments, the state words,
+  # the layouts, the brightness windows and a pause. It sits beside the installed module on
+  # Connect's writable config volume, so it survives a restart and an upgrade — and a
+  # `module purge` or a fresh install loses it, which is what the per-light
+  # `download a backup` is for.
   #
-  # It is asked for rather than written somewhere else because there is nowhere else: the host's
-  # settings belong to the host and a module has no call that writes them back. A module granted
-  # no directory still runs, from its settings, exactly as it did before this store existed.
+  # It is asked for rather than written somewhere else because there is nowhere else: the
+  # host's settings belong to the host, a module has no call that writes them back, and as of
+  # this release the host's settings are not this module's configuration at all. A module
+  # granted no directory still starts — on the defaults its code holds — and says on its own
+  # screens that it can store nothing.
   data: true
   memory_mib: 32
 
@@ -315,8 +136,8 @@ needs:
 # them into the declaration and grants this module what they name. Write one line
 # per permission saying what it lets this module do.
 #
-# `observe` returned on 2026-11-18, with the reader that uses it: the module now
-# lists one device to turn the `printer` setting into an id, reads that device, and
+# `observe` returned on 2026-11-18, with the reader that uses it: the module
+# lists one device to turn a binding's printer into an id, reads that device, and
 # follows its event stream, and all three are calls it makes as itself with nobody
 # behind them. It was withheld until then because the reader existed in
 # internal/printer and nothing the module served called it, and asking for a grant
@@ -329,16 +150,16 @@ permissions:
 # manifest, and no code in this module emits one. The key comes back with the
 # publisher, the same way `observe` came back with the reader that uses it.
 
-# The browser half: one tab on this module's own page under Settings, Extensions.
+# The browser half: the module's own pages, under Settings, Extensions.
 #
-# It is a convenience and not a requirement. The settings above are the
-# module's whole configuration, the host applies them, and every one of them can
-# be written without this bundle; a person who never opens the tab loses nothing.
-# What the tab adds is everything a text area cannot express: `bindings` is a
-# list of objects, the moment and state tables are tables, and the lights
-# themselves carry segments and presets that belong in a picker rather than in
-# JSON. docs/product-requirements.md §2 is the eight screens behind it, and the
-# tab opens on the first of them.
+# It is a convenience and not a requirement — and it is now the only editing surface.
+# The configuration lives in the store the routes read and write, and these pages are what
+# a person uses to fill it. The manifest's own settings are gone (§4 above), so a text area
+# is not an alternative to this bundle: a person who never opens it loses the editor, not a
+# redundant second one.
+#
+# docs/product-requirements.md §2 names the eight screens; the bundle in ui/src carries the
+# ones built so far, and the tab opens on Overview, the first of them.
 #
 # Three keys and one rule between them:
 #
@@ -361,8 +182,8 @@ permissions:
 # The id stays `bindings`, which is the name this tab had while the bindings list
 # was all it held: it is the name the host records against a registration, and
 # changing it would be changing where the host looks. The title is what a person
-# reads, and it now says what the tab is -- the module's screens -- instead of
-# naming the first thing it ever showed.
+# reads, and it says what the tab is -- the module's screens -- instead of naming
+# the first thing it ever showed.
 #
 # Nothing here adds a permission. The tab speaks only to this module's own routes,
 # on the session the operator already holds, and reads no printer itself.

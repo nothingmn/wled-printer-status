@@ -8,7 +8,6 @@ import (
 	"os"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -80,19 +79,35 @@ func TestAPathThisModuleDoesNotServeIsRefusedByCode(t *testing.T) {
 	}
 }
 
-// TestTheManifestPublishesTheCodesDefault holds module.yaml and this code to
-// one default. An operator reads the manifest to learn what a setting does when
-// they write nothing, so a manifest that publishes a different number than the
-// code uses is documentation that lies.
-func TestTheManifestPublishesTheCodesDefault(t *testing.T) {
-	manifest, err := os.ReadFile("module.yaml")
-	if err != nil {
-		t.Fatalf("read module.yaml: %v", err)
+// TestTheManifestDeclaresNoSettingsAndTheCodeHoldsTheDefaults is §4 held against the file and the
+// file held against the code.
+//
+// The manifest carries no `options`. docs/product-requirements.md §3 decision 1 and §4: the host's
+// settings pane is not this module's editing surface, the store is, and the manifest "keeps only
+// what the host requires". So a fresh install sends an empty settings block — which means the
+// defaults in this file are what that install runs on, and nothing may refuse it for want of a
+// setting the host has no way to send.
+func TestTheManifestDeclaresNoSettingsAndTheCodeHoldsTheDefaults(t *testing.T) {
+	manifest := readManifest(t)
+
+	if strings.Contains(manifest, "\noptions:") {
+		t.Fatal("module.yaml declares an options block, and the host renders a settings pane from it")
 	}
 
-	declared := `default: "` + defaultMessage + `"`
-	if !strings.Contains(string(manifest), declared) {
-		t.Fatalf("module.yaml does not declare %s for the message setting", declared)
+	if keys := settingsKeys(t); len(keys) != 0 {
+		t.Fatalf("module.yaml declares the settings %v, want none: the store owns the configuration", keys)
+	}
+
+	// The fresh install, which is every install now: an empty block, accepted.
+	if err := (Settings{}).validate(); err != nil {
+		t.Fatalf("an empty settings block was refused, and that is what every fresh install sends: %v", err)
+	}
+
+	storeSettings(t, nil)
+
+	if got := settings(); got.Message != defaultMessage || got.Brightness != defaultBrightness || got.Segment != defaultSegment {
+		t.Fatalf("with nothing configured this module runs on %+v, want the message %q, the brightness %d and segment %d",
+			got, defaultMessage, defaultBrightness, defaultSegment)
 	}
 }
 
@@ -156,12 +171,13 @@ func TestTheFragmentParses(t *testing.T) {
 	}
 }
 
-// TestTheSettingsCarryTheDefaultsTheManifestPublishes is the other half of the
-// test above: what the manifest says a setting is worth when nobody writes it, and
-// what this code holds when the host sends nothing, are the same numbers. An
-// operator reads the manifest to learn what happens by default, so the two drifting
-// apart is documentation that lies.
-func TestTheSettingsCarryTheDefaultsTheManifestPublishes(t *testing.T) {
+// TestASettingsBlockReadsBackAsWhateverItCarried is the half of the old manifest test that still
+// has a subject: an install whose settings were the migration source must read them back exactly,
+// because they are what seeds its store.
+//
+// It also holds the segment's default to the shape that keeps segment 0 nameable: negative, so
+// "the whole strip" cannot be confused with the controller's first segment.
+func TestASettingsBlockReadsBackAsWhateverItCarried(t *testing.T) {
 	storeSettings(t, nil)
 
 	if got := settings(); got.Message != defaultMessage || got.Brightness != defaultBrightness {
@@ -173,83 +189,82 @@ func TestTheSettingsCarryTheDefaultsTheManifestPublishes(t *testing.T) {
 
 	if got := settings(); got.Message != "Ready." || got.Brightness != 60 ||
 		got.ControllerAddress != "http://10.0.0.136" {
-		t.Fatalf("the configured settings read back as %+v", got)
+		t.Fatalf("the settings block read back as %+v", got)
 	}
 
-	manifest := readManifest(t)
-	if want := `default: "` + strconv.Itoa(defaultBrightness) + `"`; !strings.Contains(manifest, want) {
-		t.Fatalf("module.yaml does not declare %s for the brightness setting", want)
-	}
-
-	// The segment's default is what says "the whole strip", and an operator reads it in the
-	// manifest rather than in this file.
 	storeSettings(t, nil)
 
 	if fallback := settings(); fallback.Segment != defaultSegment || defaultSegment >= 0 {
 		t.Fatalf("with nothing configured this module drives segment %d, want %d, which is negative so that segment 0 stays nameable",
 			fallback.Segment, defaultSegment)
 	}
-
-	if want := `default: "` + strconv.Itoa(defaultSegment) + `"`; !strings.Contains(manifest, want) {
-		t.Fatalf("module.yaml does not declare %s for the segment setting", want)
-	}
 }
 
-// TestTheManifestDeclaresExactlyTheSettingsTheCodeReads holds the two lists
-// together. A key in the manifest that no field reads is a knob that does nothing; a
-// field with no key in the manifest is a setting the host refuses to send, so the
-// module would never see it.
-func TestTheManifestDeclaresExactlyTheSettingsTheCodeReads(t *testing.T) {
-	declared := settingsKeys(t)
-	read := settingsFields(t)
-
-	if len(declared) == 0 {
-		t.Fatal("module.yaml declares no option at all")
-	}
-
-	sort.Strings(declared)
-	sort.Strings(read)
-
-	if !reflect.DeepEqual(declared, read) {
-		t.Fatalf("module.yaml declares the options %v, and Settings reads %v", declared, read)
-	}
-}
-
-// TestTheEgressEntriesNameTheAddressSetting is what makes the module publishable
-// with a user-supplied address: the connections the operator is asked to approve are
-// the setting they type, not a host this module could have hard-coded.
+// TestTheManifestKeepsOnlyWhatTheHostRequires is §4's list, checked against the file: name, kind,
+// version, platforms, permissions, egress, memory, lifecycle — and the data directory the store
+// lives on, which is what replaced the settings as the place configuration is kept.
 //
-// There are two of them and they are two ports, because the module makes two kinds of
-// connection to the same box: HTTP on 80 for the state, and UDP on 4048 — DDP — for the
-// pixels of the finished word. The manifest schema has no field for the protocol, so the
-// port is what separates them and the `sends` line is where a reviewer reads that the
-// second one is raw colour bytes. A build that pushed pixels while declaring only port 80
-// would be a module whose permissions do not describe what it does, which is a finding.
-func TestTheEgressEntriesNameTheAddressSetting(t *testing.T) {
+// The fields Settings still reads are here on purpose and are not a manifest key: they are the
+// migration source an install from 0.1.0 seeds its store from, and a key the manifest declared
+// would put the settings pane back.
+func TestTheManifestKeepsOnlyWhatTheHostRequires(t *testing.T) {
 	manifest := readManifest(t)
 
-	field, ok := reflect.TypeOf(Settings{}).FieldByName("ControllerAddress")
-	if !ok {
-		t.Fatal("Settings carries no ControllerAddress")
-	}
-
-	key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-
-	for _, want := range []string{"option: " + key, "ports: [80]", "ports: [4048]", "from: process", "DDP"} {
+	for _, want := range []string{
+		"\nname: wled-printer-status",
+		"\nkind: sink",
+		"\nversion: ",
+		"\nplatforms:",
+		"\npermissions:",
+		"\negress:",
+		"\n  memory_mib:",
+		"\nlifecycle:",
+		"\n  data: true",
+		"\nui:",
+	} {
 		if !strings.Contains(manifest, want) {
-			t.Fatalf("module.yaml does not declare %q in its egress entry", want)
+			t.Fatalf("module.yaml does not declare %q, and the host requires it", want)
 		}
 	}
 
-	// Two entries, one per port, each naming the setting rather than a host — and exactly one of
-	// host and option per entry, which is the rule the manifest parser enforces at load: a module
-	// that named both would not load at all.
-	if entries := strings.Count(manifest, "\n  - option: "); entries != 2 {
-		t.Fatalf("module.yaml carries %d egress entries that name an option, want 2: HTTP on 80 and DDP on 4048", entries)
+	if strings.Contains(manifest, "\noptions:") || strings.Contains(manifest, "- key: ") {
+		t.Fatal("module.yaml carries a setting, and a setting is what the store replaced")
 	}
 
-	if entries := strings.Count(manifest, "\n  - host: "); entries != 0 {
-		t.Fatalf("module.yaml carries %d egress entries that name a host, and the address is typed in", entries)
+	// The fields are still read, so the struct is not empty and the migration has something to
+	// read: this is the half that would rot silently if somebody deleted them.
+	if fields := settingsFields(t); len(fields) == 0 {
+		t.Fatal("Settings reads no field at all, and an install from 0.1.0 would migrate nothing")
+	}
+}
+
+// TestTheEgressEntriesNameTheControllersTheModuleDrives keeps the declaration honest about the
+// connections an operator is asked to approve: one entry per controller, each naming both ports a
+// WLED controller answers on — HTTP on 80 for the state, and UDP on 4048, DDP, for the pixels. The
+// schema has no field for the protocol, so the port is what separates them and the `sends` line is
+// where a reviewer reads that the second one is raw colour bytes. A build that pushed pixels while
+// declaring only port 80 would be a module whose published connections do not describe what it
+// does, which is a finding.
+//
+// The entries used to name the setting the address was typed into. A manifest with no options has
+// no setting to name, and the host's parser refuses an `option:` that names a setting the manifest
+// does not declare — so the addresses are written out. That is the one place this manifest speaks
+// about the operator's own network, and the comment beside the block says what it costs.
+func TestTheEgressEntriesNameTheControllersTheModuleDrives(t *testing.T) {
+	manifest := readManifest(t)
+
+	for _, want := range []string{"ports: [80, 4048]", "from: process", "DDP", "/json/state"} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("module.yaml does not declare %q in its egress entries", want)
+		}
+	}
+
+	if entries := strings.Count(manifest, "\n  - host: "); entries != 2 {
+		t.Fatalf("module.yaml carries %d egress entries that name a host, want 2: one per controller", entries)
+	}
+
+	if entries := strings.Count(manifest, "\n  - option: "); entries != 0 {
+		t.Fatalf("module.yaml carries %d egress entries that name an option, and it declares no option", entries)
 	}
 }
 
@@ -285,7 +300,9 @@ func TestTheSettingsRefuseWhatAControllerCannotTake(t *testing.T) {
 		{"an address and a brightness", Settings{ControllerAddress: "http://10.0.0.136", Brightness: 128}, false},
 		{"an address with no scheme", Settings{ControllerAddress: "10.0.0.136", Brightness: 128}, true},
 		{"an address that is not a URL", Settings{ControllerAddress: "not a url at all", Brightness: 128}, true},
-		{"an empty address", Settings{Brightness: 128}, true},
+		// An empty address with no bindings is nothing configured at all, which is every fresh
+		// install now that the manifest declares no options. It is refused by nothing.
+		{"nothing configured at all", Settings{}, false},
 		{"a brightness above the controller's range", Settings{ControllerAddress: "http://10.0.0.136", Brightness: 256}, true},
 		{"a negative brightness", Settings{ControllerAddress: "http://10.0.0.136", Brightness: -1}, true},
 		{"the darkest brightness a controller takes", Settings{ControllerAddress: "http://10.0.0.136"}, false},
@@ -307,6 +324,63 @@ func TestTheSettingsRefuseWhatAControllerCannotTake(t *testing.T) {
 				t.Fatalf("usable settings were refused: %v", err)
 			}
 		})
+	}
+}
+
+// TestAFreshInstallStartsOnNoSettingsAndAnEmptyDirectory is the case that matters for a new user,
+// and the one the manifest's missing options create: an empty settings block, a data directory
+// with nothing in it, and a module that has to come up anyway.
+//
+// It must not be refused — there is no settings pane to write a light into, so a refusal would be
+// a module nobody can start. What it runs is an empty set; the store is written empty, which is
+// what records the migration as done; and the next start reads that store instead of looking for
+// settings again. The light itself arrives through a route, on the module's own pages.
+func TestAFreshInstallStartsOnNoSettingsAndAnEmptyDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	fleet := fakeFleet{page: deviceapi.Page{
+		Items: []deviceapi.Device{{ID: "printer-a", Name: "Hermes MK4"}},
+		Total: 1,
+	}}
+
+	var written logLines
+
+	set, origin, err := configurationFor(context.Background(), fleet, Settings{}, dir, written.logf)
+	if err != nil {
+		t.Fatalf("a fresh install with no settings was refused, and every fresh install has none: %v", err)
+	}
+
+	// The line the start writes is what a person reading the module's log has to go on: it must say
+	// that nothing is configured, that the store was written empty, and where.
+	if written.count("nothing is configured") != 1 || written.count("written empty at "+storePath(dir)) != 1 {
+		t.Fatalf("the start did not say what it did: %q", written.all())
+	}
+
+	if len(set) != 0 {
+		t.Fatalf("a fresh install runs %+v, want nothing configured", set)
+	}
+
+	if origin != originNothing {
+		t.Fatalf("a fresh install says its set came from %q, want %q", origin, originNothing)
+	}
+
+	stored := storedRaw(t, dir)
+
+	if version, _ := stored["version"].(float64); int(version) != storeVersion {
+		t.Fatalf("the store a fresh start wrote carries version %v, want %d", stored["version"], storeVersion)
+	}
+
+	if lines, _ := stored["bindings"].([]any); len(lines) != 0 {
+		t.Fatalf("the store a fresh start wrote holds %v bindings, want none", stored["bindings"])
+	}
+
+	again, againOrigin, err := configurationFor(context.Background(), fleet, Settings{}, dir, quiet)
+	if err != nil {
+		t.Fatalf("the second start of a fresh install was refused: %v", err)
+	}
+
+	if len(again) != 0 || againOrigin != originStore {
+		t.Fatalf("the second start runs %+v from %q, want nothing from the store", again, againOrigin)
 	}
 }
 

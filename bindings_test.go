@@ -40,9 +40,12 @@ func TestBindingsHoldTheOperatorsRules(t *testing.T) {
 			},
 		},
 		{
-			name: "nothing to watch",
+			// A fresh install of a manifest with no options: nothing configured at all. It is not
+			// a refusal — there is no settings block to write a light into, so a module that
+			// refused this would be one a new user could never start. It drives nothing and its
+			// own pages are where the first light arrives.
+			name: "nothing configured at all",
 			set:  bindings{},
-			want: "nothing to watch",
 		},
 		{
 			// docs/product-requirements.md §2.2: "A printer may sit on several lights — multi-room

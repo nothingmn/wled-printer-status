@@ -391,6 +391,10 @@ func (w *writer) holdWord(ctx context.Context, wanted show) error {
 // segments (pixels.go has the measurement). A repeat that fails is one line and the hold continues,
 // on the same rule the finished word's repeats keep: the frame after the hold is where a dead
 // controller is reported, not forty lines during it.
+//
+// It is recorded as a write by republish, which is what makes /status's last write true while a
+// state carries a word for an hour: the panel is being written every second, so the age a person
+// reads beside it must be seconds.
 func (w *writer) repushWord() error {
 	if err := w.republish(w.spoken); err != nil {
 		if w.spoken.pushFails == 0 {

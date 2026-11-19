@@ -678,6 +678,11 @@ func (w *writer) run(ctx context.Context) {
 					// continues: the picture may still be on the panel, and a controller that
 					// has stopped taking datagrams is reported by the frame that follows this
 					// hold rather than by forty lines during it.
+					//
+					// A repeat is a write to the light and is recorded as one. That is what makes
+					// /status's last_send an age a person can read as a write age: a minute-long
+					// hold used to leave the field standing at the instant the hold began, so the
+					// panel read "17 minutes ago" while it was being written every second.
 					if err := w.republish(w.held); err != nil {
 						if ctx.Err() != nil {
 							return
@@ -838,7 +843,12 @@ func (w *writer) run(ctx context.Context) {
 
 				picture.at = w.now()
 
-				if err := w.repeatComposed(picture); err != nil {
+				// Recorded, for the same reason the event's repeat is: this is a write to the
+				// light, once a second, for as long as the print runs, and a last_send that
+				// skipped it would stand at the moment the picture was first established — which
+				// is the "4 minutes ago" a panel showed during a print while the strip beside it
+				// read twenty-six seconds.
+				if err := w.report(func() error { return w.repeatComposed(picture) }); err != nil {
 					if ctx.Err() != nil {
 						return
 					}
@@ -878,10 +888,12 @@ func (w *writer) run(ctx context.Context) {
 		// The other direction: a frame that is about a job, on a panel whose layout draws
 		// something. The picture is painted once through the event's own painter — the
 		// establishing body, the pixels and the one read that says the controller took them —
-		// and then repeated, rather than painted again, for as long as it is the picture. Its one
-		// writing is recorded for /status; the once-a-second repeats are not, on the same rule the
-		// event's repeats keep: a field that ticks every second buries the transition it was read
-		// for.
+		// and then repeated, rather than painted again, for as long as it is the picture.
+		//
+		// Every one of those writes is recorded for /status, the establishing one and each
+		// repeat: last_send answers "when did this module last write to this light", and the
+		// repeats are writes. Leaving them out made the field a change-age wearing a write-age
+		// label, which is how a panel being written every second came to report four minutes.
 		if frame != nil && w.composed == nil && w.drawablePanel(*frame) {
 			picture := w.pictureOf(*frame)
 

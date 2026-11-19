@@ -223,8 +223,26 @@ rollback to `0.1.0` needs no older document.
   the pause ends). A light that does not answer is a `503 IDENTIFY_UNREACHABLE` with nothing written,
   rather than a call the host gives up on.
 
+### Changed
+
+- **`module.yaml` declares no options.** The host's settings pane is gone from this module's page, which
+  now offers the module's own tab and nothing stale beside it: the lights, the moments, the state words, the
+  layout, the brightness windows and a pause are edited on the module's own screens and kept in its own
+  store, as the requirements said they should be. An install from a release that did carry the nine settings
+  is migrated from them once, on its first start; a fresh install starts on the module's own defaults, drives
+  nothing, and its first light is added on the Bindings screen. `module add` no longer needs `-settings`, and
+  passing the old settings file now fails the start — every key in it is one the module does not read.
+- The manifest's two declared connections name the controllers rather than a setting: with no `options`
+  there is no setting left for them to name. Read the note in `module.yaml` before pointing this at a third
+  light.
+
 ### Fixed
 
+- The **last write** on the diagnostics and overview screens is now the age of the last write, on a panel as
+  well as on a strip. A panel holding a print's picture, or a word a state carries, is written once a second
+  to keep it in the firmware's live mode — and those writes were not being recorded, so the age stood at the
+  moment the picture was first put up: measured at **17 minutes** on a panel being written every second,
+  while the strip beside it read 9 to 56 seconds and both readings were under a second old.
 - A state's word now hands the light back to its steady picture in the same pass its hold runs out. Before
   this, a light carrying a word set on a state that was already showing could go **black** the moment the
   hold expired — the panel's own establishing body, with the word's name still on the segment — and stay

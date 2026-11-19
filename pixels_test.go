@@ -482,6 +482,62 @@ func TestTheWordIsPushedAgainOnceASecondForAsLongAsItHolds(t *testing.T) {
 	waitFor(t, "the pixel socket to be released when the writer stops", pushed.isClosed)
 }
 
+// TestAHeldWordsRepeatsAreRecordedAsWrites is the same defect on the other transport path: a state
+// table's word can hold a panel for an hour, and the panel is written once a second for as long as
+// it does.
+//
+// The repeats are what keep the firmware in realtime, so they are writes; leaving them out of the
+// record made /status report the age of the moment the word went up. A person reading "last write:
+// 40 minutes" beside a panel being written every second is being told something false about a
+// light that is answering.
+func TestAHeldWordsRepeatsAreRecordedAsWrites(t *testing.T) {
+	strip := newPanelStrip()
+
+	clock := newFakeClock(time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC))
+	pen := newWriter(strip, 128, quiet)
+	pen.setPanel(strip.info)
+	clock.watch(pen)
+
+	pushed := pushInto(pen)
+
+	sent.Store(nil)
+	t.Cleanup(func() { sent.Store(nil) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pen.run(ctx)
+
+	steady := render.Frame{Colour: render.ColourFinished, Total: 16384, Reason: render.ReasonNoLiveJob}
+
+	pen.submit(steady)
+	strip.waitForPaints(t, 1)
+	clock.waitArmed(t, 0)
+
+	pen.fire(finishedWordEvent())
+
+	waitFor(t, "the word's first frame to reach the transport", func() bool { return pushed.pushed() == 1 })
+
+	established := sent.Load()
+	if established == nil || !established.OK {
+		t.Fatalf("the write that put the word up was recorded as %+v, want a taken write", established)
+	}
+
+	mark := clock.mark()
+	clock.Advance(pixelRepeat)
+	clock.waitArmed(t, mark)
+
+	waitFor(t, "the repeat to be recorded as a write", func() bool {
+		last := sent.Load()
+
+		return last != nil && last.At != established.At
+	})
+
+	if last := sent.Load(); !last.OK {
+		t.Fatalf("the repeat was recorded as a failed write: %+v", last)
+	}
+}
+
 // TestTheHandBackReleasesRealtimeAndTheSteadyFrameTakesTheLightBack is the other half of the
 // transport: what proves the light was let go.
 //

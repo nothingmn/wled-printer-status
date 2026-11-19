@@ -84,10 +84,28 @@ wave used and is worth copying:
 at start):
 
 ```bash
-docker exec prusa_connect /prusa_connect module add github.com/nothingmn/wled-printer-status@0.1.0 \
-  -from /config/config.d/wled-release-<sha> -settings /config/config.d/wled-settings.json -approve
+docker exec prusa_connect /prusa_connect module add github.com/nothingmn/wled-printer-status@0.2.0 \
+  -from /config/config.d/wled-release-<sha> -approve
 docker restart prusa_connect
 ```
+
+**`-settings` must not be passed with the old settings file any more, and this is not a style note.** The
+manifest declares no options (`docs/product-requirements.md` §4), so a settings block is a block of keys the
+module does not read, and the host refuses the start:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add … -settings /config/config.d/wled-settings.json -approve
+# install succeeds, the block is written into the declaration verbatim, and the instance then fails:
+#   the config block carries a key this type does not read: "bindings", "brightness", … . This module's
+#   manifest declares no settings
+```
+
+Measured in the host's own source, not on the instance — `moduleSettings` in
+`internal/app/resourcehost/settings.go` refuses any non-empty block when the manifest declares no options, and
+`keptSettings`/`resource.Restore` copy a block through unvalidated when there are no options to mask. Leave the
+flag off: an install with no settings keeps only the keys the manifest declares (none), so the declaration's
+`config:` block is emptied and the module starts on its own defaults and its store. `-settings` with a file
+holding `{}` is equally safe, and is worth nothing.
 
 The same version has now been accepted four times; the host compares the manifest string to the child's
 own `extension.Version("0.1.0")` exactly, so a version bump is a decision, not a detail.
@@ -246,11 +264,20 @@ Each cost real time to learn; none should be re-derived.
   literal 100 % clone is impossible.
 - **A prerelease version cannot install.** `0.1.0-beta.1` parses, installs and never starts. The beta is
   expressed by a GitHub **pre-release** on the same `0.1.0`.
-- **The Connect host renders nothing from a module's OpenAPI**, and a module page's settings are nine
-  closed types with no enum and no colour. This is why the product needs its own UI.
+- **The Connect host renders nothing from a module's OpenAPI**, and the settings pane it used to render for
+  this module was nine closed types with no enum and no colour. This is why the product needs its own UI —
+  and as of this release the manifest declares no options at all, so the pane is gone from the module's page
+  and the store is the only editing surface (§4).
 - **A word's `set_at` is what makes a word on a long-running state visible.** The hold runs from the later
   of the state's entry and the write, and the write's instant is kept in the store — measured at schema 5:
   `{"state":"FINISHED","word":"QA","holds":"30s","set_at":"2026-11-19T12:24:33.160940222Z"}`.
+- **`last_send` was a change-age wearing a write-age label on the pixel transport.** Measured on 2026-11-19
+  while a print ran: the panel's `last_send` read `948.5s` and climbed by exactly the wall clock (`950.2`,
+  `965.3`, … `1055.5`), while the strip beside it cycled `9.3 → 56.5 → 11.5 s` and both readings were
+  `0.4 s` old. The composed picture, and a hold's word, push once a second to keep the firmware in
+  realtime; those pushes are writes and none of them were recorded, so the field stood at the instant the
+  picture was established. `repeatComposed`, `republish` and the event/hold repeats now go through
+  `report`, which is where every other write is recorded.
 - **A test that stamps a fixture with a fixed noon and lets the writer keep `time.Now` is a time bomb.**
   `TestAPauseOnABorrowedZoneHandsItBackAndPowersNothingOff` passed all morning and failed every run after
   12:10 UTC, because its pause had silently expired; the writers a pause test builds must be given

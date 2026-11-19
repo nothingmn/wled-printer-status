@@ -17,9 +17,15 @@ const (
 
 	// originStore is the set this module read out of its own configuration store. It is a
 	// separate answer from the settings on purpose: the settings were the migration source, the
-	// store is what runs, and an operator who edits the settings pane afterwards has to be able
-	// to read that his edit is not what the light is showing.
+	// store is what runs, and an answer that named the settings for a set the settings no longer
+	// produce would be the first thing anyone debugging a stale light got wrong.
 	originStore = "this module's own configuration store, which the settings seeded once and do not change again"
+
+	// originNothing is the answer for an instance that was given no configuration at all, which
+	// is what a fresh install of this manifest is: no options to send, no store yet, and a start
+	// on the defaults the code holds. The store is written empty in the same breath, so the pages
+	// that add the first light are the ones that fill it.
+	originNothing = "nothing yet: no light is configured, and this module is running on the defaults its code holds"
 )
 
 // runner owns the one watch this process runs, and the set of bindings it was built from.
@@ -369,7 +375,7 @@ func (r *runner) stopLocked() {
 // build starts one watch on one set and returns its stop and its completion channel.
 //
 // A set of one publishes into the store /status has always read, which is what keeps an
-// install configured in the settings pane answering exactly the body it has always answered.
+// install built from settings answering exactly the body it has always answered.
 // A set of several publishes per binding, because one body cannot say which of two lights its
 // frame describes and a route that answered for whichever binding wrote last would be a route
 // that lies.

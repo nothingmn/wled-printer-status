@@ -236,6 +236,12 @@ func (api framesAPI) listFrames(w http.ResponseWriter, r *http.Request) {
 	// binding's own name, which the running set has.
 	seen := current.Load()
 	if seen == nil || len(set) != 1 {
+		if len(set) == 0 {
+			refuse(w, r, NoReadingYet.New(drivingNothing))
+
+			return
+		}
+
 		refuse(w, r, NoReadingYet.New(
 			"this module has not decided a frame yet: it answers this once it has taken its first reading"))
 

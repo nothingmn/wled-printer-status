@@ -40,18 +40,25 @@
 //
 // # Settings
 //
-// module.yaml declares every setting this module reads, each with its type, its
-// default and one sentence saying what it controls. The host merges the
-// operator's config block over those defaults and sends the result on
-// plugin.configure before the first request arrives. Nothing here reads an
-// environment variable: a setting an operator cannot see in the manifest is a
-// setting nobody can find.
+// module.yaml declares no settings, and that is docs/product-requirements.md §3 decision 1
+// and §4: the host's settings pane is not this module's editing surface, and the manifest
+// "keeps only what the host requires". The configuration a person edits — the lights, the
+// moments, the state words, the layout, the brightness windows and a pause — lives in this
+// module's own store on the data directory the host grants it (store.go), and is edited
+// through this module's own pages and routes.
+//
+// The keys below are therefore not a surface anybody edits. A start still reads them, for
+// two reasons and no third: an instance installed from a release that did carry them seeds
+// its store from them once and never reads them again, and a module granted no directory has
+// nowhere else to keep anything. With no settings sent at all — which is every fresh install
+// — the defaults this file holds apply and the module starts on them: it serves its pages,
+// it drives nothing, and the first light is added on its own screen. Nothing refuses to
+// start for want of a setting. Nothing here reads an environment variable either.
 //
 //	message             the line GET /wled-printer-status answers with
 //	bindings            one line per printer: the printer, its controller, and the segment it is shown
 //	                    on. Written, it wins over the four settings below
-//	controller_address  the one WLED controller to drive when bindings is empty; the manifest's egress
-//	                    entry names this setting
+//	controller_address  the one WLED controller to drive when bindings is empty
 //	printer             which printer to watch then, by device id or by name; empty takes the only one
 //	brightness          the brightness written once at start, 0-255, when the whole strip is driven
 //	brightness_schedule one window per line: a span of the day and the brightness to run at inside it.
@@ -123,26 +130,24 @@ const (
 
 const (
 	// defaultMessage is the line the route answers with when the operator sets
-	// nothing. It is the default of the `message` setting in module.yaml, and the
-	// two are the same words on purpose: what the manifest publishes is what this
-	// code does when nobody overrides it. TestTheManifestPublishesTheCodesDefault
-	// holds them together.
+	// nothing. It is what a start with no settings runs on, because the manifest declares no
+	// option to carry it: a fresh install sends nothing and this is the default that applies.
+	// TestAFreshInstallStartsOnTheDefaultsTheCodeHolds holds the two ends together.
 	defaultMessage = "Wled Printer Status is serving."
 
-	// defaultBrightness is the brightness this module writes when the operator
-	// sets none, and it is the default of the `brightness` setting in module.yaml
-	// for the same reason as defaultMessage. Half of the controller's range is
-	// bright enough to read across a room and is where WLED itself starts, so it is
-	// the number an operator who wrote nothing already expects.
+	// defaultBrightness is the brightness this module writes when nothing names one, and it is
+	// what a binding written without a brightness gets (bindingSetting.brightness). Half of the
+	// controller's range is bright enough to read across a room and is where WLED itself starts,
+	// so it is the number an operator who wrote nothing already expects.
 	defaultBrightness = 128
 
-	// defaultSegment is the `segment` setting's default, and it means "the whole
+	// defaultSegment is what a binding's segment means when none is named, and it is "the whole
 	// strip", which is what this module drove before there was a setting at all.
 	//
 	// It is negative rather than absent because zero is a segment an operator may
 	// name: a controller's first segment is segment 0, and a default of 0 would make
-	// "drive the whole strip" impossible to say. It is written out in module.yaml too,
-	// because the host applies that default and an operator reads it there.
+	// "drive the whole strip" impossible to say. It is the zero value's meaning in
+	// bindingSetting.segment, and the migration source for a store written by 0.1.0.
 	defaultSegment = -1
 
 	// shutdownGrace bounds how long a stop waits for the writer to give a borrowed
@@ -159,22 +164,30 @@ const (
 	resolveTimeout = 10 * time.Second
 )
 
-// Settings is what an operator writes under this instance's config block. The
-// host merges it over the defaults module.yaml declares and sends the result on
-// plugin.configure. A key this struct does not carry refuses the start, so a
-// typo is found before a request is.
+// Settings is what a start reads out of a settings block. The host sends whatever its
+// declaration carries on plugin.configure, and this struct is the whole of what this module
+// understands: a key it does not carry refuses the start, so a typo is found before a request
+// is.
+//
+// The manifest declares no options (see the package comment), so on a fresh install the block
+// is empty and every field here is zero. Those zeroes are not the defaults an operator gets:
+// validate and configure read them the way the paragraphs below describe, and the defaults the
+// code holds — defaultMessage, defaultBrightness, defaultSegment, the default layout — are what
+// a start with nothing configured runs on. The fields exist for the migration §4 describes and
+// for an install granted no data directory.
 type Settings struct {
 	// Message is the line GET /wled-printer-status answers with.
 	Message string `json:"message"`
 
 	// ControllerAddress is the one WLED controller this module drives when no `bindings`
-	// list is written, as its base URL: http://10.0.0.136, no path. The manifest's egress
-	// entry names this key, because the host it connects to is one the operator types
-	// rather than one this module could declare.
+	// list is written, as its base URL: http://10.0.0.136, no path.
 	//
 	// It is empty and unused when `bindings` is written, which is how one instance drives
 	// several printers on several controllers: an address and a printer are two settings,
-	// and two settings cannot carry two of anything.
+	// and two settings cannot carry two of anything. It is also empty on a fresh install,
+	// because the manifest declares no options to carry it: this field is part of the
+	// migration a 0.1.0 install's settings seed a store from, and of the one-binding path a
+	// module with no data directory still runs.
 	ControllerAddress string `json:"controller_address"`
 
 	// Printer is the printer to watch when no `bindings` list is written, either the host's
@@ -214,9 +227,9 @@ type Settings struct {
 	// Layout is the operator's arrangement of a panel: a progress bar in a band at the top or the
 	// bottom, the percentage in digits, and the job's name on the other half of a rotation.
 	//
-	// It is raw JSON for the reason Bindings is — a `list` or an `object` is the only shape a
-	// manifest can offer for a block of settings, and the settings pane draws one as a one-line
-	// JSON box (AGENTS.md §5.8). Absent or `{}` is the default layout: a bar at the bottom twelve
+	// It is raw JSON for the reason Bindings is — a block of keys has no other single value
+	// shape, and the one surface this was ever written through drew it as a line of JSON.
+	// Absent or `{}` is the default layout: a bar at the bottom twelve
 	// rows thick, the percentage and the name rotating every fifteen seconds. Every part can be
 	// switched off, and a layout with everything off puts the panel back exactly as it was before
 	// this setting existed.
@@ -246,9 +259,8 @@ type Settings struct {
 	// "bindings[2]: json: unknown field ..." instead of making a person count lines in a text
 	// area.
 	//
-	// A `list` is the only shape a manifest can offer for this — the settings form draws a
-	// list and an object as a block of JSON in a text area — and the manifest's declaration of
-	// this key says so in the words an operator reads.
+	// A `list` is the only shape a setting can carry several of anything in, which is why the
+	// migration this key is the source of reads one line per printer.
 	Bindings []json.RawMessage `json:"bindings"`
 }
 
@@ -285,9 +297,18 @@ func (s Settings) validate() error {
 		return err
 	}
 
+	// Nothing written is legal, and as of the release that took the options out of the
+	// manifest it is the ordinary case: a fresh install sends an empty block, starts on the
+	// defaults this file holds, serves its pages, and drives nothing until a light is added on
+	// its own screen. A refusal here would be a module that cannot start until somebody writes
+	// a setting the host has no way to send — which is the chicken and egg that made this a
+	// refusal while the manifest still offered a settings pane.
+	//
+	// Nothing below is judged in this case, and that is deliberate: brightness and segment are
+	// read only by the one binding the four old keys describe, and refusing a stale brightness
+	// in a key nothing reads would refuse a start over a field that has no effect.
 	if strings.TrimSpace(s.ControllerAddress) == "" {
-		return fmt.Errorf(
-			"this instance drives nothing: write the bindings setting, one line per printer, or name one controller in controller_address")
+		return nil
 	}
 
 	if _, err := wled.New(s.ControllerAddress); err != nil {
@@ -347,7 +368,7 @@ func (s Settings) wantedLayout() (layout, error) {
 
 // The state a running instance holds.
 //
-// held is what an operator wrote, merged over the manifest's defaults. session and
+// held is the settings block this start read, or nil when no start has run. session and
 // fleet are written once in run, before the wire can carry a call: they are the two
 // things a watch needs and cannot build for itself. sessionCtx is the session's own
 // context, which is what a watch runs on — a watch tied to the call that configured
@@ -491,11 +512,12 @@ func methods() wirerpc.Methods {
 					Serves: []wirerpc.Method{wirerpc.MethodConfigure},
 				}, openAPI)
 		},
-		// The settings the host merged from module.yaml's defaults and this
-		// instance's config block, sent once before the first request, with the grants
-		// the operator approved beside them. This is where the watch starts, and the
-		// grants are read for one thing: the writable directory this module keeps its
-		// own configuration in. See store.go.
+		// The settings block the host sends once before the first request, with the grants the
+		// operator approved beside it. The manifest declares no options, so on a fresh install the
+		// block is empty and this start runs on the defaults in this file; on the one upgrade from
+		// a release that did declare them, the block is the migration source §4 describes. Either
+		// way this is where the watch starts, and the grants are read for one thing: the writable
+		// directory this module keeps its own configuration in. See store.go.
 		wirerpc.MethodConfigure: wirerpc.ConfigureGranted(configure),
 		// The host is stopping this module. The watch is stopped and waited for here, and
 		// not merely abandoned: the writer gives a borrowed segment back on its way out,
@@ -597,8 +619,8 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 	}
 
 	// Where the set in force came from, for the answer GET /bindings gives. A set read from this
-	// module's own store is the one an operator has to be able to tell apart from the settings,
-	// because editing the settings pane no longer changes it.
+	// module's own store is the one an operator has to be able to tell apart from the settings:
+	// the settings seeded that store once and change nothing in it now.
 	live.setOrigin(origin)
 
 	held.Store(&sent)
@@ -607,10 +629,14 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 }
 
 // originOf is where a set built from the settings came from, in the words GET /bindings answers
-// with: the list, or the four settings that came before it.
+// with: the list, the four settings that came before it, or nothing at all.
 func originOf(sent Settings) string {
 	if len(sent.Bindings) > 0 {
 		return originSettings
+	}
+
+	if strings.TrimSpace(sent.ControllerAddress) == "" {
+		return originNothing
 	}
 
 	return originLegacy
@@ -646,6 +672,13 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 		// that was not written would make the next start the same migration again — and a set
 		// the operator changed in the settings pane between the two starts would be read here
 		// but lost at the third.
+		//
+		// An empty set is what a fresh install asks for now: the manifest declares no options, so
+		// the host sends an empty block, and §4's "if the host settings are absent, defaults apply"
+		// is this. The document is written anyway, empty, because that is what records the
+		// migration as done — the next start must not look for settings again — and because the
+		// store's other lists (moments, words, layouts, windows, a pause) are edited on their own
+		// screens from the first minute.
 		set, buildErr := wantedBindings(ctx, fleet, sent)
 		if buildErr != nil {
 			return nil, "", buildErr
@@ -659,6 +692,13 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 		path, writeErr := saveStore(dataDir, storedConfig{Version: storeVersion, Bindings: entries})
 		if writeErr != nil {
 			return nil, "", writeErr
+		}
+
+		if len(set) == 0 {
+			log("%s: nothing is configured and nothing was sent, so this start runs on the defaults this module's code holds: its pages answer, it drives no light, and the first light is added on its own Bindings screen. The configuration store was written empty at %s, schema version %d",
+				name, path, storeVersion)
+
+			return set, originNothing, nil
 		}
 
 		log("%s: this module's own configuration store was written for the first time at %s, from the settings, at schema version %d; the settings are a migration source and are not applied again",
@@ -778,6 +818,13 @@ func resolvePrinter(ctx context.Context, fleet devices, setting string) (string,
 // one. The paths carry no prefix: /status here is
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/status to a caller.
 //
+// drivingNothing is what the two picture routes answer when the set in force is empty, which is a
+// fresh install of this manifest: there are no options to name a light in, so a module starts with
+// nothing configured and its own pages are where the first one arrives. It is a different fact
+// from "no reading has arrived yet", and the two must not share a sentence: one of them clears up
+// on its own and the other never will until somebody adds a light.
+const drivingNothing = "this module is driving nothing: no light is configured yet, so there is no frame to report. Add one on this module's Bindings screen."
+
 // The binding editor's routes are mounted from bindingsapi.go, which says what they are for and
 // what a change through them costs.
 func routes() http.Handler {
@@ -855,6 +902,12 @@ func routes() http.Handler {
 
 		seen := current.Load()
 		if seen == nil {
+			if len(live.set()) == 0 {
+				refuse(w, r, NoReadingYet.New(drivingNothing))
+
+				return
+			}
+
 			refuse(w, r, NoReadingYet.New(
 				"this module has not decided a frame yet: it answers this once it has taken its first reading"))
 

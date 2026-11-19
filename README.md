@@ -84,7 +84,8 @@ in [`docs/product-requirements.md`](docs/product-requirements.md).
 Three things here are not what a Connect module usually does.
 
 - **The module is driven by its own UI.** Its screens are served by the module and are the only editing
-  surface, so the host's settings pane is not where a binding, a colour, a layout or a pause is changed.
+  surface, and the manifest declares **no `options`** — so the module's page under Settings, Extensions has
+  one tab, its own, and no second and older pane to edit the same data in.
 - **Its configuration lives in the module's own store**, beside the installed module on Prusa Connect's
   writable config volume: bindings, moments, the state table, layout, schedule, pause state and per-light
   snapshots.
@@ -93,7 +94,9 @@ Three things here are not what a Connect module usually does.
   configuration to a file you keep outside the module.
 
 The host's settings, which used to carry this configuration, are read once at the first start as a
-migration source and never again. What the light is meant to become is specified in the locked
+migration source and never again — and after this release there are none to read: a fresh install starts on
+the module's own defaults, serves its pages, drives nothing, and its first light is added on the Bindings
+screen. What the light is meant to become is specified in the locked
 [`docs/product-requirements.md`](docs/product-requirements.md); the eight screens it describes are design
 mockups, not the product, in [`docs/design/v2/`](docs/design/v2/README.md).
 
@@ -429,8 +432,10 @@ dependency is the SDK, replaced by a directory, so nothing is fetched and there 
 There is an install path, and it has been walked. [`docs/installing-locally.md`](docs/installing-locally.md)
 is the record of one install on a running Prusa Connect, with the commands as they were run and the output
 they gave: the release directory and the checksums a release has to carry, the ownership the core needs
-before it can read the files, the settings file, the `module add` that writes the declaration, and the
-restart the install owes afterwards. Start there rather than here.
+before it can read the files, the `module add` that writes the declaration, and the restart the install owes
+afterwards. Start there rather than here — and read its §4a first, which is what a person installing this
+release needs and every earlier run in that record did not: the manifest declares no settings, so `-settings`
+is left off.
 
 `install.sh` in this tree is the project generator's script and is stale: it wants a Go toolchain on your
 machine and a Prusa Connect checkout at a fixed path. Do not read it as documentation of how this module
@@ -449,9 +454,11 @@ follow that printer's event stream as itself, with nobody behind the call, and f
 directory — its own configuration store, one versioned JSON document holding the bindings and the five
 tables the Colours, Events, Layout, Brightness and Overview screens edit, which is what lets a change made
 through any of its routes survive a restart and an upgrade. It declares **two** outbound
-connections, both to the controller named in `controller_address` and both from this process: port 80,
-where the status colour and the progress are written as JSON state, and **UDP port 4048**, where the pixels
-of the finished word go over DDP once a second for the minute the word holds.
+connections, both from this process: port 80, where the status colour and the progress are written as JSON
+state, and **UDP port 4048**, where pixels go over DDP once a second while a panel or a word holds one. Both
+were once declared against the setting the address was typed into; a manifest with no settings has nothing to
+point at, so the two controllers this release is proven against are named in the block and the note beside it
+says what that costs.
 
 ## Binding a printer to a light
 
@@ -470,26 +477,11 @@ front of it — writes to one box take turns — while each binding still decide
 The address is **typed in, not discovered**. Automatic discovery does not work from inside a container
 on Docker's default bridge — see below — and the module does not attempt it.
 
-### Two printers, two controllers: the `bindings` setting
+### Two printers, two controllers: the Bindings screen
 
-One printer is one line of the `bindings` setting, which is a JSON list. This is the whole of it — an
-instance showing `Hermes MK4` on the panel and `Mini` on segment 3 of the panel beside it:
-
-```yaml
-resources:
-  sink:
-    wled-printer-status:
-      config:
-        bindings:
-          - printer: Hermes MK4
-            controller: http://10.0.0.136
-          - printer: Mini
-            controller: http://10.0.0.136
-            segment: 3
-```
-
-On the settings pane the same thing is one field, because a manifest declares nine value shapes and a list
-is the largest of them: paste it as JSON in the text area for `bindings`.
+A binding is written on the module's own **Bindings** screen, which is served from `GET/POST /bindings` and
+stored in the module's own configuration document — one printer, one controller, one segment. Nothing about
+it is written in `module.yaml` any more. The same two bindings, as the route carries them:
 
 ```json
 [{"printer": "Hermes MK4", "controller": "http://10.0.0.136"},
@@ -500,10 +492,10 @@ Each line carries `printer` (the device id or the name an operator gave it), `co
 optionally `segment` and `brightness`. A line that leaves `segment` out drives the whole controller; a line
 that names one borrows it and may carry no brightness at all, because a brightness is controller-wide.
 
-`bindings` **wins** over `controller_address`, `printer`, `brightness` and `segment` when it is written. The
-four older keys stay in the manifest because an install that has been running for a week carries them in
-its config block, and they are not merged into a list: half a list beside one address would be two answers
-to one question.
+The four keys that used to sit beside it — `controller_address`, `printer`, `brightness` and `segment` — are
+gone from the manifest with the rest of the settings. They are read once, from an install that carried them,
+as the migration source this section's rules then apply to; a list wins over them there, and they are never
+merged into a list, because half a list beside one address would be two answers to one question.
 
 A list this module cannot run refuses the start, and the sentence names the line and the field —
 `bindings[1]: json: unknown field "controler"`, or `binding 2 drives segment 3 of http://10.0.0.136, which
@@ -511,8 +503,8 @@ binding 1 already drives`. That message is on the instance, where a person is al
 
 ### The device id question
 
-A printer is named by the device id the server minted for it, which is a GUID, and nothing in a settings
-form offers a list of them. Nobody types one: read them from the module itself.
+A printer is named by the device id the server minted for it, which is a GUID, and no text field offers a
+list of them — the Bindings screen's picker does. Nobody types one: read them from the module itself.
 
 ```bash
 curl -s http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/printers
@@ -570,23 +562,17 @@ routes, and a second way to write the same thing would be a second thing to be w
 ### Brightness that follows the time of day
 
 The fixed `brightness` is one of the two things an operator asked for; the other is a brightness that
-follows the clock. It is two settings: `brightness_schedule`, a list of windows
-pasted into the settings pane's JSON box, and `timezone`, the zone those windows are read in.
+follows the clock. It is a list of windows, written on the module's own **Brightness** screen (`POST
+/windows`, `PUT/DELETE /windows/{index}`), and a `timezone` the windows are judged in. The shape the route
+carries is:
 
 ```json
 [{"from": "20:00", "to": "07:00", "brightness": 40},
  {"from": "09:00", "to": "17:00", "brightness": 200, "days": ["sat", "sun"]}]
 ```
 
-```yaml
-      config:
-        timezone: America/Denver
-        brightness: 128
-        brightness_schedule:
-          - from: "20:00"
-            to: "07:00"
-            brightness: 40
-```
+The zone is kept in the same document, beside the windows and not inside each one: the windows are judged in
+one zone, and a zone per window would be several answers to one question.
 
 Each window carries `from` and `to` as `HH:MM`, a `brightness` 0–255, and optionally `days` (`mon`
 through `sun`; absent or empty covers every day). The rules, in the order a person reads them:
@@ -633,19 +619,23 @@ retry, and the log carries one line per change naming the window and the zone:
 wled-printer-status: the light's brightness is 40, the 20:00-07:00 window of America/Denver, where it is 20:00 MST
 ```
 
-An install with no `brightness_schedule` behaves exactly as it did before this setting existed: the
-fixed brightness is written once at start and never moved.
+An install with no window written behaves exactly as it did before windows existed: the fixed brightness is
+written once at start and never moved.
 
-### The four older settings
+### The four settings the store was seeded from
 
-`controller_address` is empty and unused when `bindings` is written, and it is no longer required for that
-reason. Written alone, it behaves as it always has: the module refuses to start with no address and no
-list and says so on the instance, rather than running and never mentioning why the light is dark.
-`printer` names the printer to watch, by the server's device id or by the name an operator gave it; left
-empty it takes the only printer the instance holds, and refuses to choose between several rather than
-put somebody's strip on the wrong machine. `brightness` is what the module writes to the controller once at
-start and does not move again — unless a `brightness_schedule` is written, where it is the value that
-stands wherever no window covers the moment (see above).
+`controller_address` is empty and unused when a binding list is written, and it is no longer required for
+that reason. Written alone, it behaves as it always has: one printer, one controller, and a refusal if
+neither is named. `printer` names the printer to watch, by the server's device id or by the name an operator
+gave it; left empty it takes the only printer the instance holds, and refuses to choose between several
+rather than put somebody's strip on the wrong machine. `brightness` is what the module writes to the
+controller once at start and does not move again — unless a brightness window covers the moment, when it is
+the value that stands wherever none does (see above).
+
+**These four are not in `module.yaml`.** They were, until this release, and they are still read by a start
+for exactly one purpose: an instance installed from a release that carried them seeds its store from them on
+its first start and never reads them again. A fresh install sends none of them, starts on the module's own
+defaults, and is configured on its own screens.
 
 `segment` names one segment of a controller that carries several, and the module then drives that segment
 and leaves the rest of the controller alone. It reads the segment once at start — its run, its colour, its

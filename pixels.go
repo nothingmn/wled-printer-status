@@ -217,23 +217,30 @@ func (w *writer) pushWord(frame []wled.RGB) error {
 // picture does not move, which is why nothing here rebuilds it. A composed frame is the exception:
 // its rotation is a function of the clock, so it is drawn again at the moment it goes out and the
 // hold's own copy is replaced with what the panel now holds.
+//
+// A repeat is a write to the light, so it is recorded like any other write, through report. The
+// rule it keeps is the one /status is read by: last_send answers "when did this module last write
+// to this light", and a hold can last a minute — leaving the repeats out left the field standing
+// at the instant the hold began, which is a change-age wearing a write-age label.
 func (w *writer) republish(held *heldEvent) error {
-	push, err := w.pixelSender(w.paintPanel())
-	if err != nil {
-		return err
-	}
-
-	frame := held.frame
-
-	if held.picture != nil {
-		if frame, err = held.event.draw(w.paintPanel(), w.now()); err != nil {
+	return w.report(func() error {
+		push, err := w.pixelSender(w.paintPanel())
+		if err != nil {
 			return err
 		}
 
-		held.frame = frame
-	}
+		frame := held.frame
 
-	return push.Send(frame)
+		if held.picture != nil {
+			if frame, err = held.event.draw(w.paintPanel(), w.now()); err != nil {
+				return err
+			}
+
+			held.frame = frame
+		}
+
+		return push.Send(frame)
+	})
 }
 
 // until is how long the writer may wait before looking again: the earlier of the hold's end and

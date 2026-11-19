@@ -190,15 +190,11 @@ func TestTheLayoutIsOptionalAndItsDefaultsAreThePictureTheOperatorAskedFor(t *te
 		t.Fatalf("the settings with no layout read as %+v, want %+v", got, want)
 	}
 
-	// The manifest publishes the same default, because an operator reads it there. `{}` and the
-	// layout this code holds are the same picture, so the two must be the same words.
-	manifest := readManifest(t)
-	if !strings.Contains(manifest, `- key: layout`) {
-		t.Fatal("module.yaml declares no layout setting")
-	}
-
-	if !strings.Contains(manifest, `default: "{}"`) {
-		t.Fatal("module.yaml does not declare {} as the layout's default")
+	// The manifest declares no layout setting any more: the layout is one of the things the store
+	// owns (docs/product-requirements.md §4), and the default above is what a start with nothing
+	// configured composes with. Nothing about the picture changed with it.
+	if keys := settingsKeys(t); len(keys) != 0 {
+		t.Fatalf("module.yaml declares the settings %v, and the layout is the store's", keys)
 	}
 
 	// A layout that draws nothing of its own is a panel drawn exactly as it was before this setting
@@ -783,6 +779,62 @@ func TestTheComposedPanelIsHandedBackWhenThePrintEnds(t *testing.T) {
 	// And nothing is pushed any more: the panel is on its own segments, so the pixel transport is idle.
 	if got := pushed.pushed(); got != 1 {
 		t.Fatalf("the transport pushed %d frames, want the one that put the picture up and no more", got)
+	}
+}
+
+// TestTheComposedPicturesRepeatsAreRecordedAsWrites is the defect the operator reported as "ive
+// seen '4 minutes ago' under diagnostics": a panel being written every second reported the age of
+// the moment its picture was first established.
+//
+// The picture on a panel is pixels this module draws, and this firmware leaves realtime 2500 ms
+// after the last datagram — so a print costs one push a second for as long as it runs. Every one of
+// those is a write to the light, and /status's last write is what a person reads to know the light
+// is still being written. The repeats were left out of the record on the argument that a field
+// that ticks every second buries the transition it was read for; the field's own label says
+// otherwise, and the transition is on the timeline.
+func TestTheComposedPicturesRepeatsAreRecordedAsWrites(t *testing.T) {
+	at := atHalfZero(t)
+
+	light := newPanelStrip()
+
+	pen := newWriter(light, 128, quiet)
+	pen.setPanel(light.info)
+	pen.layout = defaultLayout()
+
+	clock := newFakeClock(at)
+	clock.watch(pen)
+
+	pushed := pushInto(pen)
+
+	sent.Store(nil)
+	t.Cleanup(func() { sent.Store(nil) })
+
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	go pen.run(ctx)
+
+	pen.submit(render.Decide(printingSnapshot(at, 41, longJobName), at, render.Config{LEDs: 16384}))
+
+	waitFor(t, "the composed picture to reach the panel", func() bool { return pushed.pushed() >= 1 })
+
+	established := sent.Load()
+	if established == nil || !established.OK {
+		t.Fatalf("the write that put the composed picture up was recorded as %+v, want a taken write", established)
+	}
+
+	// One second on the writer's own clock with nothing new from the printer: the repeat that keeps
+	// the panel in realtime is the only write in that second, and it has to move the field.
+	clock.Advance(pixelRepeat)
+
+	waitFor(t, "the repeat to be recorded as a write", func() bool {
+		last := sent.Load()
+
+		return last != nil && last.At != established.At
+	})
+
+	if last := sent.Load(); !last.OK {
+		t.Fatalf("the repeat was recorded as a failed write: %+v", last)
 	}
 }
 
