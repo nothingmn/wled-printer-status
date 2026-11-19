@@ -456,7 +456,7 @@ func (w *writer) run(ctx context.Context) {
 
 						if w.held.pushFails == 0 {
 							w.logf("%s: the %q picture did not reach the panel again and the hold continues: %v",
-								name, w.held.word, err)
+								name, w.held.label(), err)
 						}
 
 						w.held.pushFails++

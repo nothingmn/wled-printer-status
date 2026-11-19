@@ -45,6 +45,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
@@ -81,8 +84,60 @@ const (
 	// and it is the picture the light is meant to rest in. It is also inside the write
 	// budget by construction: the event's own writes are one painting when it starts and one
 	// when it ends, however long it holds.
+	//
+	// It is also the preview routes' default hold, because a preview that held for a
+	// different length than the event would be telling the operator about a look he will not
+	// get.
 	finishedEventHolds = time.Minute
+
+	// previewHoldCeiling is the longest hold POST /preview-finished and POST /preview-pattern
+	// will run for a caller who asks: five minutes.
+	//
+	// The operator's need is three, with room to walk to the panel and look without racing
+	// the clock, so the ceiling is above that and not far above it. The point of a ceiling at
+	// all is the accident: a preview takes the light away from the printer's own picture for
+	// as long as it runs, so a hold of an hour typed as a number of seconds is a status
+	// display that stops being one, and the person who typed it is looking at the panel, not
+	// at the route. Past it the request is refused by name rather than clamped, because a
+	// hold silently shortened to five minutes would be a look the caller was told he had and
+	// did not.
+	previewHoldCeiling = 300 * time.Second
 )
+
+// ErrHoldOutOfRange is a hold that is not a length these routes will run: not a whole number of
+// seconds, not positive, or past previewHoldCeiling.
+//
+// It is a refusal rather than a clamp, and it says what the range is, because the caller is a
+// person who is about to walk away from the keyboard: the one thing he must not be given is a
+// hold that is not the one he asked for.
+var ErrHoldOutOfRange = errors.New("the hold is not a length this module will run")
+
+// holdFrom is how long the event a preview fires should hold the light.
+//
+// Absent, it is finishedEventHolds, which is what the routes did before there was a parameter at
+// all and what the printer's own event still does. Given, it is a whole number of seconds between
+// one and previewHoldCeiling; anything else is ErrHoldOutOfRange rather than a guess, and the
+// sentence names both the default and the ceiling so that a caller who guessed wrong can fix it
+// without reading this file.
+func holdFrom(r *http.Request) (time.Duration, error) {
+	given := strings.TrimSpace(r.URL.Query().Get("hold"))
+	if given == "" {
+		return finishedEventHolds, nil
+	}
+
+	seconds, err := strconv.Atoi(given)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %q is not a whole number of seconds; it defaults to %d and may not exceed %d",
+			ErrHoldOutOfRange, given, int(finishedEventHolds/time.Second), int(previewHoldCeiling/time.Second))
+	}
+
+	if seconds < 1 || seconds > int(previewHoldCeiling/time.Second) {
+		return 0, fmt.Errorf("%w: %d seconds is outside it; it defaults to %d and may not exceed %d",
+			ErrHoldOutOfRange, seconds, int(finishedEventHolds/time.Second), int(previewHoldCeiling/time.Second))
+	}
+
+	return time.Duration(seconds) * time.Second, nil
+}
 
 // finishedWordBackground is what the panel is painted behind the word.
 //
@@ -113,15 +168,75 @@ var (
 //
 // It is a value and not a func, so that the decision that makes one is pure and a test can
 // compare two of them. The writer, not this type, decides when the hold started.
+//
+// # A pattern is an event too, with no word in it
+//
+// The diagnostic ladder — solid, border, quarters — travels the writer's event path unchanged: it
+// is stored in the same slot, painted by the same painter, repeated once a second and handed back
+// by the same deadline. The only difference is where the pixels come from, and that is what
+// pattern is: when it is set, the picture is laid out by pattern.go and word and colour are not
+// used at all. Keeping them in one type rather than adding a second path is deliberate — the
+// repeat, the hold, the hand-back and the refusal of a borrowed segment are the parts that cost
+// measurements, and a second path would be a second place for them to be wrong.
 type event struct {
 	// word is what the panel is asked to spell, in the font internal/text carries. paintEvent
-	// rasterises it; no controller is asked to draw a string.
+	// rasterises it; no controller is asked to draw a string. It is empty on a pattern event.
 	word string
+	// pattern is the name of a diagnostic picture to draw instead of a word — one of solid,
+	// border and quarters, as pattern.go holds them. It is empty on the finished word, which is
+	// the only event the printer itself fires.
+	pattern string
 	// colour is what the word's lit pixels are drawn in. Every other pixel of the panel is
-	// finishedWordBackground for the length of the hold.
+	// finishedWordBackground for the length of the hold. Unused by a pattern, which carries a
+	// colour per pixel.
 	colour wled.RGB
 	// holds is how long the word keeps the light.
 	holds time.Duration
+}
+
+// label is what this event is called in a log line and on the segment the establishing body
+// writes: the word, or the pattern's name.
+//
+// One name for both because they are the same fact — which picture the panel is holding — and the
+// log line, the /json/state name and the route's own parameter then all say the same word.
+func (ev event) label() string {
+	if ev.pattern != "" {
+		return ev.pattern
+	}
+
+	return ev.word
+}
+
+// noun is what kind of picture this event is, for a sentence a person reads: "word" or "pattern".
+func (ev event) noun() string {
+	if ev.pattern != "" {
+		return "pattern"
+	}
+
+	return "word"
+}
+
+// draw is the picture this event puts on the panel: a diagnostic pattern when it carries one, and
+// otherwise the word rasterised in the event's colour on the event's background.
+//
+// It returns the pixels rather than painting them, so that the one function that decides where a
+// word sits is internal/text and the one function that decides what a pattern looks like is
+// pattern.go, and the painter only carries the result.
+func (ev event) draw(geometry panel) ([]wled.RGB, error) {
+	if ev.pattern != "" {
+		return patternFrame(ev.pattern, geometry)
+	}
+
+	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
+		return nil, err
+	}
+
+	lit, err := text.Raster(ev.word, finishedWordScale, geometryOf(geometry))
+	if err != nil {
+		return nil, err
+	}
+
+	return wordFrame(geometry, lit, ev.colour), nil
 }
 
 // finishedWordEvent is the picture a completed print is given, and the one the preview route
@@ -229,7 +344,7 @@ type heldEvent struct {
 func (w *writer) fire(ev event) {
 	if w.segment != nil {
 		w.logf("%s: the %q event was not drawn: segment %d on %s is borrowed, and an animation is not something this module puts on a light somebody else is using",
-			name, ev.word, *w.segment, w.where)
+			name, ev.label(), *w.segment, w.where)
 
 		return
 	}
@@ -278,11 +393,16 @@ func (w *writer) preview(ev event) error {
 
 	geometry := w.panelOf()
 	if !geometry.matrix() {
-		return fmt.Errorf("%w: %s reported no matrix, and a word needs a two-dimensional panel",
-			ErrPreviewNotDrawable, w.where)
+		return fmt.Errorf("%w: %s reported no matrix, and a %s needs a two-dimensional panel",
+			ErrPreviewNotDrawable, w.where, ev.noun())
 	}
 
-	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
+	// The picture is laid out here and thrown away — 16,384 pixels once per request — so that
+	// a word which does not fit, or a pattern this build does not hold, is refused before the
+	// event is stored rather than after it has been offered to the writer. The painter lays it
+	// out again on the writer's own goroutine; the cost is one frame per preview, which is the
+	// cheapest thing in this file.
+	if _, err := ev.draw(geometry); err != nil {
 		return fmt.Errorf("%w: %w", ErrPreviewNotDrawable, err)
 	}
 
@@ -368,6 +488,12 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 //     this firmware and drawn by nothing, which is why the pixels do not go that way; pixels.go
 //     has the four measurements and what the controller will not report about them.
 //
+//     A diagnostic pattern takes this step instead of the rasteriser: the frame is solid, border
+//     or quarters as pattern.go lays it out, and the establishing body carries the pattern's name
+//     rather than a word. Steps 1 and 3 and the hold around them are the same for both, which is
+//     the point — a pattern is a look at the same machinery the word uses, not a second path
+//     through the writer.
+//
 //     The frame goes out in requests of about 490 bytes rather than 16,384 colours in a
 //     document, so the panel is never showing half a picture: a datagram names where its pixels
 //     belong, and the frame is pushed with the push flag on its last one, which is when the
@@ -384,16 +510,13 @@ func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 	geometry := w.panelOf()
 
 	if !geometry.matrix() {
-		return nil, fmt.Errorf("the %q event was not drawn: %s reports no matrix, and a word needs one", ev.word, w.where)
+		return nil, fmt.Errorf("the %q %s was not drawn: %s reports no matrix, and a picture needs one",
+			ev.label(), ev.noun(), w.where)
 	}
 
-	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
-		return nil, fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
-	}
-
-	lit, err := text.Raster(ev.word, finishedWordScale, geometryOf(geometry))
+	frame, err := ev.draw(geometry)
 	if err != nil {
-		return nil, fmt.Errorf("the %q event was not drawn: %w", ev.word, err)
+		return nil, fmt.Errorf("the %q %s was not drawn: %w", ev.label(), ev.noun(), err)
 	}
 
 	if err = w.light.SetSegments(ctx, []wled.SegmentWrite{{
@@ -404,7 +527,7 @@ func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 		RowCount: geometry.height,
 		On:       true,
 		Colour:   finishedWordBackground,
-		Name:     ev.word,
+		Name:     ev.label(),
 	}, {
 		// The frame's remainder, switched off rather than coloured: an off segment draws nothing,
 		// so the word underneath it is not covered, and a body that left it on would put a black
@@ -415,13 +538,11 @@ func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 		return nil, err
 	}
 
-	frame := wordFrame(geometry, lit, ev.colour)
-
 	if err = w.pushWord(frame); err != nil {
-		return nil, fmt.Errorf("the %q event's pixels did not reach %s: %w", ev.word, w.where, err)
+		return nil, fmt.Errorf("the %q %s's pixels did not reach %s: %w", ev.label(), ev.noun(), w.where, err)
 	}
 
-	w.confirmRealtime(ctx)
+	w.confirmRealtime(ctx, ev)
 
 	return frame, nil
 }

@@ -9,6 +9,9 @@
 //	                           their readings are, the frames it has decided, and the last send to each light
 //	POST /preview-finished     the finished word, now: what the light will do when a print ends,
 //	                           without waiting for one. See preview
+//	POST /preview-pattern      one diagnostic picture — solid, border or quarters — so that a single
+//	                           look tells a dead transport from a wrong LED map from an upside-down
+//	                           panel. See pattern.go
 //	GET /bindings              the set of bindings this module is running, one printer each
 //	GET /bindings/{id}         one of them, and POST, PUT and DELETE on the same names to change it
 //	GET /printers              the host's printers, which is where a device id comes from
@@ -692,7 +695,19 @@ func routes() http.Handler {
 
 		ev := finishedWordEvent()
 
-		if err := target.pen.preview(ev); err != nil {
+		// The hold the caller asked for, or the event's own minute. A hold past the ceiling is
+		// refused before anything is stored, for the reason the ceiling exists: a preview is a
+		// status display that has stopped being one for as long as it runs.
+		holds, err := holdFrom(r)
+		if err != nil {
+			refuse(w, r, holdRefusal(r, err))
+
+			return
+		}
+
+		ev.holds = holds
+
+		if err = target.pen.preview(ev); err != nil {
 			if errors.Is(err, ErrPreviewBorrowedSegment) {
 				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
 
@@ -711,6 +726,67 @@ func routes() http.Handler {
 			"scale":      finishedWordScale,
 			// How long the word keeps the light, in whole seconds: the number a person needs to
 			// know when to look, and to know how long he has to look.
+			"holds_seconds": int(ev.holds / time.Second),
+		})
+	})
+
+	// The diagnostic ladder: three pictures that answer, one each, the three faults a blank panel
+	// can hide — nothing drawn, the wrong map, and the panel upside down or mirrored. See
+	// pattern.go for what each one is and why it is that shape and those colours.
+	//
+	// It shares the whole of the finished word's machinery rather than copying it: the same slot
+	// in the same writer, the same establishing body, the same once-a-second repeat over DDP and
+	// the same hand-back when the hold ends. What it does not share is the word: a pattern carries
+	// its own pixels, so the refusal for a panel too small to hold the word does not apply, and the
+	// refusals that do apply are the finished word's own three plus two of this route's.
+	mux.HandleFunc("POST /preview-pattern", func(w http.ResponseWriter, r *http.Request) {
+		target := previewNow()
+		if target == nil {
+			refuse(w, r, PreviewNotRunning.New(
+				"this module is not driving exactly one light, so there is nothing to preview a pattern on"))
+
+			return
+		}
+
+		// The hold first, then the pattern. Both are refusals the caller fixes by retyping one
+		// value, and the hold is the route's own bound: a caller who sends neither gets the
+		// event's own minute and a pattern that exists.
+		holds, err := holdFrom(r)
+		if err != nil {
+			refuse(w, r, holdRefusal(r, err))
+
+			return
+		}
+
+		ev, err := patternEvent(r.URL.Query().Get("pattern"), holds)
+		if err != nil {
+			refuse(w, r, PreviewPatternUnknown.
+				New(err.Error()).
+				With(fault.StringParam("pattern", r.URL.Query().Get("pattern"))))
+
+			return
+		}
+
+		if err = target.pen.preview(ev); err != nil {
+			if errors.Is(err, ErrPreviewBorrowedSegment) {
+				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
+
+				return
+			}
+
+			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+
+			return
+		}
+
+		shape, _ := patternNamed(ev.pattern)
+
+		answer(w, http.StatusAccepted, map[string]any{
+			"pattern":    ev.pattern,
+			"controller": target.where,
+			// What a person is supposed to learn by looking, so that the route and the look are
+			// one errand rather than two.
+			"answers":       shape.answers,
 			"holds_seconds": int(ev.holds / time.Second),
 		})
 	})

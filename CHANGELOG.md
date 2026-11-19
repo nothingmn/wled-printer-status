@@ -66,6 +66,17 @@ holds the whole light, and keeps holding it.
   light will do without waiting for a print to end. It answers `202` with the word, the controller and how
   long it holds, and refuses — with a registered code — when the light is a borrowed segment of somebody
   else's controller, a strip, or a panel too small for the word.
+- `POST /preview-pattern` draws one diagnostic picture instead of the word — `solid`, `border` or
+  `quarters` — so that one look at the panel separates the three faults a blank panel hides: a dead
+  transport, a wrong LED map, and a panel upside down or mirrored. It goes out on the same writer, the
+  same establishing body, the same once-a-second repeat over DDP and the same hand-back as the word. It
+  answers `202` with the picture, the controller, the question the picture answers and how long it holds,
+  and refuses — with a registered code — for a name it does not draw (`PREVIEW_PATTERN_UNKNOWN`, whose
+  sentence lists the three) and for the three cases the word's route refuses.
+- Both preview routes take `hold`, a whole number of seconds: absent it is the event's own 60, and above
+  300 the request is refused (`PREVIEW_HOLD_OUT_OF_RANGE`) rather than clamped, because a hold quietly
+  shortened is a look the caller was told he had. Three minutes is what the ladder needs — time to walk to
+  the panel and read it.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
 - The setting `bindings` carries the whole topology as one JSON list: one line per printer, each with its

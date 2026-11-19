@@ -247,23 +247,25 @@ func (w *writer) until(held *heldEvent, wait time.Duration) time.Duration {
 	return wait
 }
 
-// confirmRealtime reads what the controller says about live mode, once, right after the word's
+// confirmRealtime reads what the controller says about live mode, once, right after the picture's
 // pixels have gone out.
 //
 // It is the only read-back this transport has. A datagram cannot be acknowledged and the
 // firmware reports no per-LED colours, so "live=true" is the whole of what the device will say
 // about the picture — and "live=false" is the one failure worth a line, because it means the
-// panel is drawing its own segments and not the pixels just sent.
-func (w *writer) confirmRealtime(ctx context.Context) {
+// panel is drawing its own segments and not the pixels just sent. The line names the picture by
+// the word or the pattern it is, so that a pattern which did not take is not reported as the
+// finished word.
+func (w *writer) confirmRealtime(ctx context.Context, ev event) {
 	info, err := w.light.Info(ctx)
 
 	switch {
 	case err != nil:
-		w.logf("%s: the %q word's pixels were pushed to %s and whether the panel took realtime cannot be read: %v",
-			name, finishedWord, w.where, err)
+		w.logf("%s: the %q %s's pixels were pushed to %s and whether the panel took realtime cannot be read: %v",
+			name, ev.label(), ev.noun(), w.where, err)
 	case !info.Live:
-		w.logf("%s: the %q word's pixels were pushed to %s and the controller reports live=false: the panel is drawing its own segments and not the word",
-			name, finishedWord, w.where)
+		w.logf("%s: the %q %s's pixels were pushed to %s and the controller reports live=false: the panel is drawing its own segments and not the %s",
+			name, ev.label(), ev.noun(), w.where, ev.noun())
 	}
 }
 
@@ -276,6 +278,11 @@ func (w *writer) confirmRealtime(ctx context.Context) {
 // line says what the controller answered. A controller that has not left live mode is said so
 // plainly: it is not a failure of the frame, but it is the fact that the frame is not on the
 // panel yet.
+//
+// The line says "the picture" and not "the word" because a diagnostic pattern holds the panel
+// through the same path, and the hold it ends is already gone by the time this runs: the label
+// would have to be carried on the writer for one word of a log line, and which picture it was is
+// on the lines either side of it.
 func (w *writer) confirmHandback(ctx context.Context) {
 	select {
 	case <-ctx.Done():
@@ -287,13 +294,13 @@ func (w *writer) confirmHandback(ctx context.Context) {
 
 	switch {
 	case err != nil:
-		w.logf("%s: the %q word is off the panel and whether %s has left realtime cannot be read: %v",
-			name, finishedWord, w.where, err)
+		w.logf("%s: the picture is off the panel and whether %s has left realtime cannot be read: %v",
+			name, w.where, err)
 	case info.Live:
-		w.logf("%s: the %q word is off the panel and %s still reports live=true, so the panel is still drawing the pixels: its own segments return when the realtime timeout runs out",
-			name, finishedWord, w.where)
+		w.logf("%s: the picture is off the panel and %s still reports live=true, so the panel is still drawing the pixels: its own segments return when the realtime timeout runs out",
+			name, w.where)
 	default:
-		w.logf("%s: the %q word is off the panel and %s reports live=false: the light is back on its own segments",
-			name, finishedWord, w.where)
+		w.logf("%s: the picture is off the panel and %s reports live=false: the light is back on its own segments",
+			name, w.where)
 	}
 }

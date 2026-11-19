@@ -64,7 +64,11 @@ black with `FINISHED` as its name, the frame's remainder switched off so nothing
 carries no per-pixel array at all, so the letters themselves are only verifiable by eye, and so is the
 question of whether this panel's wiring is row-major the way the frame assumes. That is what
 `POST /preview-finished` is for: one request puts the word up for its minute, and the install record in
-[`docs/installing-locally.md`](docs/installing-locally.md) has the read-back either side of one. And **it has not been through the marketplace**: this beta is the first
+[`docs/installing-locally.md`](docs/installing-locally.md) has the read-back either side of one. Beside it,
+`POST /preview-pattern` draws one of three diagnostic pictures — the whole panel white, a white border, or
+four coloured quadrants — so that a single look separates a dead transport from a wrong LED map from an
+upside-down panel rather than leaving a blank panel to be guessed at. Neither the word nor the ladder has
+been looked at by a person yet. And **it has not been through the marketplace**: this beta is the first
 release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
@@ -191,6 +195,60 @@ It refuses, with a code and a sentence, in the three cases where the light canno
 
 The route asks the host for `operate_resource` on the module's instance, because it changes what the light
 shows.
+
+## Telling a blank panel from a wrong one
+
+A dark panel answers "did it draw?" with nothing, and the same darkness can be three different faults:
+the datagrams never arrived, the controller drew its own segments instead, or it drew them with a map this
+module's arithmetic does not match. The word cannot separate them, because the word is one shape in one
+colour. So there is a second route, a ladder of three pictures, each answering one question and each
+assuming the answer before it:
+
+```bash
+base=http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+curl -s -X POST "$base/preview-pattern?pattern=solid&hold=15"
+curl -s -X POST "$base/preview-pattern?pattern=border&hold=15"
+curl -s -X POST "$base/preview-pattern?pattern=quarters&hold=15"
+```
+
+| picture | what it is | what it answers |
+| --- | --- | --- |
+| `solid` | the whole panel in pure white | **does DDP draw at all.** Lit means the transport and the drawing work and every later rung is worth looking at; dark means the transport is the fault, and the word would have been dark for a reason that has nothing to do with the word |
+| `border` | a white edge two pixels thick around the whole panel, nothing inside | **is the LED map the shape this module assumes.** A closed rectangle means row-major `y*width+x` with x across and y down; strips, a diagonal, a border in the wrong place or a border that is only half a rectangle means the panel is wired or mapped differently |
+| `quarters` | four blocks: red top-left, green top-right, blue bottom-left, white bottom-right | **which way up and which way round.** An upside-down picture puts red in the bottom right and names it; a mirrored one swaps red and green |
+
+The colours are chosen so that no printer state can be mistaken for one: every colour in the state table
+has at least one channel unlit — printing and finished are `0,170,0`, idle and busy `210,165,0`, an error
+`200,0,0`, stopped `80,80,80` — while `solid` is white at full, the brightest thing the panel can draw.
+
+Each picture goes out as pixels over DDP on the same writer, with the same establishing body, the same
+once-a-second repeat and the same hand-back to the steady frame the word uses; the segment's name is the
+pattern's, so `/json/state` says which picture the panel is holding. It answers `202` with the picture, the
+controller, the sentence above and how long it holds. It refuses with a code in these cases:
+
+| answer | code | why |
+| --- | --- | --- |
+| 400 | `PREVIEW_PATTERN_UNKNOWN` | no picture of that name; the sentence lists `solid`, `border` and `quarters` |
+| 400 | `PREVIEW_HOLD_OUT_OF_RANGE` | `hold` is not a whole number of seconds, is not positive, or is above 300 |
+| 503 | `PREVIEW_NOT_RUNNING` | the module is not driving exactly one light yet |
+| 409 | `PREVIEW_BORROWED_SEGMENT` | the light is one borrowed segment of somebody else's controller |
+| 409 | `PREVIEW_NOT_DRAWABLE` | the controller reported no matrix, so it is a strip |
+
+## Holding a preview for longer than a minute
+
+Both preview routes take `hold`: how many seconds the picture keeps the light, as a whole number.
+
+```bash
+curl -s -X POST "$base/preview-finished?hold=180"     # the word, for three minutes
+curl -s -X POST "$base/preview-pattern?pattern=border&hold=180"
+```
+
+Absent, it is the finished event's own 60 seconds — what both routes did before the parameter existed.
+The ceiling is 300, which is above the three minutes a person needs to walk to the panel and look without
+racing the clock, and far enough below an hour that a mistyped number cannot leave the light off its
+printer's picture for long. Past the ceiling the request is refused, not clamped: a hold quietly shortened
+is a look the caller was told he had and did not get. The answer's `holds_seconds` is what the light is
+actually holding for.
 
 The binding routes refuse with codes of their own, and a caller branches on the code rather than on the
 sentence:

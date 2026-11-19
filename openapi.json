@@ -347,6 +347,15 @@
         "operationId": "preview-finished-word",
         "summary": "Show the finished word now, for its own duration",
         "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. The word goes out on the module's own writer, in the same order as every other write, and the steady frame takes the light back when the hold ends, so nothing about the light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, or when it is a strip or a panel too small for the word: a preview never puts an animation on a light this module was not given.",
+        "parameters": [
+          {
+            "name": "hold",
+            "in": "query",
+            "required": false,
+            "description": "How many seconds the word keeps the light, as a whole number. Absent, it is the event's own 60. Above 300 the request is refused (PREVIEW_HOLD_OUT_OF_RANGE) rather than clamped.",
+            "schema": {"type": "integer", "minimum": 1, "maximum": 300, "default": 60}
+          }
+        ],
         "responses": {
           "202": {
             "description": "The word was offered to the light. It is painted within a tick and holds for holds_seconds.",
@@ -377,6 +386,72 @@
           },
           "409": {
             "description": "This light cannot carry the word: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or it is a strip or a panel too small for it (PREVIEW_NOT_DRAWABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          },
+          "503": {
+            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview-pattern": {
+      "post": {
+        "operationId": "preview-diagnostic-pattern",
+        "summary": "Draw one diagnostic picture now, so that one look separates the faults a blank panel hides",
+        "description": "Puts one of three test pictures on the panel for a hold, drawn in pixels over DDP by the same writer, the same repeat and the same hand-back as the finished word. Each picture answers one question and each assumes the answer before it: solid is the whole panel in white and answers whether DDP draws at all (a dark panel means the transport, not the map); border is a white edge two pixels thick around the whole panel and answers whether the LED map is the shape this module assumes, row-major y*width+x, because anything but a closed rectangle means it is not; quarters is four blocks — red top-left, green top-right, blue bottom-left, white bottom-right — and answers which way up and which way round the panel is, because an upside-down or mirrored picture names the corner it is wrong in. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, or when it is a strip: these pictures are a fault-finding tool for the module's own panel, not something it puts on a light somebody else is using.",
+        "parameters": [
+          {
+            "name": "pattern",
+            "in": "query",
+            "required": true,
+            "description": "Which picture to draw: solid, border or quarters. Any other value is refused (PREVIEW_PATTERN_UNKNOWN) and the refusal lists the three.",
+            "schema": {"type": "string", "enum": ["solid", "border", "quarters"]}
+          },
+          {
+            "name": "hold",
+            "in": "query",
+            "required": false,
+            "description": "How many seconds the picture keeps the light, as a whole number. Absent, it is 60. Above 300 the request is refused (PREVIEW_HOLD_OUT_OF_RANGE) rather than clamped.",
+            "schema": {"type": "integer", "minimum": 1, "maximum": 300, "default": 60}
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The picture was offered to the light. It is painted within a tick and holds for holds_seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pattern": {"type": "string", "description": "The picture that will be drawn: solid, border or quarters."},
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
+                    "answers": {"type": "string", "description": "What the picture answers, in one sentence, so that whoever fires it knows what to look for."},
+                    "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."}
+                  },
+                  "required": ["pattern", "controller", "answers", "holds_seconds"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request names a picture this module does not draw (PREVIEW_PATTERN_UNKNOWN), or a hold outside the range it will run (PREVIEW_HOLD_OUT_OF_RANGE). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          },
+          "409": {
+            "description": "This light cannot be drawn on: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or the controller reported no matrix (PREVIEW_NOT_DRAWABLE). Nothing was fired.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}

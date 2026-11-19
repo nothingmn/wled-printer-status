@@ -128,6 +128,7 @@ func TestTheFragmentParses(t *testing.T) {
 		"/controllers",
 		"/controllers/{name}",
 		"/preview-finished",
+		"/preview-pattern",
 		"/printers",
 		"/status",
 		"/wled-printer-status",

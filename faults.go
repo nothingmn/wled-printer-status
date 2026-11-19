@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/prusa3d/prusa-connect/sdk/fault"
 )
@@ -82,6 +83,28 @@ var (
 		fault.ShowDetail,
 	))
 
+	// PreviewPatternUnknown is a diagnostic pattern asked for by a name this module does not draw.
+	// It is a 400 and not a 409 because nothing about the light is wrong: the request names a
+	// picture that does not exist, and the sentence lists the three that do.
+	PreviewPatternUnknown = fault.Register(faultDomain, "PREVIEW_PATTERN_UNKNOWN", http.StatusBadRequest, fault.Document(
+		"This module draws no diagnostic pattern of that name",
+		"The pictures this module can put on the panel to test it are solid, border and quarters: solid is the whole panel in white, border is a white edge two pixels thick, quarters is four colours in four quadrants. Name one of those three in the pattern parameter. Nothing was fired and nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"pattern",
+	))
+
+	// PreviewHoldOutOfRange is a hold these preview routes will not run: not a whole number of
+	// seconds, not positive, or longer than the ceiling. It is refused rather than clamped,
+	// because a hold silently shortened would be a look the caller was told he had.
+	PreviewHoldOutOfRange = fault.Register(faultDomain, "PREVIEW_HOLD_OUT_OF_RANGE", http.StatusBadRequest, fault.Document(
+		"The hold is not a length these previews will run",
+		"hold is a whole number of seconds. It defaults to 60, which is what the finished event itself holds for, and it may not exceed 300: a preview keeps the light away from the printer's own picture for as long as it runs. Nothing was fired.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"hold",
+	))
+
 	// BindingNotFound is a read, a change or a delete of a binding this module is not driving.
 	// A binding is named by the device id of the printer it shows, so the refusal names the id
 	// that missed and says where the list is.
@@ -146,6 +169,14 @@ func mustDomain(name string) fault.Domain {
 	}
 
 	return domain
+}
+
+// holdRefusal turns holdFrom's error into the registered refusal, carrying the value the caller
+// sent so that the sentence and the fault agree about what was asked for.
+func holdRefusal(r *http.Request, err error) *fault.Fault {
+	return PreviewHoldOutOfRange.
+		New(err.Error()).
+		With(fault.StringParam("hold", strings.TrimSpace(r.URL.Query().Get("hold"))))
 }
 
 // refuse writes one refusal as RFC 9457 frames it, which is the shape the
