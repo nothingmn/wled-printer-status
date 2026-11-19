@@ -101,7 +101,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **208 tests**: 102 in the root package, 23 in
+`gofmt -l .` printing any path is a failure. Today there are **214 tests**: 108 in the root package, 23 in
 `internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in `internal/ddp`, 6 in
 `internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
