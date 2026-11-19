@@ -52,7 +52,7 @@ Everything odd about this repository follows from that one sentence:
 
 | path | what it is, and what you may assume |
 | --- | --- |
-| `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status`, `GET /status`, `POST /preview-finished` and `POST /preview-pattern`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
+| `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status`, `GET /status`, `POST /preview-finished`, `POST /preview-pattern` and `POST /preview-frame`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
 | `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
 | `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
 | `schedule.go` | **The brightness through the day.** `brightness_schedule` is a list of windows and `timezone` is the zone they are judged in; this file reads both, refuses a window or a zone it cannot act on by naming the line and the field, and answers "which brightness at this instant". It exists because of one trap worth a file: the process's clock is the container's, which is UTC, and the operator is seven hours behind it. Package `main`. |
@@ -60,6 +60,7 @@ Everything odd about this repository follows from that one sentence:
 | `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the three things a word on a panel costs — one body that establishes the panel over JSON, one frame of pixels pushed over DDP, and a read that says the controller took it. `writer.preview` is the same event, fired now, for the route. Package `main`, beside the frame path because it is the same writer. |
 | `pixels.go` | **The pixel transport.** The DDP sender for one controller — one socket, opened on the first event — the address arithmetic that turns the operator's `controller_address` into `host:4048`, the frame that lays the word out as the whole panel, and the repeat that keeps a still picture alive past WLED's 2500 ms realtime timeout. It is also where the four measurements that killed per-LED JSON control are written down. Package `main`, because one writer owns both transports. |
 | `pattern.go` | **The diagnostic ladder.** Three pictures — `solid`, `border`, `quarters` — each answering one of the faults a dark panel hides, and the table that says so. A pattern is an `event` with no word in it (`event.pattern`), which is how it gets the word's own writer, hold, repeat and hand-back for free; the route is `POST /preview-pattern`. Package `main`. |
+| `layout.go` | **A panel's arrangement, as data.** The `layout` setting — `bar`, `bar_band`, `bar_rows`, `percent`, `name`, `remaining`, `rotate_seconds` — read strictly at configure and refused, with the field and the value, when it asks for a picture this build cannot draw. `panelPicture.draw` composes the whole panel as pixels: the background, the bar's band filled to the job's own fraction of the width, then the digits or the job's name (the rotation's half, read from the moment given to it) centred in the rows the bar leaves. Both the steady path and `POST /preview-frame` call it, which is what makes the preview the printing picture. A layout with every part switched off is the zero value and draws the plain frame. Package `main`. |
 | `internal/text/` | **The word, in pixels.** A 5×7 glyph table drawn for this repository — capitals, digits, a space, a full stop, a hyphen and a percent sign — and a rasteriser that centres a word on a panel, returns the lit pixel indices in the panel's own row-major order, and refuses a word that would not fit at the scale asked for. No transport, no clock, no colour: it answers with indices and leaves the drawing to the caller. It exists because WLED's own text effect does not honour the segment on this firmware — see §5.4. |
 | `internal/render/` | **The decision.** `Decide` is a pure function from a snapshot, a moment and an LED count to a colour, a fill and a reason. The operator's state table lives here, and the two calls still marked PROVISIONAL (Q-15's unfilled colour, Q-17's rounding) are one-line changes. |
 | `internal/ddp/` | **The event's transport.** Frames of pixels over DDP/UDP to port 4048: the ten-byte header, the big-endian channel offset, the push flag on the last datagram and no other, 480 pixels a datagram. Steady frames still go over JSON, because only JSON reads back and carries a segment's name and geometry; the word goes over DDP because this firmware draws none of the per-LED colours a JSON body carries. Both paths are proved to draw the same frame by `ddp_agreement_test.go`. |
@@ -101,7 +102,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **214 tests**: 108 in the root package, 23 in
+`gofmt -l .` printing any path is a failure. Today there are **229 tests**: 123 in the root package, 23 in
 `internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in `internal/ddp`, 6 in
 `internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
@@ -205,7 +206,16 @@ server, which is the one small task the number above is about, so the event's pi
 once a second for as long as it holds (`pixelRepeat`) — 35 datagrams a second of identical bytes, about
 50 kB/s. The rate is chosen against the controller's own `realtimeTimeoutMs` of 2500 ms: a still picture
 needs only enough repeats to survive it, one a second is two and a half times the margin, and faster
-would be the same bytes for nothing. **It is still not permission to stream.** Raising it is a change to
+would be the same bytes for nothing.
+
+**A printing panel pays that rate for the length of the print.** A composed picture — a bar, digits and the
+job's name — is pixels as well, and this firmware draws pixels only in realtime, so a panel holding one is
+pushed at the same rate until the job ends: 35 datagrams and about 50 kB a second, for however many hours
+the print takes, while the JSON side stays at one write when the picture takes the panel and one when it
+gives it back. That price is the reason the composed picture is drawn only for a job in progress (`aboutAJob`):
+idle, finished, stopped, an error and a printer that has gone quiet stay on the panel's own segments.
+
+**It is still not permission to stream.** Raising it is a change to
 what the panel's WiFi does all evening, and the arithmetic belongs in the same sentence as the number.
 
 Two waits sit under that budget and neither is an addition to it. A still picture is repainted once a
@@ -407,6 +417,14 @@ marketplace the way a stranger would. What follows is what is not proved even on
   panel and said what he saw. What the three pictures buy is that his one look, if the panel is dark, is
   evidence about *which* fault: a dark `solid` is the transport, a `border` that is not a rectangle is the
   map, and a `quarters` in the wrong corners is the orientation.
+- **The composed picture has never been looked at either.** Since the fourteenth install a printing panel
+  holds the bar, the digits and the job's name, and what the reads prove is the transport and the budget,
+  not the picture: segment 0 read back as the whole panel with its name cleared while `live` stayed true,
+  and `last_send` did not move as the progress went from 10 % to 11 %. Whether the bar is the twelve rows
+  the default layout asks for at the end it names, whether `41%` is 85 by 35 pixels in the middle of what
+  the bar leaves, whether the name is cut where `fitName` says it is, and whether the rotation actually
+  swaps every fifteen seconds are the operator's to look at. Nothing in this repository may describe that
+  picture as drawn until he has.
 - **The bus subscription has never carried a real printer's frames.** Its cadence, the origin narrowing
   and the 30 s staleness horizon are proven against **fakes only**. The source has been open on a live
   instance beside a printing printer and the frames moved with it, but nothing in the record separates what

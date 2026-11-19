@@ -377,7 +377,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **214 tests** — 108 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **229 tests** — 123 in
 the root package, 23 in `internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in
 `internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
 or a real controller:
