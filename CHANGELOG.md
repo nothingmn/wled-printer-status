@@ -12,8 +12,28 @@ the top, and `version:` in `module.yaml` is the newest released heading below it
 
 ## Unreleased
 
+### Changed
+
+- **A light is shown by the name it calls itself, with its address beside it, and both are links.** The
+  heading of a card on the Lights screen reads `CyberDesk (http://10.0.0.253)` — the name the light
+  reported when it was read, never the address and never anything typed — and each part opens that
+  light's own web interface in a new window, with an accessible name that says so. A light that has not
+  answered yet has no name to show, so its address stands alone, still a link, and the card says it has
+  not answered.
+- **The lights with no printer are the first thing on the Lights screen, under their own heading.** They
+  used to be one card lost among the lights already doing a job, which meant a light somebody had just
+  added had to be hunted for. *Lights with no printer* now sits above *Lights with a printer on them*,
+  with a count beside each, in the same shape the Overview's gap lists use; each area stays drawn when
+  it is empty and says so in one line. A light with a printer on one of its zones has a binding and
+  belongs in the second area, not the first.
+
 ### Fixed
 
+- **The paragraph about replacing a light appears once for the page, not on every card.** There is no
+  replace route, so the paragraph explains a feature that does not exist — and repeated per light it
+  was an apology rather than information about the light. It is now one line for the whole screen,
+  folded away and closed by default, saying what a swap would check (identical hardware, segments
+  matched by name) and that it is not built here. The cards go back to describing the lights.
 - **A line's toggle changes that line and nothing else on the Layout screen.** Pressing one of the
   seven used to move the whole card — the line above the controls saying "Saved" was cleared before
   each write and set again when the route answered, so every control jumped up a row and back down,

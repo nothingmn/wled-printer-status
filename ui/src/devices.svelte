@@ -34,9 +34,22 @@
 	//     the light's whole configuration and restarts it, and **has never been run against a real
 	//     light on this build**, so the dialog says that in as many words and shows the sections it
 	//     would write and the ones it refuses to;
-	//   - **replacing a light** — §2.6's swap, which has no route in this build. The card says what the
-	//     swap would require and states that nothing here does it, because a button that cannot work
-	//     is worse than a sentence.
+	//   - **replacing a light** — §2.6's swap, which has no route in this build. It used to be a
+	//     paragraph on every card, which is an apology repeated once per light; it is now said once
+	//     for the page, folded away, because the cards' job is describing the lights.
+	//
+	// Two things about how a light is *named* on this screen, both his words of 2026-11-19:
+	//
+	//   - **a light is its own name, and both parts are links.** The heading of a card reads
+	//     `CyberDesk (http://10.0.0.253)`: the name the light reports for itself, its address in
+	//     parentheses, and both are anchors to the light's own web interface in a new window. The
+	//     name comes from `GET /lights` (`calls_itself`), never from the address and never typed. A
+	//     light that has not answered has no name, so it shows its address alone — still a link — and
+	//     says it has not answered;
+	//   - **a light with no printer is not lost among the others.** It gets its own named area at the
+	//     top of the screen, in the same idiom Overview's gap lists use: a bordered block, a band
+	//     naming the gap with its count, and the cards inside. A light with a printer on one of its
+	//     zones *has* a binding and belongs below, under its own band.
 	//
 	// A light that is not answering has its test buttons off, with the reason on the card: offering a
 	// button that cannot reach the light teaches somebody to distrust the tests that do work.
@@ -54,6 +67,7 @@
 		type SnapshotDetailBody,
 		type SnapshotsBody,
 	} from './api';
+	import Disclosure from './disclosure.svelte';
 	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
 	import { addressOf, known, lights, loadKnownLights, nameOf, type LightFacts } from './lights.svelte';
@@ -67,6 +81,12 @@
 
 	/** How long a test keeps the light. The routes' own default, said out loud before it fires. */
 	const HOLD_SECONDS = 60;
+
+	/** The name a light calls itself, in the card's heading, worn as a link. */
+	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
+
+	/** Its address, in the same heading, in the controller's own monospace and one step smaller. */
+	const ADDRESS_LINK = 'font-mono text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** One card's own answer from a route that names lights, keyed by the light's route name. */
 	const answerFor = <T extends { lights: { light: string; refused?: string; why?: string; answers?: string }[] }>(
@@ -115,6 +135,32 @@
 
 	const frameOfLight = (one: LightFacts): Frame | undefined =>
 		frames.find((frame) => frame.light.name === nameOf(one));
+
+	/**
+	 * The light's own web interface, as an anchor's `href`: its address, given a scheme when it was
+	 * stored without one. A light is added by its address, so this is the address it answered at —
+	 * nothing here builds a URL out of anything else.
+	 */
+	const urlOf = (one: LightFacts): string => {
+		const address = addressOf(one).trim();
+		if (address === '') return '';
+
+		return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(address) ? address : `http://${address}`;
+	};
+
+	/** One light's presets as last read, for a card drawn inside a snippet. */
+	const heldOf = (one: LightFacts): PresetsBody | undefined => presets[nameOf(one)];
+
+	/** One light's snapshots as last read, for a card drawn inside a snippet. */
+	const keptOf = (one: LightFacts): SnapshotsBody | undefined => snapshots[nameOf(one)];
+
+	/**
+	 * The lights no binding names — the ones drawn first, under their own band — and the ones that do
+	 * have a printer. A light with a printer on one of its zones has a binding and is not in the first
+	 * list: the test is a binding, not room, which is the rule Overview's gap list records too.
+	 */
+	const unbound = $derived(lights.list.filter((one) => one.bindings.length === 0));
+	const bound = $derived(lights.list.filter((one) => one.bindings.length > 0));
 
 	/** One snapshot's detail, when the operator has asked to see what a restore would write. */
 	const detailOf = (light: string, id: string): SnapshotDetailBody | undefined => details[`${light}|${id}`];
@@ -469,19 +515,52 @@
 			<p class="text-sm font-medium">{t('devices.no_lights')}</p>
 		</div>
 	{:else}
-		{#each lights.list as one (nameOf(one))}
+		<!-- One link to a light's own interface. Both parts of the heading use it, so the new window,
+		     the rel that keeps it apart from this page, and the sentence a screen reader hears are
+		     written once: `target="_blank"` with `rel="noopener"`, and an accessible name that starts
+		     with the visible text and says what will open. -->
+		{#snippet lightLink(one: LightFacts, text: string, label: string, cls: string)}
+			<a href={urlOf(one)} target="_blank" rel="noopener" aria-label={label} class={cls}>{text}</a>
+		{/snippet}
+
+		<!-- The address in parentheses, kept on one line so it never wraps between the name and
+		     its own address. The brackets are drawn but hidden from a screen reader: the anchors
+		     carry their own names, and `left paren` between them is noise. -->
+		{#snippet addressInParens(one: LightFacts)}
+			<span class="whitespace-nowrap"
+				><span class="font-normal opacity-60" aria-hidden="true">{' ('}</span>{@render lightLink(
+					one,
+					addressOf(one),
+					t('devices.open_address', { address: addressOf(one) }),
+					ADDRESS_LINK,
+				)}<span class="font-normal opacity-60" aria-hidden="true">{')'}</span
+				></span
+			>
+		{/snippet}
+
+		<!-- The card, written once and drawn in whichever area its light belongs to. #each over a
+		     filtered list twice would be two copies of this markup, and two copies of a card drift. -->
+		{#snippet card(one: LightFacts)}
 			{@const light = nameOf(one)}
-			{@const frame = frameOfLight(one)}
 			{@const kind = kindOf(one)}
-			{@const held = presets[light]}
-			{@const kept = snapshots[light]}
+			{@const held = heldOf(one)}
+			{@const kept = keptOf(one)}
 			{@const reachable = answers(one)}
+			{@const called = calledOf(one)}
 
 			<article class="flex flex-col gap-3 rounded border p-3" data-device={light}>
-				<!-- The light, and whether it answered. -->
+				<!-- The light: the name it calls itself with its address in parentheses, and both are
+				     links to its own interface in a new window. A light that has not answered has no
+				     name to show, so the address stands alone — still a link — and says so. -->
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="text-sm font-semibold">{one.controller?.name ?? light}</span>
-					<span class="font-mono text-[11px] opacity-60">{addressOf(one)}</span>
+					<h2 class="text-sm font-semibold">
+						{#if called !== ''}
+							{@render lightLink(one, called, t('devices.open_named', { name: called }), NAME_LINK)}{@render addressInParens(one)}
+						{:else}
+							{@render lightLink(one, addressOf(one), t('devices.open_address', { address: addressOf(one) }), ADDRESS_LINK)}
+							<span class="text-xs font-normal opacity-60">{t('devices.no_name_yet')}</span>
+						{/if}
+					</h2>
 					{#if one.bindings.length === 0}
 						<Badge variant="outline" size="sm">{t('devices.no_printer_badge')}</Badge>
 					{/if}
@@ -731,14 +810,6 @@
 					{/if}
 				</div>
 
-				<!-- Replacing a light: what §2.6 asks for, and why no button is here. -->
-				<div class="flex flex-col gap-1 rounded border border-dashed px-3 py-2 text-[11px]">
-					<span class="text-xs font-medium">{t('devices.replace_heading')}</span>
-					<p>{t('devices.replace_none')}</p>
-					<p class="opacity-70">{t('devices.replace_bindings')}</p>
-					<p class="opacity-70">{t('devices.replace_out_of_scope')}</p>
-				</div>
-
 				<!-- Taking the light off the list. Off while a binding still writes to it, with the
 				     reason beside it, and the route refuses it too if it is called some other way. -->
 				<div class="flex flex-wrap items-center gap-2 border-t pt-2">
@@ -759,47 +830,98 @@
 					<p class="text-[11px]" role="alert">{removeSaid[light]}</p>
 				{/if}
 			</article>
-		{/each}
+	{/snippet}
 
-		<!-- The restore dialog. It stays on the page rather than in a modal: it is the warning. -->
-		{#if confirming !== null}
-			{@const detail = details[`${confirming.light}|${confirming.id}`]}
-			<div class="flex flex-col gap-2 rounded border p-3" role="dialog" aria-label={t('devices.restore_dialog')}>
-				<h2 class="text-sm font-semibold">{t('devices.restore_dialog_heading', { light: confirming.light, id: confirming.id })}</h2>
-				<p class="text-sm">{t('devices.restore_warning_destructive')}</p>
-				<p class="text-sm font-medium" role="alert">{t('devices.restore_never_fired')}</p>
-				<p class="text-xs opacity-80">{t('devices.restore_safety')}</p>
-				<p class="text-xs opacity-80">{t('devices.restore_nw_warning')}</p>
-
-				{#if detail !== undefined}
-					<p class="text-xs opacity-80">
-						<span class="font-medium">{t('devices.restore_writes')}</span>
-						{detail.restore.sections.join(', ')}
-					</p>
-					<p class="text-xs opacity-80">
-						<span class="font-medium">{t('devices.restore_withheld')}</span>
-						{detail.restore.withheld.map((one) => `${one.section} (${one.why})`).join('; ')}
-					</p>
-				{/if}
-
-				<label class="flex items-center gap-2 text-sm">
-					<input type="checkbox" class="h-4 w-4" bind:checked={understood} />
-					<span>{t('devices.restore_understand')}</span>
-				</label>
-
-				<div class="flex flex-wrap items-center gap-2">
-					<Button variant="secondary" size="sm" disabled={!understood || busy[confirming.light] === true} onclick={() => void runRestore()}>
-						{t('devices.restore_now')}
-					</Button>
-					<Button variant="link" size="sm" onclick={() => (confirming = null)}>{t('devices.restore_cancel')}</Button>
-				</div>
+	<!-- The lights no printer is on, first and under their own band: a light somebody has just
+	     added is the first thing on the screen, and never one card lost among the working ones.
+	     The idiom is Overview's gap list — a bordered block, a band naming the gap with its count,
+	     and the rows inside — so the two screens say "this one isn't doing anything yet" the same
+	     way. The area stays drawn when it is empty and says so in one line, as Overview's does. -->
+	<div class="overflow-hidden rounded border" data-area="unbound">
+		<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+			<span>{t('devices.unbound_heading')}</span>
+			<span class="ml-auto font-normal opacity-60">{t('devices.lights_count', { count: unbound.length })}</span>
+		</div>
+		<p class="border-b px-3 py-2 text-xs opacity-70">{t('devices.unbound_note')}</p>
+		{#if unbound.length === 0}
+			<p class="px-3 py-3 text-sm opacity-70">{t('devices.unbound_none')}</p>
+		{:else}
+			<div class="flex flex-col gap-3 p-3">
+				{#each unbound as one (nameOf(one))}
+					{@render card(one)}
+				{/each}
 			</div>
 		{/if}
+	</div>
 
-		<div class="flex flex-col gap-1 text-xs opacity-70">
-			<p>{t('devices.note_split')}</p>
-			<p>{t('devices.note_segments')}</p>
-			<p>{t('devices.note_presets')}</p>
+	<!-- The lights a printer is on, the same shape, below. -->
+	<div class="overflow-hidden rounded border" data-area="bound">
+		<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+			<span>{t('devices.bound_heading')}</span>
+			<span class="ml-auto font-normal opacity-60">{t('devices.lights_count', { count: bound.length })}</span>
 		</div>
+		{#if bound.length === 0}
+			<p class="px-3 py-3 text-sm opacity-70">{t('devices.bound_none')}</p>
+		{:else}
+			<div class="flex flex-col gap-3 p-3">
+				{#each bound as one (nameOf(one))}
+					{@render card(one)}
+				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<!-- §2.6's swap, once for the page rather than once per card: there is no replace route, and a
+	     paragraph explaining a feature that does not exist is an apology, not information about a
+	     light. It folds away in the same disclosure Bindings and Diagnostics use, and its summary
+	     line says both things a reader needs — what a swap would check, and that it is not built. -->
+	<Disclosure summary={t('devices.replace_heading')} hint={t('devices.replace_hint')}>
+		<div class="flex flex-col gap-1 px-3 py-2 text-[11px]">
+			<p>{t('devices.replace_none')}</p>
+			<p class="opacity-70">{t('devices.replace_bindings')}</p>
+			<p class="opacity-70">{t('devices.replace_out_of_scope')}</p>
+		</div>
+	</Disclosure>
+
+	<!-- The restore dialog. It stays on the page rather than in a modal: it is the warning. -->
+	{#if confirming !== null}
+		{@const detail = details[`${confirming.light}|${confirming.id}`]}
+		<div class="flex flex-col gap-2 rounded border p-3" role="dialog" aria-label={t('devices.restore_dialog')}>
+			<h2 class="text-sm font-semibold">{t('devices.restore_dialog_heading', { light: confirming.light, id: confirming.id })}</h2>
+			<p class="text-sm">{t('devices.restore_warning_destructive')}</p>
+			<p class="text-sm font-medium" role="alert">{t('devices.restore_never_fired')}</p>
+			<p class="text-xs opacity-80">{t('devices.restore_safety')}</p>
+			<p class="text-xs opacity-80">{t('devices.restore_nw_warning')}</p>
+
+			{#if detail !== undefined}
+				<p class="text-xs opacity-80">
+					<span class="font-medium">{t('devices.restore_writes')}</span>
+					{detail.restore.sections.join(', ')}
+				</p>
+				<p class="text-xs opacity-80">
+					<span class="font-medium">{t('devices.restore_withheld')}</span>
+					{detail.restore.withheld.map((one) => `${one.section} (${one.why})`).join('; ')}
+				</p>
+			{/if}
+
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" class="h-4 w-4" bind:checked={understood} />
+				<span>{t('devices.restore_understand')}</span>
+			</label>
+
+			<div class="flex flex-wrap items-center gap-2">
+				<Button variant="secondary" size="sm" disabled={!understood || busy[confirming.light] === true} onclick={() => void runRestore()}>
+					{t('devices.restore_now')}
+				</Button>
+				<Button variant="link" size="sm" onclick={() => (confirming = null)}>{t('devices.restore_cancel')}</Button>
+			</div>
+		</div>
+	{/if}
+
+	<div class="flex flex-col gap-1 text-xs opacity-70">
+		<p>{t('devices.note_split')}</p>
+		<p>{t('devices.note_segments')}</p>
+		<p>{t('devices.note_presets')}</p>
+	</div>
 	{/if}
 </section>
