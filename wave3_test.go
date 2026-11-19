@@ -297,25 +297,76 @@ func TestASideBySideRotationIsStoredAndSaysWhatItDraws(t *testing.T) {
 	}
 }
 
-// TestALayoutThatAsksForTimeRemainingIsRefused is the one control the mockup draws disabled: this
-// build draws no time remaining, so a body asking for it is refused rather than silently ignored.
-func TestALayoutThatAsksForTimeRemainingIsRefused(t *testing.T) {
+// TestTheSevenOptionalLinesAreStoredPerBinding is the model the operator asked for: seven lines he
+// can switch on one binding at a time, each reported with the origin of its value so a screen can
+// say whether the answer is his or the default.
+func TestTheSevenOptionalLinesAreStoredPerBinding(t *testing.T) {
 	under := newWave3UnderTest(t, twoPrinters(), twoBindings(), "", at(), "America/Denver")
 
-	status, body := under.do(t, http.MethodPut, "/bindings/printer-a/layout", `{"remaining": true}`)
+	body := `{"remaining": true, "temperatures": true, "material": true, "printer_name": true, "layer": true}`
+
+	status, answer := under.do(t, http.MethodPut, "/bindings/printer-a/layout", body)
+	if status != http.StatusOK {
+		t.Fatalf("five of the lines were refused with %d: %v", status, answer)
+	}
+
+	said := readObject(t, answer, "layout")
+
+	for _, key := range []string{"remaining", "temperatures", "material", "printer_name", "layer"} {
+		if !readBool(t, said, key) {
+			t.Fatalf("%s reads false in the answer, and it was written true", key)
+		}
+
+		if got := readString(t, said, key+"_origin"); got != fromStore {
+			t.Fatalf("%s's origin reads %q, want %q", key, got, fromStore)
+		}
+	}
+
+	for _, key := range []string{"ends", "elapsed"} {
+		if readBool(t, said, key) {
+			t.Fatalf("%s reads true and it was not written", key)
+		}
+
+		if got := readString(t, said, key+"_origin"); got != fromDefault {
+			t.Fatalf("%s's origin reads %q, want %q", key, got, fromDefault)
+		}
+	}
+
+	// The zone the ETA line would write a clock in travels beside them, because it is the one thing
+	// a screen cannot compute: the setting's, not the layout's.
+	if got := readString(t, said, "zone"); got != "America/Denver" {
+		t.Fatalf("the answer's zone reads %q, want America/Denver", got)
+	}
+
+	// And it is on that binding only: the other one is untouched, which is what per binding means.
+	held := under.stored(t)
+	if len(held.Layouts) != 1 || held.Layouts[0].Material == nil || !*held.Layouts[0].Material {
+		t.Fatalf("the store does not hold the lines that were written: %+v", held.Layouts)
+	}
+}
+
+// TestTheEndsLineIsRefusedOnAModuleWithNoZone is the one refusal the optional lines still carry.
+//
+// The clock time is written in the zone the `timezone` setting names and in nothing else (AGENTS.md
+// §5.14), so a layout that asks for it on a module with no zone would draw nothing every time —
+// which is the failure the old `remaining: true` refusal was there to prevent, in a new place.
+func TestTheEndsLineIsRefusedOnAModuleWithNoZone(t *testing.T) {
+	under := newWave3UnderTest(t, twoPrinters(), twoBindings(), "", at(), "")
+
+	status, body := under.do(t, http.MethodPut, "/bindings/printer-a/layout", `{"ends": true}`)
 	if status != http.StatusConflict {
-		t.Fatalf("remaining: true answered %d, want 409: %v", status, body)
+		t.Fatalf("ends: true with no zone answered %d, want 409: %v", status, body)
 	}
 
 	detail, _ := body["detail"].(string)
-	if !strings.Contains(detail, "no time remaining") {
-		t.Fatalf("the refusal %q does not say this build draws no time remaining", detail)
+	if !strings.Contains(detail, "ends is true") || !strings.Contains(detail, "timezone setting names no zone") {
+		t.Fatalf("the refusal %q does not name the setting that has to change", detail)
 	}
 
-	// False is accepted, because the mockup sends the control's value whether it is on or off.
-	status, body = under.do(t, http.MethodPut, "/bindings/printer-a/layout", `{"remaining": false, "name": false}`)
+	// Every other line is still accepted, because only the clock needs a zone.
+	status, body = under.do(t, http.MethodPut, "/bindings/printer-a/layout", `{"remaining": true}`)
 	if status != http.StatusOK {
-		t.Fatalf("remaining: false answered %d, want 200: %v", status, body)
+		t.Fatalf("remaining: true with no zone answered %d, want 200: %v", status, body)
 	}
 }
 

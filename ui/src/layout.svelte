@@ -7,7 +7,17 @@
 	//
 	//   - **A panel is a matrix** (256 x 64 on the operator's light), so it carries the whole composer:
 	//     the bar and the band it sits in, how many rows that band is, the percentage at scale 5, 4 or
-	//     3, the job's name, and whether the two take turns or sit side by side, every N seconds.
+	//     3, the job's name, whether the two take turns or sit side by side every N seconds, and the
+	//     seven optional lines that may sit under the picture — time remaining, the clock it ends at,
+	//     the temperatures, how long it has been printing, the material, the printer's name, and how far
+	//     up it has printed.
+	//
+	// The seven lines are a menu and not a layout: each takes seven rows with one blank row between, so
+	// most sets of them cannot fit a 64-row panel beside the digits. The arithmetic is therefore part of
+	// this screen and not a surprise after saving — how many fit, which lines have to go, and which of
+	// the two numbers the picture is made of (the bar's rows or the digits' scale) would take them all.
+	// It is the module's own rule restated, and the refusal is a sentence rather than a switch that
+	// springs back.
 	//   - **A strip is one dimension** (48 LEDs), so it carries a fill from the left and nothing else.
 	//     No bar band, no words, no layers: that is the dimension, not a missing feature. The screen
 	//     says so rather than leaving a blank tab for somebody to wonder about, and it offers the four
@@ -43,6 +53,7 @@
 		type Layout,
 		type LayoutRequest,
 		type LayoutsBody,
+		type Origin,
 	} from './api';
 	import { ageText, describe, segmentText } from './format';
 	import { heldHost } from './host';
@@ -52,7 +63,35 @@
 	const api = moduleApi(host);
 	const t = host.t;
 
-	/** What one binding is being edited towards: the eight keys the route writes. */
+	/** One of the seven optional lines: its key on the route, in the store, and in a draft. */
+	type LineKey = 'remaining' | 'ends' | 'temperatures' | 'elapsed' | 'material' | 'printer_name' | 'layer';
+
+	/**
+	 * The seven lines in the order the module draws them — the operator's ranking — with the words
+	 * this screen names each one by and the line the panel draws for it, which is the tooltip.
+	 */
+	const LINES: { key: LineKey; label: string; what: string }[] = [
+		{ key: 'remaining', label: 'layout.line_remaining', what: 'layout.line_remaining_what' },
+		{ key: 'ends', label: 'layout.line_ends', what: 'layout.line_ends_what' },
+		{ key: 'temperatures', label: 'layout.line_temperatures', what: 'layout.line_temperatures_what' },
+		{ key: 'elapsed', label: 'layout.line_elapsed', what: 'layout.line_elapsed_what' },
+		{ key: 'material', label: 'layout.line_material', what: 'layout.line_material_what' },
+		{ key: 'printer_name', label: 'layout.line_printer_name', what: 'layout.line_printer_name_what' },
+		{ key: 'layer', label: 'layout.line_layer', what: 'layout.line_layer_what' },
+	];
+
+	/** Where each line's origin is read from, so a toggle can say whose value it is showing. */
+	const LINE_ORIGIN: Record<LineKey, keyof Layout> = {
+		remaining: 'remaining_origin',
+		ends: 'ends_origin',
+		temperatures: 'temperatures_origin',
+		elapsed: 'elapsed_origin',
+		material: 'material_origin',
+		printer_name: 'printer_name_origin',
+		layer: 'layer_origin',
+	};
+
+	/** What one binding is being edited towards: the fifteen keys the route writes. */
 	interface Draft {
 		bar: boolean;
 		bar_band: 'top' | 'bottom';
@@ -60,6 +99,13 @@
 		percent: boolean;
 		percent_scale: 3 | 4 | 5;
 		name: boolean;
+		remaining: boolean;
+		ends: boolean;
+		temperatures: boolean;
+		elapsed: boolean;
+		material: boolean;
+		printer_name: boolean;
+		layer: boolean;
 		rotation: 'take-turns' | 'side-by-side';
 		rotate_seconds: number;
 	}
@@ -80,10 +126,15 @@
 	 * restated so the screen and the painter cannot disagree about whether a layout fits.
 	 */
 	const GLYPH_ROWS = 7;
-	const NAME_ROWS = 14;
+	const NAME_SCALE_MAX = 2;
+	const NAME_ROWS = NAME_SCALE_MAX * GLYPH_ROWS;
 	const SIDE_DIGITS_SCALE = 4;
 	const SIDE_DIGITS_SCALE_SHORT = 3;
 	const SIDE_BAND_FOR_FULL = 28;
+	const MIN_PERCENT_SCALE = 3;
+	/** One optional line's height, and the blank row the module leaves between two of them. */
+	const LINE_ROWS = GLYPH_ROWS;
+	const LINE_GAP = 1;
 
 	/** The four reasons a frame is about a job in progress, which is when a panel composes at all. */
 	const JOB_REASONS = ['progress', 'starting', 'paused-frozen', 'progress-unknown'];
@@ -112,6 +163,13 @@
 		percent: one.percent,
 		percent_scale: one.percent_scale,
 		name: one.name,
+		remaining: one.remaining,
+		ends: one.ends,
+		temperatures: one.temperatures,
+		elapsed: one.elapsed,
+		material: one.material,
+		printer_name: one.printer_name,
+		layer: one.layer,
 		rotation: one.rotation,
 		rotate_seconds: one.rotate_seconds,
 	});
@@ -146,17 +204,161 @@
 	/** The rows the text band has left: the panel's height less the bar. */
 	const textRows = (draft: Draft, height: number): number => height - barRows(draft);
 
+	/** The lines this draft switches on, in the order the module draws them. */
+	const linesOn = (draft: Draft): LineKey[] => LINES.filter((line) => draft[line.key]).map((line) => line.key);
+
+	/** The rows a stack of that many lines takes: seven each and one blank row between each pair. */
+	const stackHeight = (count: number): number => (count <= 0 ? 0 : count * LINE_ROWS + (count - 1) * LINE_GAP);
+
+	/** The scale the job's name is drawn at in a band of that many rows: as large as it allows, twice at most. */
+	const nameScale = (band: number): number => Math.min(Math.max(Math.floor(band / GLYPH_ROWS), 1), NAME_SCALE_MAX);
+
+	/** One line in the operator's words, spelled out here so the catalogue check can see every key. */
+	const lineName = (key: LineKey): string => {
+		switch (key) {
+			case 'remaining':
+				return t('layout.line_remaining');
+			case 'ends':
+				return t('layout.line_ends');
+			case 'temperatures':
+				return t('layout.line_temperatures');
+			case 'elapsed':
+				return t('layout.line_elapsed');
+			case 'material':
+				return t('layout.line_material');
+			case 'printer_name':
+				return t('layout.line_printer_name');
+			case 'layer':
+				return t('layout.line_layer');
+		}
+	};
+
+	/** A set of lines as a sentence: "a", "a and b", "a, b and c". */
+	const joinWords = (words: string[]): string =>
+		words.length === 0 ? '' : words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+
+	/** A set of lines in the operator's words, joined for a sentence. */
+	const lineNames = (keys: LineKey[]): string => joinWords(keys.map((key) => lineName(key)));
+
+	/**
+	 * The rows the picture's own row needs in a band of that many rows: the taller of the digits and
+	 * the name, at the scales that band allows. `layout.go`'s primaryHeight, restated.
+	 */
+	const primaryHeight = (draft: Draft, band: number): number => {
+		let height = 0;
+
+		if (draft.percent) height = Math.max(height, draft.percent_scale * GLYPH_ROWS);
+		if (draft.name) height = Math.max(height, nameScale(band) * GLYPH_ROWS);
+
+		// Side by side both parts are up at once and the digits are capped, which is the mockup's rule.
+		if (draft.rotation === 'side-by-side' && draft.percent && draft.name) {
+			const cap = band < SIDE_BAND_FOR_FULL ? SIDE_DIGITS_SCALE_SHORT : SIDE_DIGITS_SCALE;
+			height = Math.max(height, Math.min(draft.percent_scale, cap) * GLYPH_ROWS, NAME_ROWS);
+		}
+
+		return height;
+	};
+
+	/**
+	 * How many of the optional lines a text band of that many rows can hold beside the picture's own
+	 * row: the count that leaves a primary band with a glyph's worth of rows and holds what the
+	 * picture needs, counted down from the most asked for. Zero when none fits.
+	 */
+	const stackFit = (draft: Draft, band: number, wanted: number): number => {
+		for (let count = wanted; count > 0; count -= 1) {
+			const primary = band - stackHeight(count);
+
+			if (primary < GLYPH_ROWS) continue;
+			if (primaryHeight(draft, primary) <= primary) return count;
+		}
+
+		return 0;
+	};
+
+	/** What in the picture's own row is asking for rows, for the refusal: the part that took the room. */
+	const primaryPhrase = (draft: Draft, band: number): string => {
+		const digits = draft.percent ? draft.percent_scale * GLYPH_ROWS : 0;
+		const name = draft.name ? nameScale(band) * GLYPH_ROWS : 0;
+
+		if (digits > 0 && name > 0 && draft.rotation === 'side-by-side') return t('layout.fit_what_beside');
+		if (digits >= name && digits > 0) return t('layout.fit_what_digits', { scale: draft.percent_scale });
+		if (name > 0) return t('layout.fit_what_name');
+
+		return t('layout.fit_what_picture');
+	};
+
+	/**
+	 * Whether this draft would draw on a panel of that height with every line it asks for — `holds`
+	 * in `layout.go`, asked without a sentence. The candidates below are put back through it, so a
+	 * sentence that says "a bar of six rows" is a sentence that has been tried.
+	 */
+	const holds = (draft: Draft, height: number, wanted: number): boolean => {
+		const rows = barRows(draft);
+		if (rows >= height) return false;
+
+		const left = height - rows;
+		if ((draft.percent || draft.name || wanted > 0) && left < GLYPH_ROWS) return false;
+
+		const count = stackFit(draft, left, wanted);
+		if (count < wanted) return false;
+
+		const primary = count > 0 ? left - stackHeight(count) : left;
+
+		return primaryHeight(draft, primary) <= primary;
+	};
+
+	/** The thickest bar this panel could hold with every line asked for, and null when none would. */
+	const rowsThatFit = (draft: Draft, height: number, wanted: number): number | null => {
+		for (let rows = 0; rows < barRows(draft); rows += 1) {
+			// A bar of no rows is a bar switched off: the route spells those two differently.
+			const thinner: Draft = { ...draft, bar: rows > 0, bar_rows: rows > 0 ? rows : draft.bar_rows };
+
+			if (holds(thinner, height, wanted)) return rows;
+		}
+
+		return null;
+	};
+
+	/** The smallest percentage scale that would hold every line asked for, and null when none would. */
+	const scaleThatFits = (draft: Draft, height: number, wanted: number): number | null => {
+		if (!draft.percent) return null;
+
+		for (let scale = MIN_PERCENT_SCALE; scale < draft.percent_scale; scale += 1) {
+			if (holds({ ...draft, percent_scale: scale as 3 | 4 | 5 }, height, wanted)) return scale;
+		}
+
+		return null;
+	};
+
+	/** Every way this panel could hold all the lines asked for, as whole sentences. */
+	const roomsFor = (draft: Draft, height: number, wanted: number): string[] => {
+		const rooms: string[] = [];
+		const rows = rowsThatFit(draft, height, wanted);
+
+		if (rows !== null && rows < barRows(draft)) {
+			rooms.push(rows === 0 ? t('layout.room_bar_off', { count: wanted }) : t('layout.room_bar', { rows, count: wanted }));
+		}
+
+		const scale = scaleThatFits(draft, height, wanted);
+		if (scale !== null) rooms.push(t('layout.room_scale', { scale, count: wanted }));
+
+		return rooms;
+	};
+
 	/**
 	 * Whether a draft fits the panel it is pointed at, and the sentence for either answer.
 	 *
-	 * This is `bandsOn` and `beside` restated: a bar that leaves fewer rows than one glyph, a pinned
-	 * scale whose digits are taller than the band, and — side by side — the digits capped at four (or
-	 * three on a short band) beside a name fourteen rows tall, which must all fit on one line. It is
-	 * arithmetic on the height the frame reports, so it is skipped when that height is unknown.
+	 * This is `bandsOn`, `fitOn` and `tooTall` restated: a bar that leaves fewer rows than one glyph,
+	 * the optional lines the band can hold, a pinned scale whose digits are taller than what the lines
+	 * leave, and — side by side — the digits capped at four (or three on a short band) beside a name
+	 * fourteen rows tall. A set of lines that does not fit is refused by naming them, so the answer is
+	 * which switch to turn off rather than "invalid". It is arithmetic on the height the frame
+	 * reports, so it is skipped when that height is unknown.
 	 */
 	const fitOf = (draft: Draft, height: number): { fits: boolean; said: string } => {
 		const rows = barRows(draft);
 		const left = textRows(draft, height);
+		const wanted = linesOn(draft);
 
 		const band = t('layout.fit_band', { height, rows, left });
 		const digits = t('layout.fit_digits', { scale: draft.percent_scale, rows: draft.percent_scale * GLYPH_ROWS });
@@ -166,24 +368,69 @@
 			return { fits: false, said: t('layout.fit_no_room', { rows, height }) };
 		}
 
-		if (drawn && left < GLYPH_ROWS) {
+		if ((drawn || wanted.length > 0) && left < GLYPH_ROWS) {
 			return { fits: false, said: t('layout.fit_no_text', { rows, left, glyph: GLYPH_ROWS }) };
 		}
 
-		if (draft.percent && draft.percent_scale * GLYPH_ROWS > left) {
-			return { fits: false, said: t('layout.fit_scale', { band, digits, left, scale: draft.percent_scale }) };
+		// The lines are placed first, because they are what the picture's own row gives way to.
+		const count = stackFit(draft, left, wanted.length);
+		const held = wanted.slice(0, count);
+		const missed = wanted.slice(count);
+		const primary = count > 0 ? left - stackHeight(count) : left;
+
+		if (missed.length > 0) {
+			const rooms = roomsFor(draft, height, wanted.length);
+
+			return {
+				fits: false,
+				said: t('layout.fit_lines_over', {
+					lines: lineNames(wanted),
+					height,
+					rows,
+					left,
+					need: primaryPhrase(draft, left),
+					needRows: primaryHeight(draft, left),
+					fits: count,
+					total: wanted.length,
+					held: held.length === 0 ? t('layout.fit_none') : lineNames(held),
+					missed: lineNames(missed),
+					rooms: rooms.length === 0 ? t('layout.room_none') : rooms.join(' '),
+				}),
+			};
+		}
+
+		if (draft.percent && draft.percent_scale * GLYPH_ROWS > primary) {
+			return { fits: false, said: t('layout.fit_scale', { band, digits, left: primary, scale: draft.percent_scale }) };
 		}
 
 		if (draft.rotation === 'side-by-side' && draft.percent && draft.name) {
-			const cap = left < SIDE_BAND_FOR_FULL ? SIDE_DIGITS_SCALE_SHORT : SIDE_DIGITS_SCALE;
+			const cap = primary < SIDE_BAND_FOR_FULL ? SIDE_DIGITS_SCALE_SHORT : SIDE_DIGITS_SCALE;
 			const beside = Math.min(draft.percent_scale, cap) * GLYPH_ROWS;
 
-			if (Math.max(beside, NAME_ROWS) > left) {
+			if (Math.max(beside, NAME_ROWS) > primary) {
 				return {
 					fits: false,
-					said: t('layout.fit_beside', { scale: Math.min(draft.percent_scale, cap), digits: beside, name: NAME_ROWS, left }),
+					said: t('layout.fit_beside', {
+						scale: Math.min(draft.percent_scale, cap),
+						digits: beside,
+						name: NAME_ROWS,
+						left: primary,
+					}),
 				};
 			}
+		}
+
+		if (wanted.length > 0) {
+			return {
+				fits: true,
+				said: t('layout.fit_lines_ok', {
+					band,
+					lines: lineNames(wanted),
+					count: wanted.length,
+					rows: stackHeight(wanted.length),
+					left: primary,
+				}),
+			};
 		}
 
 		return { fits: true, said: t('layout.fit_ok', { band, left }) };
@@ -192,21 +439,28 @@
 	/**
 	 * The picture's boxes to scale, for the sketch under the controls.
 	 *
-	 * It draws what the draft *is* — the band, the text band, the digits' box and the name's box — and
-	 * not a rendering of the module's glyphs, so it is the arithmetic a person can see. A box taller
-	 * than the band it belongs in is drawn at its true height, which is the point of showing it: that
-	 * is the picture that will not fit, and the module refuses it rather than cropping it.
+	 * It draws what the draft *is* — the band, the text band, the digits' box, the name's box and one
+	 * box per optional line — and not a rendering of the module's glyphs, so it is the arithmetic a
+	 * person can see. A box that does not fit is drawn at its true height and overflows its band,
+	 * which is the point of showing it: that is the picture the module refuses rather than crops.
 	 */
-	const sketchOf = (draft: Draft, width: number, height: number): {
+	const sketchOf = (
+		draft: Draft,
+		width: number,
+		height: number,
+	): {
 		barTop: number;
 		barRows: number;
 		textTop: number;
 		textRows: number;
+		primaryRows: number;
 		digitsX: number;
+		digitsTop: number;
 		digitsRows: number;
 		digitsWidth: number;
 		nameX: number;
 		nameWidth: number;
+		lines: { key: LineKey; top: number; rows: number }[];
 	} => {
 		const rows = barRows(draft);
 		const band = { barTop: 0, textTop: 0 };
@@ -217,7 +471,20 @@
 		}
 
 		const left = height - rows;
-		const cap = left < SIDE_BAND_FOR_FULL ? SIDE_DIGITS_SCALE_SHORT : SIDE_DIGITS_SCALE;
+		const wanted = linesOn(draft);
+		const stack = stackHeight(wanted.length);
+		const primaryRows = Math.max(0, left - stack);
+
+		// Every line asked for is drawn, bottom up in the module's order, whether or not it fits: a
+		// stack taller than the band has to be visible as one.
+		const linesTop = band.textTop + left - stack;
+		const lines = wanted.map((key, index) => ({
+			key,
+			top: linesTop + index * (LINE_ROWS + LINE_GAP),
+			rows: LINE_ROWS,
+		}));
+
+		const cap = primaryRows < SIDE_BAND_FOR_FULL ? SIDE_DIGITS_SCALE_SHORT : SIDE_DIGITS_SCALE;
 		const scale = draft.rotation === 'side-by-side' && draft.name ? Math.min(draft.percent_scale, cap) : draft.percent_scale;
 
 		// "100%" is four glyphs: five columns each plus the space between them, so twenty-three columns
@@ -232,11 +499,14 @@
 			barRows: rows,
 			textTop: band.textTop,
 			textRows: left,
+			primaryRows,
 			digitsX: beside ? 10 : Math.max(0, (width - digitsWidth) / 2),
+			digitsTop: band.textTop + Math.max(0, (primaryRows - digitsRows) / 2),
 			digitsRows,
 			digitsWidth,
 			nameX,
 			nameWidth: beside ? Math.max(0, width - nameX - 4) : width,
+			lines,
 		};
 	};
 
@@ -360,7 +630,13 @@
 			percent: draft.percent,
 			percent_scale: draft.percent_scale,
 			name: draft.name,
-			remaining: false,
+			remaining: draft.remaining,
+			ends: draft.ends,
+			temperatures: draft.temperatures,
+			elapsed: draft.elapsed,
+			material: draft.material,
+			printer_name: draft.printer_name,
+			layer: draft.layer,
 			rotation: draft.rotation,
 			rotate_seconds: draft.rotate_seconds,
 		};
@@ -433,6 +709,7 @@
 			draft.percent !== held.percent ||
 			draft.percent_scale !== held.percent_scale ||
 			draft.name !== held.name ||
+			LINES.some((line) => draft[line.key] !== held[line.key]) ||
 			draft.rotation !== held.rotation ||
 			draft.rotate_seconds !== held.rotate_seconds
 		);
@@ -684,11 +961,6 @@
 							/>
 						</label>
 
-						<label class="flex items-center gap-2 pb-1 text-sm opacity-60" title={t('layout.remaining_note')}>
-							<input type="checkbox" class="h-4 w-4" checked={false} disabled />
-							<span>{t('layout.remaining')}</span>
-						</label>
-
 						{#if dirty(one)}
 							<Button variant="link" size="sm" disabled={busy} onclick={() => (drafts[one.id] = draftOf(one))}>
 								{t('layout.discard')}
@@ -700,7 +972,42 @@
 						<p class="text-[11px] opacity-70">{one.rotation_note ?? t('layout.side_by_side_what')}</p>
 					{/if}
 
-					<p class="text-[11px] opacity-60">{t('layout.remaining_note')}</p>
+					<!--
+						The seven optional lines. Each is one switch, each says whether the value in force is
+						yours or the default, and the count under the heading is the rows they have taken out of
+						the text band — because that is what decides whether the picture still fits.
+					-->
+					<div class="flex flex-col gap-2 rounded border px-2 py-2">
+						<div class="flex flex-wrap items-baseline gap-2">
+							<span class="text-sm font-medium">{t('layout.lines_heading')}</span>
+							<span class="text-[11px] opacity-60">
+								{t('layout.lines_count', { on: linesOn(draft).length, rows: stackHeight(linesOn(draft).length) })}
+							</span>
+						</div>
+						<p class="text-[11px] opacity-60">{t('layout.lines_note')}</p>
+
+						<div class="grid gap-1 md:grid-cols-2">
+							{#each LINES as line (line.key)}
+								<label class="flex items-center gap-2 text-sm" title={t(line.what)}>
+									<input
+										type="checkbox"
+										class="h-4 w-4"
+										checked={draft[line.key]}
+										disabled={busy}
+										onchange={(event) => edit(one, { [line.key]: (event.currentTarget as HTMLInputElement).checked })}
+									/>
+									<span>{t(line.label)}</span>
+									<span class="text-[10px] opacity-60">
+										{(one[LINE_ORIGIN[line.key]] as Origin) === 'store' ? t('layout.yours') : t('layout.default')}
+									</span>
+								</label>
+							{/each}
+						</div>
+
+						{#if draft.ends && one.zone === ''}
+							<p class="text-[11px]" role="note">{t('layout.line_ends_no_zone')}</p>
+						{/if}
+					</div>
 
 					<!-- The arithmetic, and the verdict that follows from it. -->
 					<div class="rounded border px-2 py-2 text-xs {fit !== null && !fit.fits ? 'border-2' : ''}">
@@ -741,7 +1048,7 @@
 								{#if draft.percent}
 									<rect
 										x={sketch.digitsX}
-										y={sketch.textTop + Math.max(0, (sketch.textRows - sketch.digitsRows) / 2)}
+										y={sketch.digitsTop}
 										width={sketch.digitsWidth}
 										height={sketch.digitsRows}
 										fill="none"
@@ -753,7 +1060,7 @@
 								{#if draft.name && draft.rotation === 'side-by-side'}
 									<rect
 										x={sketch.nameX}
-										y={sketch.textTop + Math.max(0, (sketch.textRows - 14) / 2)}
+										y={sketch.textTop + Math.max(0, (sketch.primaryRows - 14) / 2)}
 										width={sketch.nameWidth}
 										height="14"
 										fill="none"
@@ -762,6 +1069,21 @@
 										stroke-opacity="0.6"
 									/>
 								{/if}
+								{#each sketch.lines as line (line.key)}
+									<!-- One box per optional line, seven rows and a blank row apart, along the bottom
+									     of the text band: the rows the picture's own row gives way to. -->
+									<rect
+										data-line={line.key}
+										x="0"
+										y={line.top}
+										width={frame?.width ?? 256}
+										height={line.rows}
+										fill="currentColor"
+										fill-opacity="0.15"
+										stroke="currentColor"
+										stroke-opacity="0.5"
+									/>
+								{/each}
 							</svg>
 							<p class="mt-1 text-[10px] opacity-60">{t('layout.sketch_caption')}</p>
 						{/if}

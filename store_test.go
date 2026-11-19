@@ -500,7 +500,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 5 {
+	if found.Config.Version != storeVersion || storeVersion != 6 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -998,5 +998,84 @@ func TestAVersionFourStoreStepsToFiveAndKeepsEveryTable(t *testing.T) {
 
 	if again.Upgraded {
 		t.Fatal("the document was stepped a second time, and it is already at this build's version")
+	}
+}
+
+// TestAVersionFiveStoreStepsToSixAndInventsNoLine is the step this change adds, and the one thing it
+// must not do.
+//
+// Version 6 is the panel's seven optional lines, and every one of them is absent until somebody
+// switches it on. A version-5 row never carried one and must not acquire one at the upgrade: a line
+// written as `false` by the upgrade would be indistinguishable from a line a person had switched off,
+// and the row would grow a key nobody wrote on every install that had ever been laid out.
+func TestAVersionFiveStoreStepsToSixAndInventsNoLine(t *testing.T) {
+	const panel = "07e893bb-b922-4ff0-9ad3-061b957400c3"
+
+	dir := writeStoreFile(t, `{
+  "version": 5,
+  "bindings": [{"id": "`+panel+`", "printer": "`+panel+`", "controller": "http://10.0.0.136", "segment": -1, "brightness": 128}],
+  "states": [],
+  "moments": [],
+  "layouts": [{"binding": "`+panel+`", "bar": true, "bar_band": "top", "bar_rows": 12, "percent": true, "percent_scale": 3, "name": true, "rotation": "take-turns", "rotate_seconds": 15}],
+  "windows": [],
+  "pauses": []
+}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 5 document was refused: %v", err)
+	}
+
+	if found.Version != 5 {
+		t.Fatalf("the read says the document carried version %d, want 5", found.Version)
+	}
+
+	if !found.Upgraded {
+		t.Fatal("the read does not say the document was upgraded, and it was written at version 5")
+	}
+
+	if found.Config.Version != 6 || storeVersion != 6 {
+		t.Fatalf("the upgraded document is at version %d, want 6", found.Config.Version)
+	}
+
+	if len(found.Config.Layouts) != 1 {
+		t.Fatalf("the stepped document holds %d layout rows, want the one it had", len(found.Config.Layouts))
+	}
+
+	row := found.Config.Layouts[0]
+	if row.Binding != panel || row.BarBand == nil || *row.BarBand != "top" ||
+		row.PercentScale == nil || *row.PercentScale != 3 || row.RotateSeconds == nil || *row.RotateSeconds != 15 {
+		t.Fatalf("the stepped layout row reads %+v, want the picture it described", row)
+	}
+
+	for _, held := range []*bool{
+		row.Remaining, row.Ends, row.Temperatures, row.Elapsed, row.Material, row.PrinterName, row.Layer,
+	} {
+		if held != nil {
+			t.Fatalf("the upgrade wrote a line into a version-5 row: %+v", row)
+		}
+	}
+
+	// And a version-6 row that does name one keeps it, through a write and a read: the upgrade is
+	// the only step in question here, and the shape is the shape.
+	// The row in the document, not the copy read above: a slice element is what a write hands back.
+	line := true
+	found.Config.Layouts[0].Material = &line
+
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the stepped store back: %v", err)
+	}
+
+	again, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("read the document back at version 6: %v", err)
+	}
+
+	if again.Upgraded {
+		t.Fatal("the document was stepped a second time, and it is already at this build's version")
+	}
+
+	if again.Config.Layouts[0].Material == nil || !*again.Config.Layouts[0].Material {
+		t.Fatalf("the line the row names did not survive the round trip: %+v", again.Config.Layouts[0])
 	}
 }

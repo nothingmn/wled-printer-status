@@ -199,6 +199,7 @@ type lights interface {
 	level(at time.Time) (brightnessNow, bool)
 	moment(id string) (momentEntry, bool)
 	layout() (layout, bool)
+	clock() (*time.Location, bool)
 }
 
 // storeLights is one binding's view of this module's own configuration: the document's three
@@ -396,6 +397,22 @@ func (s *storeLights) layout() (layout, bool) {
 	}
 
 	return row.resolved().shape(), true
+}
+
+// clock is the zone a panel's optional ETA line writes its clock in — the `timezone` setting's — and
+// false when this module has none it can load.
+//
+// It is `location` without the sentence: a picture is drawn on a tick and a writer cannot say
+// anything about a missing setting once a second. With no zone the ETA line is simply not drawn
+// (layout.go's endsWord), and the route refuses a layout that asks for it while the setting is
+// missing.
+func (s *storeLights) clock() (*time.Location, bool) {
+	location, _, err := s.location()
+	if err != nil {
+		return nil, false
+	}
+
+	return location, true
 }
 
 // location is the zone the windows are judged in, and the refusal when there is none to judge them

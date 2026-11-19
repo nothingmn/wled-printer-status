@@ -670,3 +670,95 @@ func TestTheWriterReportsWhatItsLightIsHolding(t *testing.T) {
 
 // ptr is a pointer to one value, for the expiry a pause carries.
 func ptr[T any](value T) *T { return &value }
+
+// TestTheThumbnailCarriesThePanelSOptionalLines is the "one renderer" rule, one field further.
+//
+// The lines a panel carries are drawn from the facts the frame published, so the thumbnail has to
+// carry them too — a picture beside the wall that showed the digits and not the temperature would be
+// a thumbnail of a panel that does not exist. It is proved the way the composed picture itself is:
+// the same frame through the same painter, compared pixel for pixel.
+func TestTheThumbnailCarriesThePanelSOptionalLines(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	zone, err := time.LoadLocation("America/Denver")
+	if err != nil {
+		t.Fatalf("load America/Denver: %v", err)
+	}
+
+	snapshot := printingJob("printer-a", 41)
+
+	frame := render.Frame{
+		Colour:  render.ColourPrinting,
+		Lit:     41 * 16384 / 100,
+		Total:   16384,
+		Percent: 41,
+		Name:    "MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode",
+		Reason:  render.ReasonProgress,
+		Panel: render.PanelFacts{
+			RemainingSeconds: 2520,
+			PrintingSeconds:  4320,
+			Nozzle:           render.Degrees{Now: 221, Target: 220, Reported: true},
+			Bed:              render.Degrees{Now: 60, Target: 60, Reported: true},
+			Material:         "PLA",
+			Printer:          "Hermes MK4",
+		},
+	}
+
+	// Three lines, which need the digits at scale 3 to fit: 21 rows of digits and 23 of lines are 44
+	// of the 52 the bar leaves.
+	own := layout{
+		bar:          true,
+		barBand:      bandBottom,
+		barRows:      defaultBarRows,
+		percent:      true,
+		percentScale: minPercentScale,
+		name:         false,
+		rotation:     rotationTakeTurns,
+		rotate:       defaultRotateSeconds * time.Second,
+		remaining:    true,
+		ends:         true,
+		temperatures: true,
+		zone:         zone,
+	}
+
+	publishBinding(panelBinding(), snapshot, frame)
+	publishShape(panelBinding(), bindingShape{geometry: livePanel, layout: own, laidOut: true})
+
+	pixels, width, height, _ := publishedPicture(t, under)
+
+	want, err := panelPicture{frame: frame, layout: own, at: framesAt}.draw(livePanel)
+	if err != nil {
+		t.Fatalf("draw the panel the writer composes: %v", err)
+	}
+
+	if len(want) != width*height {
+		t.Fatalf("the composition is %d pixels and the picture %dx%d", len(want), width, height)
+	}
+
+	for index := range want {
+		if pixels[index] != want[index] {
+			t.Fatalf("pixel %d is %+v, want the panel's own %+v", index, pixels[index], want[index])
+		}
+	}
+
+	// And the lines are really in it: the last rows of the text band are lit, which they are not when
+	// the facts do not travel.
+	bands, err := own.bandsOn(livePanel)
+	if err != nil {
+		t.Fatalf("the layout does not fit the panel: %v", err)
+	}
+
+	litInStack := 0
+
+	for row := bands.textTop + bands.primaryRows; row < bands.textTop+bands.textRows; row++ {
+		for column := range width {
+			if pixels[row*width+column] != finishedWordBackground {
+				litInStack++
+			}
+		}
+	}
+
+	if litInStack == 0 {
+		t.Fatal("the thumbnail's optional lines are blank, so the facts did not travel with the frame")
+	}
+}

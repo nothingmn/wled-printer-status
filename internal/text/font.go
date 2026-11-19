@@ -27,11 +27,17 @@ package text
 //
 // # What it holds
 //
-// The capital letters A to Z, the digits 0 to 9, the space, the full stop, the hyphen and
-// the percent sign. That is exactly what the module says in pixels — "FINISHED", and the
-// words and numbers a caller asks it for — and a character outside the table is refused by
-// Raster rather than drawn as a blank, because a word missing a letter is a word that reads
-// as something else.
+// The capital letters A to Z, the digits 0 to 9, the space, and the marks a panel's own lines
+// need: the full stop, the hyphen, the percent sign, the colon an ETA's clock is written with,
+// the slash between a nozzle's two temperatures, and the underscore. That is forty-three
+// glyphs, which is the set docs/product-requirements.md §2.4 locks: a character outside the
+// table is refused by Raster rather than drawn as a blank, because a word missing a letter is a
+// word that reads as something else.
+//
+// The colon and the slash were added after the first build. The requirement counted forty-three
+// glyphs from the start and the table held forty, so the ETA was written `ENDS 11.12` and the
+// temperatures `NOZ 221 220 BED 60` to do without them — a picture this font did not have to
+// draw. They are here now and the lines read `ENDS 11:12` and `NOZ 221/220 BED 60`.
 //
 // There is no lower-case set: a word is upper-cased by whoever writes it, and a font that
 // silently folded case would hide a mistake instead of naming it.
@@ -90,4 +96,12 @@ var glyphs = map[rune][GlyphRows]byte{
 	'.': {0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c},
 	'-': {0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00},
 	'%': {0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13},
+	// Two dots, the lower one on the full stop's own rows so the pair sits on the digits'
+	// baseline: 11:12 reads as a clock and not as a word with a mark in it.
+	':': {0x00, 0x0c, 0x0c, 0x00, 0x00, 0x0c, 0x0c},
+	// A diagonal from the bottom left to the top right, its ends doubled so that at scale one
+	// it reads as a stroke rather than as a dotted line.
+	'/': {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10},
+	// One row, at the baseline, because that is where an underscore sits.
+	'_': {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f},
 }

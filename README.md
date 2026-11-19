@@ -197,7 +197,9 @@ A strip can say one thing: a colour, and how much of the run is filled. A panel 
 
 ```json
 {"bar": true, "bar_band": "bottom", "bar_rows": 12,
- "percent": true, "name": true, "remaining": false, "rotate_seconds": 15}
+ "percent": true, "name": true, "rotate_seconds": 15,
+ "remaining": false, "ends": false, "temperatures": false, "elapsed": false,
+ "material": false, "printer_name": false, "layer": false}
 ```
 
 That is the default, and an instance that never writes the box runs on exactly those values. The keys are
@@ -210,14 +212,29 @@ the arrangement, and each one is a part of the picture rather than a mode:
 | `bar_rows` | how many rows the band takes, 1 to 48 of a 64-row panel | `12` |
 | `percent` | the progress in digits, such as `41%` | `true` |
 | `name` | the job's own name, on the other half of the rotation | `true` |
-| `remaining` | time remaining — **refused**, this build draws none | `false` |
 | `rotate_seconds` | how long each half holds the panel | `15` |
+| `remaining` | how long the job has left, as `42M` or `1H12M` | `false` |
+| `ends` | the clock time it ends at, as `ENDS 11:12`, in the `timezone` setting's zone | `false` |
+| `temperatures` | the nozzle and the bed, as `NOZ 221/220 BED 60` | `false` |
+| `elapsed` | how long it has been printing, as `1H12M` | `false` |
+| `material` | the filament's short name, as `PLA` | `false` |
+| `printer_name` | the machine's own name, as `HERMES MK4` | `false` |
+| `layer` | how far up the nozzle has got, as `Z 8.6MM` — a position, not a layer number | `false` |
+
+The seven lines are drawn at the font's own size, seven rows each with one blank row between, in that
+order, along the bottom of the text band; the digits and the name are centred in the rows they leave. A
+line the printer has not reported is left blank while its rows stay reserved. They are a menu, not a
+layout: a 64-row panel with a 12-row bar leaves 52 rows, the digits at scale 5 take 35 of them, and two
+lines fit — so a third is **refused**, not cropped, and the refusal names the lines and the two numbers
+(a thinner bar, or a smaller `percent_scale`) that would take them all. Four fit if the percentage drops to
+scale 3.
 
 Three things about it are worth knowing before you write one.
 
 **A layout is judged before the module starts.** A key this build does not read, a band it does not know,
-a `bar_rows` outside 1 to 48, a rotation of no seconds, or `remaining: true` refuses the start with the
-field and the value in the sentence — and so does a bar thicker than the panel the frame is drawn on. A
+a `bar_rows` outside 1 to 48, a rotation of no seconds, or a set of optional lines the panel cannot hold
+refuses the start with the field and the value in the sentence — and so does a bar thicker than the panel
+the frame is drawn on. A
 bar clamped to fit would be a picture nobody asked for, drawn without saying so.
 
 **Every part can be switched off.** A layout with `bar`, `percent` and `name` all false draws nothing of

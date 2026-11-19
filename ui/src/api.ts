@@ -485,8 +485,41 @@ export interface Layout {
   /** How long each half holds the panel, in seconds. */
   rotate_seconds: number;
   rotate_seconds_origin: Origin;
-  /** Always false: this build draws no time remaining, and the route refuses a body that asks. */
-  remaining: false;
+  /**
+   * The seven optional lines a panel can carry under the picture, each with the origin it came
+   * from. They are drawn in this order — the operator's own ranking — along the bottom of the
+   * text band, at the font's own size, and a line whose reading is absent is not drawn while its
+   * rows stay reserved.
+   */
+  remaining: boolean;
+  remaining_origin: Origin;
+  /** The clock the job ends at, such as `ENDS 11:12`, in `zone`. */
+  ends: boolean;
+  ends_origin: Origin;
+  /** `NOZ 221/220 BED 60`. */
+  temperatures: boolean;
+  temperatures_origin: Origin;
+  /** How long it has been printing, such as `1H12M`. */
+  elapsed: boolean;
+  elapsed_origin: Origin;
+  /** The filament's short name, such as `PLA`. */
+  material: boolean;
+  material_origin: Origin;
+  /** The machine's own name, such as `HERMES MK4`. */
+  printer_name: boolean;
+  printer_name_origin: Origin;
+  /**
+   * How far up the print the nozzle has got, as `Z 8.6MM`. The machine reports a position and no
+   * layer count, so this is the Z half of "layer / Z height" and not a layer number.
+   */
+  layer: boolean;
+  layer_origin: Origin;
+  /**
+   * The IANA zone the ETA line writes its clock in — the `timezone` setting's — and empty when
+   * this module has none it can load. With no zone the ETA line is blank: a clock written in the
+   * container's own zone would be hours out.
+   */
+  zone: string;
   /** `store` when anything about this layout came from the store. */
   origin: Origin;
   /** True when any value came from the store, which is what decides whether to offer a reset. */
@@ -529,8 +562,14 @@ export interface LayoutRequest {
   percent: boolean;
   percent_scale: 3 | 4 | 5;
   name: boolean;
-  /** May only be false: this build draws no time remaining, and true is refused rather than ignored. */
-  remaining: false;
+  /** The seven optional lines, in the order they are drawn. */
+  remaining: boolean;
+  ends: boolean;
+  temperatures: boolean;
+  elapsed: boolean;
+  material: boolean;
+  printer_name: boolean;
+  layer: boolean;
   rotation: 'take-turns' | 'side-by-side';
   rotate_seconds: number;
 }

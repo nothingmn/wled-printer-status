@@ -261,6 +261,15 @@ type Snapshot struct {
 	// printer that has never mentioned material.
 	Material Reading[string]
 
+	// AxisZ is how far up the print the nozzle has travelled, in millimetres, as the
+	// machine reports its own Z position. It is unknown for a machine that reports no
+	// position, and it may be negative — a head parked below the bed has a negative Z —
+	// so Known is what says whether there is a reading and not a sign.
+	//
+	// There is no layer count beside it: see PathAxisZ. A layer number would have to be
+	// derived from a layer height this tree does not carry.
+	AxisZ Reading[float64]
+
 	// LastChange is when the last update that actually changed a value arrived,
 	// in UTC. It is the zero time before anything has changed.
 	LastChange time.Time
@@ -308,6 +317,7 @@ func (s State) Snapshot(at time.Time) Snapshot {
 		Nozzle:     Temperature{Now: numberReading(s.tree, PathNozzleTemp), Target: numberReading(s.tree, PathNozzleTarget)},
 		Bed:        Temperature{Now: numberReading(s.tree, PathBedTemp), Target: numberReading(s.tree, PathBedTarget)},
 		Material:   textReading(s.tree, PathMaterial),
+		AxisZ:      numberReading(s.tree, PathAxisZ),
 		LastChange: s.lastChange.UTC(),
 		ObservedAt: at,
 		Issues:     copyIssues(s.record.Issues),

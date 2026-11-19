@@ -1316,14 +1316,39 @@ func (w *writer) drawablePanel(frame render.Frame) bool {
 // It is asked on every pass rather than kept, for the reason show.go gives about every other table:
 // the document is edited while the process runs, and a value cached at start is a panel whose layout
 // stops matching the screen the moment somebody changes it.
+//
+// The zone the ETA line writes its clock in is stamped on the answer here, and here only, so that
+// every path that draws a panel has it: this writer's own picture, the shape published for the
+// thumbnail, and the preview route all come through this function. A layout read straight out of the
+// store has no zone of its own — the zone is the `timezone` setting's, not the row's — so a
+// painter that took the row directly would draw no clock on a binding that has one.
 func (w *writer) composing() layout {
+	shape := w.layout
+
 	if w.store != nil {
 		if one, held := w.store.layout(); held {
-			return one
+			shape = one
 		}
 	}
 
-	return w.layout
+	if zone, ok := w.clock(); ok {
+		shape.zone = zone
+	}
+
+	return shape
+}
+
+// clock is the zone a clock time is written in, from the store this binding reads.
+//
+// Nil for a writer built without a store — every test that is not about the settings — and nil for a
+// module whose `timezone` setting names no zone it can load. Both draw no clock rather than a clock
+// in this process's own zone, which is seven hours from the operator's evening (AGENTS.md §5.14).
+func (w *writer) clock() (*time.Location, bool) {
+	if w.store == nil {
+		return nil, false
+	}
+
+	return w.store.clock()
 }
 
 // drawsComposed is the rule above as a function of its three facts, so that the one other caller
@@ -2429,6 +2454,62 @@ type frameView struct {
 	Name string `json:"name"`
 	// Reason names the rule that decided the frame.
 	Reason string `json:"reason"`
+	// Panel is what a panel's optional lines draw, and absent when the readings are not present
+	// tense: a frame that is stale or disconnected carries none of it, which is the same rule
+	// Percent keeps by going to -1.
+	Panel *panelFactsView `json:"panel,omitempty"`
+}
+
+// panelFactsView is render.PanelFacts as a caller of the route reads it, and as the thumbnail route
+// needs it back: every value with the unit in its name, and no zero standing for "nothing".
+type panelFactsView struct {
+	// RemainingSeconds and PrintingSeconds are what the machine says, and absent when it has said
+	// nothing.
+	RemainingSeconds *int `json:"remaining_seconds,omitempty"`
+	PrintingSeconds  *int `json:"printing_seconds,omitempty"`
+	// NozzleNow, NozzleTarget, BedNow and BedTarget are in degrees Celsius, and present only as a
+	// pair for each heater: a target of zero is a heater that is off.
+	NozzleNow    *float64 `json:"nozzle_now,omitempty"`
+	NozzleTarget *float64 `json:"nozzle_target,omitempty"`
+	BedNow       *float64 `json:"bed_now,omitempty"`
+	BedTarget    *float64 `json:"bed_target,omitempty"`
+	// Material is the filament's short name, and absent when the machine has said nothing.
+	Material string `json:"material,omitempty"`
+	// Printer is the machine's own name, from the host's record.
+	Printer string `json:"printer,omitempty"`
+	// HeightMM is the nozzle's Z position, and absent when the machine reports none.
+	HeightMM *float64 `json:"height_mm,omitempty"`
+}
+
+// panelFactsViewOf is one frame's facts as the route prints them, and nil when there are none.
+func panelFactsViewOf(facts render.PanelFacts) *panelFactsView {
+	said := panelFactsView{Material: facts.Material, Printer: facts.Printer}
+
+	if facts.RemainingSeconds >= 0 {
+		said.RemainingSeconds = &facts.RemainingSeconds
+	}
+
+	if facts.PrintingSeconds >= 0 {
+		said.PrintingSeconds = &facts.PrintingSeconds
+	}
+
+	if facts.Nozzle.Reported {
+		said.NozzleNow, said.NozzleTarget = &facts.Nozzle.Now, &facts.Nozzle.Target
+	}
+
+	if facts.Bed.Reported {
+		said.BedNow, said.BedTarget = &facts.Bed.Now, &facts.Bed.Target
+	}
+
+	if facts.HeightReported {
+		said.HeightMM = &facts.HeightMM
+	}
+
+	if said == (panelFactsView{}) {
+		return nil
+	}
+
+	return &said
 }
 
 // colourView is one colour, one byte per channel.
@@ -2495,6 +2576,7 @@ func viewOf(snapshot printer.Snapshot, frame render.Frame) view {
 			Percent: frame.Percent,
 			Name:    frame.Name,
 			Reason:  string(frame.Reason),
+			Panel:   panelFactsViewOf(frame.Panel),
 		},
 	}
 }

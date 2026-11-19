@@ -77,7 +77,14 @@ const (
 	// anyone read it. The step from 4 is deliberately a step that changes nothing in the rows:
 	// version 4 wrote no such moment, and a row without one keeps version 4's rule — the hold
 	// counts from the state's own entry.
-	storeVersion = 5
+	//
+	// Version 6 is the panel's seven optional lines: `remaining`, `ends`, `temperatures`,
+	// `elapsed`, `material`, `printer` and `layer` on a layout row. Each is absent until somebody
+	// switches it on, and absent means off — so the step from 5 changes nothing in any row either.
+	// A version-5 row could not have carried one: version 5's build had no such field and refused
+	// `remaining: true` by name, so this is a shape change with no data in it, which is why the
+	// step is the stamp alone.
+	storeVersion = 6
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -424,6 +431,29 @@ var storeUpgrades = []storeUpgrade{
 			fourth.Version = 5
 
 			return json.Marshal(fourth)
+		},
+	},
+	{
+		from: 5,
+		why:  "a layout row may name the panel's seven optional lines, all absent until somebody switches one on",
+		step: func(raw []byte) ([]byte, error) {
+			// Version 5 and version 6 are the same document and not the same rows: version 6's
+			// rows may carry the seven line keys and version 5's never did, so a version-5
+			// document decodes into this shape with every one of them absent — which is the rule
+			// version 6 has, because absent means the line is not switched on.
+			//
+			// A row that a person has edited by hand to carry `"material": true` on a version-5
+			// document is read as it stands and becomes a version-6 row that draws the line. That
+			// is deliberate: the key means what it says, and refusing it would be refusing a
+			// layout for the version it arrived in.
+			var fifth storedConfig
+			if err := decodeStrictly(raw, &fifth); err != nil {
+				return nil, err
+			}
+
+			fifth.Version = 6
+
+			return json.Marshal(fifth)
 		},
 	},
 }

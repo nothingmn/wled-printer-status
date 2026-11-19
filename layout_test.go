@@ -244,9 +244,9 @@ func TestTheLayoutRefusesWhatItCannotActOn(t *testing.T) {
 			names: []string{"bar_rows", "0", "1 to 48"},
 		},
 		{
-			name:  "time remaining, which this build does not draw",
-			raw:   `{"remaining": true}`,
-			names: []string{"remaining", "draws no time remaining", "refused rather than ignored"},
+			name:  "a key that names no line this build draws",
+			raw:   `{"layers": true}`,
+			names: []string{"unknown field", `"layers"`, "printer_name, layer"},
 		},
 		{
 			name:  "a rotation of no seconds",

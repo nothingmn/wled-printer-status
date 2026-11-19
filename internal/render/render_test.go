@@ -772,3 +772,72 @@ func TestAFinishedPrinterDoesNotFlashWhenItsReadingComesBack(t *testing.T) {
 		t.Fatal("the dip offers a live progress; the reading is meant to be honest about its age")
 	}
 }
+
+// TestThePanelFactsArePresentTenseOnly is the rule the percentage has had since it was written, one
+// field over: a temperature from four minutes ago is not a temperature, and a countdown read off a
+// printer that has gone quiet is a countdown to a moment that has already passed.
+//
+// A strip ignores the field entirely; what it protects is a panel.
+func TestThePanelFactsArePresentTenseOnly(t *testing.T) {
+	tree := printingTree(printer.StatePrinting, percent(41))
+	tree[printer.PathJobRemaining] = "2520"
+	tree[printer.PathJobPrinting] = "4320"
+	tree[printer.PathNozzleTemp] = "221.4"
+	tree[printer.PathNozzleTarget] = "220"
+	tree[printer.PathBedTemp] = "60.2"
+	tree[printer.PathBedTarget] = "60"
+	tree[printer.PathMaterial] = `"PLA"`
+	tree[printer.PathAxisZ] = "8.6"
+
+	// A panel's count, which is only ever a number in these tests: nothing in this package draws.
+	const panel = 16384
+
+	fresh := Decide(snapshotAt(t, true, tree, 0), moment, Config{LEDs: panel})
+
+	if fresh.Panel.RemainingSeconds != 2520 || fresh.Panel.PrintingSeconds != 4320 {
+		t.Fatalf("the counts read %d and %d, want 2520 and 4320", fresh.Panel.RemainingSeconds, fresh.Panel.PrintingSeconds)
+	}
+
+	if !fresh.Panel.Nozzle.Reported || fresh.Panel.Nozzle.Now != 221.4 || fresh.Panel.Nozzle.Target != 220 {
+		t.Fatalf("the nozzle reads %+v, want 221.4 of 220", fresh.Panel.Nozzle)
+	}
+
+	if !fresh.Panel.Bed.Reported || fresh.Panel.Bed.Now != 60.2 {
+		t.Fatalf("the bed reads %+v, want 60.2", fresh.Panel.Bed)
+	}
+
+	if fresh.Panel.Material != "PLA" || fresh.Panel.Printer != "test printer" {
+		t.Fatalf("the material and the name read %q and %q, want PLA and test printer",
+			fresh.Panel.Material, fresh.Panel.Printer)
+	}
+
+	if !fresh.Panel.HeightReported || fresh.Panel.HeightMM != 8.6 {
+		t.Fatalf("the height reads %+v, want 8.6 mm", fresh.Panel)
+	}
+
+	// A reading one second past the staleness horizon carries none of them: the printer is still the
+	// printer, and everything it said is a memory.
+	stale := Decide(snapshotAt(t, true, tree, staleAge), moment.Add(staleAge), Config{LEDs: panel})
+
+	if stale.Reason != ReasonStale {
+		t.Fatalf("the stale frame's reason is %q, want %q", stale.Reason, ReasonStale)
+	}
+
+	if stale.Panel.RemainingSeconds != -1 || stale.Panel.PrintingSeconds != -1 ||
+		stale.Panel.Nozzle.Reported || stale.Panel.Bed.Reported ||
+		stale.Panel.Material != "" || stale.Panel.HeightReported {
+		t.Fatalf("a stale frame carries readings: %+v", stale.Panel)
+	}
+
+	// The machine's own name is identity rather than a reading, so it survives.
+	if stale.Panel.Printer != "test printer" {
+		t.Fatalf("the stale frame's printer name reads %q, want the machine's", stale.Panel.Printer)
+	}
+
+	// And a disconnected printer carries nothing at all.
+	gone := Decide(snapshotAt(t, false, tree, 0), moment, Config{LEDs: panel})
+
+	if gone.Panel.RemainingSeconds != -1 || gone.Panel.Material != "" || gone.Panel.Nozzle.Reported {
+		t.Fatalf("a disconnected frame carries readings: %+v", gone.Panel)
+	}
+}

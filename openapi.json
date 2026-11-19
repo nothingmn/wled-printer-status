@@ -1024,9 +1024,16 @@
                         "bar_rows": {"type": "integer", "description": "How many rows the bar's band takes."},
                         "percent": {"type": "boolean", "description": "Whether the percentage is drawn in digits."},
                         "name": {"type": "boolean", "description": "Whether the job's name is drawn."},
-                        "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel."}
+                        "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel."},
+                        "remaining": {"type": "boolean", "description": "Whether how long the job has left is drawn."},
+                        "ends": {"type": "boolean", "description": "Whether the clock time the job ends at is drawn."},
+                        "temperatures": {"type": "boolean", "description": "Whether the temperatures are drawn."},
+                        "elapsed": {"type": "boolean", "description": "Whether how long the job has been printing is drawn."},
+                        "material": {"type": "boolean", "description": "Whether the material is drawn."},
+                        "printer_name": {"type": "boolean", "description": "Whether the printer's name is drawn."},
+                        "layer": {"type": "boolean", "description": "Whether the Z height is drawn."}
                       },
-                      "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds"]
+                      "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer"]
                     },
                     "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."},
                     "rotation_seconds": {"type": "integer", "description": "How long each half of the rotation holds the panel while the preview runs."},
@@ -1091,7 +1098,7 @@
       "put": {
         "operationId": "change-layout",
         "summary": "Set the layout one binding composes with",
-        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more; remaining may only be false, because this build draws no time remaining and a key that asks for a picture it will not draw is refused rather than ignored. side-by-side is drawn: the digits sit on the left and the job's name on the right, cut to the room the digits leave, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more. The seven optional lines — remaining, ends, temperatures, elapsed, material, printer_name, layer — are drawn under the picture in that order at the font's own size, seven rows each with one blank row between, and a set the panel cannot hold is refused rather than cropped: the refusal names the lines that did not fit, the ones that did, and which of the two numbers the picture is made of (a thinner bar, or a smaller percentage scale) would take them all. side-by-side is drawn: the digits sit on the left and the job's name on the right, cut to the room the digits leave, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LayoutRequest"}}}
@@ -1105,7 +1112,7 @@
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
           "404": {"description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "409": {"description": "A band this build does not know, a bar taller than the panel can spare, a scale outside 3-5, a rotation that is neither take-turns nor side-by-side, a rotation of no seconds, or remaining asked for on a build that draws none (LAYOUT_REFUSED). Nothing was changed.",
+          "409": {"description": "A band this build does not know, a bar taller than the panel can spare, a scale outside 3-5, a rotation that is neither take-turns nor side-by-side, a rotation of no seconds, or a set of optional lines this panel cannot hold (LAYOUT_REFUSED). The refusal for the lines is a sentence naming the ones that did not fit and what would make room for them. Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
           "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
@@ -2253,7 +2260,7 @@
       },
       "Layout": {
         "type": "object",
-        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, and whether the two take turns or sit side by side. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. remaining is always false and is reported rather than omitted, because the approved mockup draws the control and this build draws no time remaining. rotation_note is present only when the rotation was set to side-by-side, and says what that arrangement draws: the digits on the left at a capped scale, the job's name on the right cut to the room that is left.",
+        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, whether the two take turns or sit side by side, and which of the seven optional lines are drawn under the picture. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. The seven lines are drawn in the order listed — remaining, ends, temperatures, elapsed, material, printer_name, layer — at the font's own size, seven rows each with one blank row between, along the bottom of the text band; the picture's own row is centred in what they leave, and a line whose reading the printer has not reported is not drawn while its rows stay reserved, so the digits do not grow and shrink as readings come and go. A set of lines the panel cannot hold is refused by the write rather than cropped, and the sentence names the lines that did not fit and what would make room for them. zone is the IANA zone the ends line writes its clock in, and empty when this module has none it can load — with no zone that line is blank rather than written in the process's own clock. rotation_note is present only when the rotation was set to side-by-side, and says what that arrangement draws: the digits on the left at a capped scale, the job's name on the right cut to the room that is left.",
         "properties": {
           "id": {"type": "string", "description": "The binding's name on these routes: the host's device id while one printer is shown once, and <device id>@<light>:<segment> once it is shown twice."},
           "printer": {"type": "string", "description": "The host's device id for the printer the binding shows."},
@@ -2276,12 +2283,26 @@
           "rotation_origin": {"type": "string", "enum": ["default", "store"]},
           "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel, in seconds."},
           "rotate_seconds_origin": {"type": "string", "enum": ["default", "store"]},
-          "remaining": {"type": "boolean", "description": "Always false: this build draws no time remaining."},
+          "remaining": {"type": "boolean", "description": "Whether how long the job has left is drawn under the picture, as 42M or 1H12M."},
+          "remaining_origin": {"type": "string", "enum": ["default", "store"]},
+          "ends": {"type": "boolean", "description": "Whether the clock time the job ends at is drawn, as ENDS 11:12 in zone."},
+          "ends_origin": {"type": "string", "enum": ["default", "store"]},
+          "temperatures": {"type": "boolean", "description": "Whether the nozzle's temperature and target and the bed's are drawn, as NOZ 221/220 BED 60."},
+          "temperatures_origin": {"type": "string", "enum": ["default", "store"]},
+          "elapsed": {"type": "boolean", "description": "Whether how long the job has been printing is drawn, as 1H12M."},
+          "elapsed_origin": {"type": "string", "enum": ["default", "store"]},
+          "material": {"type": "boolean", "description": "Whether the filament's short name is drawn, as PLA."},
+          "material_origin": {"type": "string", "enum": ["default", "store"]},
+          "printer_name": {"type": "boolean", "description": "Whether the machine's own name is drawn, as HERMES MK4."},
+          "printer_name_origin": {"type": "string", "enum": ["default", "store"]},
+          "layer": {"type": "boolean", "description": "Whether how far up the nozzle has got is drawn, as Z 8.6MM. A layer count is not reported by the machine, so this is the Z position and not a layer number."},
+          "layer_origin": {"type": "string", "enum": ["default", "store"]},
+          "zone": {"type": "string", "description": "The IANA zone the ends line writes its clock in — the timezone setting's — and empty when this module has none it can load. With no zone that line is blank."},
           "origin": {"type": "string", "enum": ["default", "store"], "description": "store when this binding has a row in the store, default when it has none."},
           "overridden": {"type": "boolean", "description": "True when anything about this layout came from the store, which is what decides whether a screen offers a reset."},
           "rotation_note": {"type": "string", "description": "Present only when rotation is side-by-side: what this build does instead."}
         },
-        "required": ["printer", "light", "segment", "whole", "bar", "bar_band", "bar_rows", "percent", "percent_scale", "name", "rotation", "rotate_seconds", "remaining", "origin", "overridden"]
+        "required": ["printer", "light", "segment", "whole", "bar", "bar_band", "bar_rows", "percent", "percent_scale", "name", "rotation", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer", "zone", "origin", "overridden"]
       },
       "LayoutRequest": {
         "type": "object",
@@ -2293,7 +2314,13 @@
           "percent": {"type": "boolean", "description": "Draw the job's progress in digits."},
           "percent_scale": {"type": "integer", "enum": [3, 4, 5], "description": "The scale the digits are drawn at."},
           "name": {"type": "boolean", "description": "Draw the job's own name."},
-          "remaining": {"type": "boolean", "description": "May only be false: this build draws no time remaining, so true is refused rather than ignored."},
+          "remaining": {"type": "boolean", "description": "Draw how long the job has left, as 42M. A set of lines the panel cannot hold is refused rather than cropped, and the refusal names the lines that did not fit."},
+          "ends": {"type": "boolean", "description": "Draw the clock time the job ends at, as ENDS 11:12, in the timezone setting's zone. With no zone the line is blank."},
+          "temperatures": {"type": "boolean", "description": "Draw the nozzle's temperature and target and the bed's, as NOZ 221/220 BED 60."},
+          "elapsed": {"type": "boolean", "description": "Draw how long the job has been printing, as 1H12M."},
+          "material": {"type": "boolean", "description": "Draw the filament's short name, as PLA."},
+          "printer_name": {"type": "boolean", "description": "Draw the machine's own name, as HERMES MK4."},
+          "layer": {"type": "boolean", "description": "Draw how far up the nozzle has got, as Z 8.6MM. There is no layer count to draw."},
           "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side puts the digits on the left and the job's name on the right, cut to the room that is left."},
           "rotate_seconds": {"type": "integer", "minimum": 1, "description": "How long each half holds the panel."}
         }

@@ -75,7 +75,8 @@ var rotationChoices = []string{rotationTakeTurns, rotationSideBySide}
 // bindingLayoutKeys is the key set of one layout, for a refusal that has to say what it would have
 // accepted — the same sentence pattern the bindings setting answers with.
 func bindingLayoutKeys() string {
-	return "bar, bar_band, bar_rows, percent, percent_scale, name, remaining, rotation and rotate_seconds"
+	return "bar, bar_band, bar_rows, percent, percent_scale, name, remaining, ends, temperatures, elapsed, " +
+		"material, printer_name, layer, rotation and rotate_seconds"
 }
 
 // storedLayout is one binding's layout as the document holds it: the binding it is about, and only
@@ -105,6 +106,22 @@ type storedLayout struct {
 	Name          *bool   `json:"name,omitempty"`
 	Rotation      *string `json:"rotation,omitempty"`
 	RotateSeconds *int    `json:"rotate_seconds,omitempty"`
+
+	// The seven optional lines, each a pointer for the reason every other field is: absent is not
+	// false. A row written before schema version 6 has none of them, and none of them being
+	// written is what "this binding draws none" means — so the upgrade from 5 changes no row, and
+	// a row that carries `"material": false` is a person who switched it off deliberately.
+	//
+	// `remaining` was not a field at all before version 6: version 5's build refused it with a
+	// sentence, because nothing would have drawn it. This build draws it, so a row may now say
+	// so — see layout.go's layoutJSON for the setting that carries the same seven keys.
+	Remaining    *bool `json:"remaining,omitempty"`
+	Ends         *bool `json:"ends,omitempty"`
+	Temperatures *bool `json:"temperatures,omitempty"`
+	Elapsed      *bool `json:"elapsed,omitempty"`
+	Material     *bool `json:"material,omitempty"`
+	PrinterName  *bool `json:"printer_name,omitempty"`
+	Layer        *bool `json:"layer,omitempty"`
 }
 
 // empty says whether this row carries nothing at all, which is a row that is never written: DELETE
@@ -112,7 +129,9 @@ type storedLayout struct {
 // statement of the default drifting from the first.
 func (l storedLayout) empty() bool {
 	return l.Bar == nil && l.BarBand == nil && l.BarRows == nil && l.Percent == nil &&
-		l.PercentScale == nil && l.Name == nil && l.Rotation == nil && l.RotateSeconds == nil
+		l.PercentScale == nil && l.Name == nil && l.Rotation == nil && l.RotateSeconds == nil &&
+		l.Remaining == nil && l.Ends == nil && l.Temperatures == nil && l.Elapsed == nil &&
+		l.Material == nil && l.PrinterName == nil && l.Layer == nil
 }
 
 // bindingLayout is one binding's layout with every default filled in: what the composer would draw
@@ -129,6 +148,16 @@ type bindingLayout struct {
 	name         bool
 	rotation     string
 	rotate       time.Duration
+
+	// The seven optional lines, all false in the default: a binding nobody has laid out draws the
+	// picture this module has always drawn.
+	remaining    bool
+	ends         bool
+	temperatures bool
+	elapsed      bool
+	material     bool
+	printer      bool
+	layer        bool
 }
 
 // defaultBindingLayout is what a binding composes with when nobody has laid it out.
@@ -195,6 +224,14 @@ func (l storedLayout) resolved() bindingLayout {
 		got.rotate = time.Duration(*l.RotateSeconds) * time.Second
 	}
 
+	got.remaining = onOff(l.Remaining, got.remaining)
+	got.ends = onOff(l.Ends, got.ends)
+	got.temperatures = onOff(l.Temperatures, got.temperatures)
+	got.elapsed = onOff(l.Elapsed, got.elapsed)
+	got.material = onOff(l.Material, got.material)
+	got.printer = onOff(l.PrinterName, got.printer)
+	got.layer = onOff(l.Layer, got.layer)
+
 	return got
 }
 
@@ -214,6 +251,13 @@ func (l bindingLayout) shape() layout {
 		name:         l.name,
 		rotation:     l.rotation,
 		rotate:       l.rotate,
+		remaining:    l.remaining,
+		ends:         l.ends,
+		temperatures: l.temperatures,
+		elapsed:      l.elapsed,
+		material:     l.material,
+		printer:      l.printer,
+		layer:        l.layer,
 	}
 }
 
@@ -408,10 +452,30 @@ type layoutAnswer struct {
 	RotateSeconds  int    `json:"rotate_seconds"`
 	RotateOrigin   string `json:"rotate_seconds_origin"`
 
-	// Remaining is always false and is reported rather than left out, because the mockup draws the
-	// control: a screen that could not see the value would have to guess whether the module draws
-	// it, and this build does not.
-	Remaining bool `json:"remaining"`
+	// The seven optional lines, each with the origin it came from, in the operator's own words.
+	//
+	// `remaining` is one of them now. It used to be reported as a constant false beside a note
+	// saying this build drew none; it draws one, and the answer says so with the same shape every
+	// other value here has.
+	Remaining          bool   `json:"remaining"`
+	RemainingOrigin    string `json:"remaining_origin"`
+	Ends               bool   `json:"ends"`
+	EndsOrigin         string `json:"ends_origin"`
+	Temperatures       bool   `json:"temperatures"`
+	TemperaturesOrigin string `json:"temperatures_origin"`
+	Elapsed            bool   `json:"elapsed"`
+	ElapsedOrigin      string `json:"elapsed_origin"`
+	Material           bool   `json:"material"`
+	MaterialOrigin     string `json:"material_origin"`
+	PrinterName        bool   `json:"printer_name"`
+	PrinterNameOrigin  string `json:"printer_name_origin"`
+	Layer              bool   `json:"layer"`
+	LayerOrigin        string `json:"layer_origin"`
+
+	// Zone is the IANA zone the ETA line's clock is written in — the `timezone` setting's — and
+	// empty when this module has none it can load. A screen needs it for one sentence: the ETA line
+	// writes a clock time and nothing else, so with no zone it is a key that would draw nothing.
+	Zone string `json:"zone"`
 
 	// Origin is `store` when this binding has a row in the document and `default` when it has none,
 	// and Overridden says the same thing in the shape a screen branches on.
@@ -427,7 +491,11 @@ type layoutAnswer struct {
 
 // layoutAnswerOf renders one binding's layout: the row it has — possibly none — the picture that row
 // describes, and where each part of that picture came from.
-func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored bool) layoutAnswer {
+//
+// zone is the IANA zone the ETA line's clock is written in, and empty when this module has none it
+// can load: it is the `timezone` setting's and not the layout's, so it is handed in rather than
+// stored on the row.
+func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored bool, zone string) layoutAnswer {
 	resolved := row.resolved()
 
 	origin := fromDefault
@@ -470,7 +538,22 @@ func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored 
 		RotateSeconds:  int(resolved.rotate / time.Second),
 		RotateOrigin:   originOf(row.RotateSeconds != nil),
 
-		Remaining: false,
+		Remaining:          resolved.remaining,
+		RemainingOrigin:    originOf(row.Remaining != nil),
+		Ends:               resolved.ends,
+		EndsOrigin:         originOf(row.Ends != nil),
+		Temperatures:       resolved.temperatures,
+		TemperaturesOrigin: originOf(row.Temperatures != nil),
+		Elapsed:            resolved.elapsed,
+		ElapsedOrigin:      originOf(row.Elapsed != nil),
+		Material:           resolved.material,
+		MaterialOrigin:     originOf(row.Material != nil),
+		PrinterName:        resolved.printer,
+		PrinterNameOrigin:  originOf(row.PrinterName != nil),
+		Layer:              resolved.layer,
+		LayerOrigin:        originOf(row.Layer != nil),
+
+		Zone: zone,
 
 		Origin:     origin,
 		Overridden: stored,

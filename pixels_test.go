@@ -433,6 +433,11 @@ func TestTheWordIsPushedAgainOnceASecondForAsLongAsItHolds(t *testing.T) {
 	strip.waitForPaints(t, 1)
 	clock.waitArmed(t, 0)
 
+	// The mark is taken before the word is fired, so the wait the writer arms for the first repeat
+	// counts as a new one. Taken after the push it would usually already include it, and the loop
+	// below would then wait for a wait that cannot be armed until the clock moves.
+	armed := clock.mark()
+
 	pen.fire(finishedWordEvent())
 
 	waitFor(t, "the word's first frame to reach the transport", func() bool { return pushed.pushed() == 1 })
@@ -445,7 +450,15 @@ func TestTheWordIsPushedAgainOnceASecondForAsLongAsItHolds(t *testing.T) {
 
 	// One repeat for each second of the hold: the picture goes out at the moment the hold starts and
 	// at every whole second after it, and the last of those is one second before the hold ends.
+	//
+	// Each advance waits for the writer to have armed the repeat's own wait first, or the clock is
+	// moved while the writer is still inside the push it just made — the deadline it arms afterwards
+	// is then one the test did not mean, and a beat is lost for the rest of the hold. The failure
+	// reads as a repeat that never came, forty seconds later, and only on a loaded machine.
 	for second := 2; second <= int(finishedEventHolds/time.Second); second++ {
+		clock.waitArmed(t, armed)
+		armed = clock.mark()
+
 		clock.Advance(pixelRepeat)
 
 		want := second
@@ -466,6 +479,7 @@ func TestTheWordIsPushedAgainOnceASecondForAsLongAsItHolds(t *testing.T) {
 	}
 
 	// The hold ends: the steady frame takes the light back and nothing is pushed after it.
+	clock.waitArmed(t, armed)
 	clock.Advance(pixelRepeat)
 
 	waitFor(t, "the steady frame to come back at the end of the hold", func() bool {

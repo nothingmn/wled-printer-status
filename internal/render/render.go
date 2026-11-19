@@ -159,6 +159,112 @@ type Frame struct {
 
 	// Reason names the rule that fired.
 	Reason Reason
+
+	// Panel is the detail a panel's optional lines draw — how long is left, the two heaters,
+	// the material and so on. A strip draws none of it and ignores the field entirely; it
+	// travels on the frame so that everything which draws a panel draws it from one statement
+	// of what the printer said, and the thumbnail beside the wall cannot disagree with it.
+	//
+	// It is empty unless the readings describe the printer now: see Decide.
+	Panel PanelFacts
+}
+
+// PanelFacts is what a panel's optional lines say that the frame's four own parts do not: how long
+// is left, how long it has been printing, the two heaters, the material, the machine's name, and how
+// far up the print the nozzle has got.
+//
+// Every field says whether it has a value, and none of them uses zero to mean "nothing": a duration
+// of zero is a job with no time left, a target of zero is a heater that is off, and a Z of zero is a
+// nozzle on the bed. So the two counts are -1 when the machine has said nothing — the same shape
+// Percent uses — and the rest carry a flag.
+//
+// It is a value type with no pointers on purpose: a Frame is compared with == in this package's
+// tests and by the writer's "is this the same picture" check, and two frames that say the same thing
+// have to be equal.
+type PanelFacts struct {
+	// RemainingSeconds and PrintingSeconds are what the machine says is left and has been spent,
+	// in whole seconds, and -1 when it has said nothing.
+	RemainingSeconds int
+	PrintingSeconds  int
+
+	// Nozzle and Bed are the two heaters.
+	Nozzle Degrees
+	Bed    Degrees
+
+	// Material is the short name of the filament in head "0", empty for a tool with nothing
+	// loaded and for one that has said nothing.
+	Material string
+
+	// Printer is the machine's own name from the host's record. It is identity rather than a
+	// reading, so it is here whenever the host knows it.
+	Printer string
+
+	// HeightMM is the nozzle's Z position in millimetres, and HeightReported says whether the
+	// machine reported one — a sign cannot carry that meaning, because a head parked below the
+	// bed reports a negative Z.
+	HeightMM       float64
+	HeightReported bool
+}
+
+// NoPanelFacts is a panel's facts with nothing in them: no count, no heater, no material and no
+// position. It is what a frame carries when it was not built from a reading — the preview route's
+// frame is one — and it exists so that the zero value of PanelFacts is never mistaken for a machine
+// that said "zero seconds left".
+func NoPanelFacts() PanelFacts {
+	return PanelFacts{RemainingSeconds: noPercent, PrintingSeconds: noPercent}
+}
+
+// Degrees is one heater's temperature and the one it is heating to, in degrees Celsius.
+//
+// Reported says the machine gave both. A target of zero is a heater that is off, so a target that
+// was never sent cannot be written as zero: the pair is reported or the line says nothing.
+type Degrees struct {
+	Now      float64
+	Target   float64
+	Reported bool
+}
+
+// withPrinter is facts with the machine's name on them: identity, which survives a silence, rather
+// than a reading, which does not.
+func withPrinter(facts PanelFacts, name string) PanelFacts {
+	facts.Printer = name
+
+	return facts
+}
+
+// panelFacts is the detail one snapshot carries, as a panel's lines read it.
+//
+// It reads the same guarded fields the percentage does, and it invents nothing: a path the machine
+// has not published leaves its line with no value, and the line is then not drawn.
+func panelFacts(snapshot printer.Snapshot) PanelFacts {
+	facts := NoPanelFacts()
+	facts.Material, facts.Printer = snapshot.Material.Value, snapshot.Name
+
+	if snapshot.Job.Remaining.Known {
+		facts.RemainingSeconds = int(snapshot.Job.Remaining.Value / time.Second)
+	}
+
+	if snapshot.Job.Printing.Known {
+		facts.PrintingSeconds = int(snapshot.Job.Printing.Value / time.Second)
+	}
+
+	facts.Nozzle = degrees(snapshot.Nozzle)
+	facts.Bed = degrees(snapshot.Bed)
+
+	if snapshot.AxisZ.Known {
+		facts.HeightMM, facts.HeightReported = snapshot.AxisZ.Value, true
+	}
+
+	return facts
+}
+
+// degrees is one heater's reading, and reported only when the machine gave both numbers.
+func degrees(one printer.Temperature) Degrees {
+	if !one.Now.Known || !one.Target.Known {
+		return Degrees{}
+	}
+
+	return Degrees{Now: one.Now.Value, Target: one.Target.Value, Reported: true}
 }
 
 // Unfilled is the colour of the LEDs past Lit, when there is a bar to draw.
@@ -216,7 +322,15 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 		total = 0
 	}
 
-	frame := Frame{Total: total, Percent: noPercent}
+	// The absent forms of the panel's two counts are -1, not zero, from the first line: a frame
+	// that says "0 seconds left" about a printer it cannot read is a lie, and the zero value of a
+	// struct is exactly that. The printer's name is filled here too because it is the machine's
+	// identity rather than a reading — a printer that has gone quiet is still that printer.
+	frame := Frame{
+		Total:   total,
+		Percent: noPercent,
+		Panel:   withPrinter(NoPanelFacts(), snapshot.Name),
+	}
 
 	// Rule 1 first. Everything below is a claim about the printer now, and these
 	// two conditions are the ones under which no such claim may be made.
@@ -240,6 +354,15 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 
 	rule := ruleFor(snapshot.State.Value, snapshot.State.Known)
 	frame.Colour = rule.colour
+
+	// The panel's optional lines are filled here, in the one place that knows whether a reading
+	// may be presented as current: a frame that says ColourStale or ColourDisconnected carries
+	// none of them, and neither does a terminal word read out of a silence. That is the same rule
+	// Percent keeps, one field over — a temperature from four minutes ago is not a temperature,
+	// and a panel is the last place to say otherwise.
+	if !staleAt(snapshot, at) {
+		frame.Panel = panelFacts(snapshot)
+	}
 
 	switch {
 	case !rule.named:

@@ -7,7 +7,7 @@
 // must not do. So the screen draws the same glyphs the module draws, from this copy.
 //
 // **This is a copy, and it is checked.** The authority is internal/text/font.go: the same
-// thirty-nine glyphs, seven bytes each, leftmost pixel the high bit. `glyphs_test`-style drift
+// forty-three glyphs, seven bytes each, leftmost pixel the high bit. `glyphs_test`-style drift
 // is a real risk with a table written twice, so this file is compared against font.go by the
 // check that runs beside the build, and a disagreement is a failure rather than a surprise on
 // the wall. The table is also the answer to "can this character be drawn", which is what the
@@ -86,6 +86,9 @@ export const GLYPHS: Readonly<Record<string, readonly number[]>> = {
 	'.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c],
 	'-': [0x00, 0x00, 0x00, 0x0e, 0x00, 0x00, 0x00],
 	'%': [0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13],
+	':': [0x00, 0x0c, 0x0c, 0x00, 0x00, 0x0c, 0x0c],
+	'/': [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
+	_: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f],
 };
 
 /** A word as it is drawn: the module upper-cases what it is given. */

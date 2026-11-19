@@ -33,6 +33,30 @@ func TestTheFontDrawsItsKnownGlyphsBitForBit(t *testing.T) {
 		'E': {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f},
 		// ####.  #...#  #...#  #...#  #...#  #...#  ####.
 		'D': {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e},
+		// .....
+		// ..##.
+		// ..##.
+		// .....
+		// .....
+		// ..##.
+		// ..##.
+		':': {0x00, 0x0c, 0x0c, 0x00, 0x00, 0x0c, 0x0c},
+		// ....#
+		// ....#
+		// ...#.
+		// ..#..
+		// .#...
+		// #....
+		// #....
+		'/': {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10},
+		// .....
+		// .....
+		// .....
+		// .....
+		// .....
+		// .....
+		// #####
+		'_': {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f},
 	}
 
 	for character, want := range known {
@@ -50,7 +74,7 @@ func TestTheFontDrawsItsKnownGlyphsBitForBit(t *testing.T) {
 	// bit outside the five columns it has: a bit in the sixth or seventh column would be a
 	// pixel the rasteriser never draws, which is a glyph that looks correct here and loses
 	// half a stroke on the panel.
-	needed := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .-%"
+	needed := "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .-%:/_"
 
 	for _, character := range needed {
 		glyph, ok := glyphs[character]
@@ -259,6 +283,67 @@ func TestTheRefusalNamesTheNumbers(t *testing.T) {
 	for _, wanted := range []string{"282x42", "256x64", "FINISHED"} {
 		if !strings.Contains(err.Error(), wanted) {
 			t.Fatalf("the refusal reads %q, want it to name %s", err, wanted)
+		}
+	}
+}
+
+// TestTheClockMarksDraw is the colon, the slash and the underscore as pixels, because "the font
+// holds the character" and "the character reaches the panel" are two different facts.
+//
+// The first build wrote its ETA with a full stop and its temperatures side by side, because the
+// table had no colon and no slash. §2.4 counts forty-three glyphs and the table held forty, which
+// is how a lock and a build disagree without anything going red: the lines were drawable, they
+// were just not the lines a person reads. So these three are asserted as the pixels they light on
+// a 5x7 panel of their own, in the font's own row-major order — and then a clock word built from
+// them is rasterised whole, which is the path the ETA line actually takes.
+func TestTheClockMarksDraw(t *testing.T) {
+	for _, one := range []struct {
+		name  string
+		glyph string
+		lit   []int
+	}{
+		{
+			// Two 2x2 dots in the full stop's own two columns: rows 1-2 and 5-6, the lower pair
+			// on the full stop's rows so the colon sits on the digits' baseline.
+			name:  "the colon is two dots on the baseline",
+			glyph: ":",
+			lit:   []int{6, 7, 11, 12, 26, 27, 31, 32},
+		},
+		{
+			// One pixel per row, walking up from column 4 to column 0, its ends doubled so that
+			// seven rows of a seven-row cell read as a stroke rather than as a dotted line.
+			name:  "the slash is a diagonal from the bottom left",
+			glyph: "/",
+			lit:   []int{4, 9, 13, 17, 21, 25, 30},
+		},
+		{
+			name:  "the underscore is one row at the baseline",
+			glyph: "_",
+			lit:   []int{30, 31, 32, 33, 34},
+		},
+	} {
+		t.Run(one.name, func(t *testing.T) {
+			lit, err := Raster(one.glyph, 1, Geometry{Width: GlyphColumns, Height: GlyphRows})
+			if err != nil {
+				t.Fatalf("rasterising %q gave %v", one.glyph, err)
+			}
+
+			if !slices.Equal(lit, one.lit) {
+				t.Fatalf("%q lights %v, want %v", one.glyph, lit, one.lit)
+			}
+		})
+	}
+
+	// And the words the panel's own lines are made of are drawable in full: a colon or a slash
+	// that the table lacked would be dropped by the layout's own name-fitter rather than refused,
+	// so the picture would read 1124 instead of 11:24 with nothing failing anywhere.
+	for _, word := range []string{"ENDS 11:24", "NOZ 221/220 BED 60", "PRINTER_2"} {
+		if _, err := Size(word, 1); err != nil {
+			t.Fatalf("%q is not drawable: %v", word, err)
+		}
+
+		if _, err := Raster(word, 1, Geometry{Width: 256, Height: 7}); err != nil {
+			t.Fatalf("%q did not rasterise on a 256x7 band: %v", word, err)
 		}
 	}
 }

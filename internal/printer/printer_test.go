@@ -3,6 +3,7 @@ package printer
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -550,4 +551,46 @@ func quote(t *testing.T, text string) string {
 	}
 
 	return string(encoded)
+}
+
+// TestTheAxisPositionIsAReadingAndThereIsNoLayerCount is what a panel can honestly say about how far
+// through a print it is.
+//
+// The machine reports where its nozzle is (`axis_z`, which the connector publishes at /axis/z) and no
+// count of layers at all: there is no path in the state tree that carries one, so nothing here
+// derives one. A position may be negative — a head parked below the bed — which is why Known is what
+// says whether there is a reading and not the sign.
+func TestTheAxisPositionIsAReadingAndThereIsNoLayerCount(t *testing.T) {
+	state, err := Apply(State{}, Record{ID: "d1", Connected: true}, []Update{set(PathAxisZ, "8.6")}, appliedAt)
+	if err != nil {
+		t.Fatalf("apply a Z position: %v", err)
+	}
+
+	snapshot := state.Snapshot(appliedAt)
+	if !snapshot.AxisZ.Known || snapshot.AxisZ.Value != 8.6 {
+		t.Fatalf("the Z position reads %+v, want a known 8.6 mm", snapshot.AxisZ)
+	}
+
+	// A negative position is a reading and not an absence.
+	below, err := Apply(State{}, Record{ID: "d1", Connected: true}, []Update{set(PathAxisZ, "-1.2")}, appliedAt)
+	if err != nil {
+		t.Fatalf("apply a negative Z position: %v", err)
+	}
+
+	if got := below.Snapshot(appliedAt); !got.AxisZ.Known || got.AxisZ.Value != -1.2 {
+		t.Fatalf("a head below the bed reads %+v, want a known -1.2 mm", got.AxisZ)
+	}
+
+	// And a machine that reports a position has said nothing about layers: the tree holds no such
+	// path, and no field here invents one.
+	quiet := State{}
+	if got := quiet.Snapshot(appliedAt); got.AxisZ.Known {
+		t.Fatal("a printer that reported nothing has a known Z position")
+	}
+
+	for path := range snapshot.Tree {
+		if strings.Contains(path, "layer") {
+			t.Fatalf("the state tree carries %q, and this test exists because it carries no layer count", path)
+		}
+	}
 }

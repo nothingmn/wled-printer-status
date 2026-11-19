@@ -57,6 +57,19 @@ func (h *handTable) layout() (layout, bool) {
 	return *h.shape, true
 }
 
+// clock is the zone a panel's ETA line writes its clock in, and false when this table names none —
+// which is the zero table's answer and the one every test that is not about the clock wants.
+func (h *handTable) clock() (*time.Location, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.zone == nil {
+		return nil, false
+	}
+
+	return h.zone, true
+}
+
 func (h *handTable) show(state string) (show, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

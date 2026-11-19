@@ -10,8 +10,10 @@ refusal. Name the route and the setting key, never a function or a file.
 ## 0.2.0 — 2026-11-19
 
 The module's own page, the moment and state tables, a layout per binding, several lights showing one
-printer, and the presets and identify routes. The store stays at schema version 5: no migration, and a
-rollback to `0.1.0` needs no older document.
+printer, and the presets and identify routes. The store is at schema version 6: a document stamped 5 is
+upgraded in place — its layout rows gain the seven optional lines, each off — and written back stamped, and
+a document from a newer release is still refused by name. A rollback to `0.1.0` needs the older document it
+was written with.
 
 ### Added
 
@@ -223,6 +225,27 @@ rollback to `0.1.0` needs no older document.
   the pause ends). A light that does not answer is a `503 IDENTIFY_UNREACHABLE` with nothing written,
   rather than a call the host gives up on.
 
+- **A panel's layout can carry seven optional lines under the picture**, each switched on for one binding:
+  how long the job has left (`42M`, `1H12M`), the clock time it ends at (`ENDS 11:12`, in the `timezone`
+  setting's zone), the temperatures (`NOZ 221/220 BED 60`), how long it has been printing (`1H12M`), the
+  material (`PLA`), the printer's own name (`HERMES MK4`) and how far up it has printed (`Z 8.6MM`). The
+  keys are `remaining`, `ends`, `temperatures`, `elapsed`, `material`, `printer_name` and `layer` on
+  `PUT /bindings/{id}/layout`, and every one of them is reported with its own `_origin` on `GET
+  /lights/{light}/layouts` and on `GET /bindings/{id}/layout`, so a screen can say whose value it is showing
+  and offer a reset only where there is one. The Layout screen is where they are switched on.
+- The lines are drawn at the font's own size, seven rows each with one blank row between, in that fixed
+  order, along the bottom of the text band; the digits and the name are centred in the rows the lines leave.
+  A line whose reading the printer has not reported is not drawn, but its rows stay reserved, so the digits
+  do not change size as readings come and go. A panel with all seven off draws exactly the picture it drew
+  before they existed.
+- A set of lines the panel cannot hold is **refused rather than cropped**, and the refusal is a sentence
+  naming the lines that did not fit, the ones that did, and which of the two numbers the picture is made of
+  would take them all — a thinner bar, or a smaller `percent_scale`. 64 rows with a 12-row bar leave 52; the
+  digits at scale 5 take 35 of them, so two lines fit and a third does not (four fit if the percentage drops
+to scale 3).
+- `layer` is the Z position and not a layer number: the printer reports a height and no count of layers, so
+  the line says `Z 8.6MM` rather than inventing a number nothing measured.
+
 ### Changed
 
 - **`module.yaml` declares no options.** The host's settings pane is gone from this module's page, which
@@ -235,6 +258,13 @@ rollback to `0.1.0` needs no older document.
 - The manifest's two declared connections name the controllers rather than a setting: with no `options`
   there is no setting left for them to name. Read the note in `module.yaml` before pointing this at a third
   light.
+- **The font holds forty-three glyphs**, which is the set the requirements lock: A–Z, 0–9, space, and
+  `.` `-` `%` `:` `/` `_`. The colon and the slash were missing from the first build, which wrote the ETA as
+  `ENDS 11.12` and the temperatures as `NOZ 221 220 BED 60` to do without them; they read `ENDS 11:12` and
+  `NOZ 221/220 BED 60` now. The underscore is in the font for a word a person writes, but a job's own name
+  still has its underscores turned into spaces, so a slicer's file name reads as words exactly as before.
+  The warning on the Colours screen names the forty-three, and a character outside them is still refused
+  rather than drawn as a gap.
 
 ### Fixed
 

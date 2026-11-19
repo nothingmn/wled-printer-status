@@ -49,6 +49,20 @@ const (
 	// PLA. It is empty text for a tool with nothing loaded, and absent for a
 	// tool that said nothing — which is not the same reading.
 	PathMaterial = "/tools/0/" + connectorapi.MaterialAbbreviation
+
+	// PathAxisZ is how far the nozzle has travelled up the print, in millimetres,
+	// as the machine's own telemetry reports it (`axis_z`, which the xbuddy
+	// connector maps here — see internal/connector/xbuddy/inbound.go).
+	//
+	// The sdk names the build volume's Z and no axis position, so this is spelled
+	// here for the reason /temperature/bed is: the path exists in the driver's map
+	// rather than in the sdk's constants.
+	//
+	// **There is no layer number anywhere in the state tree.** The machine reports a
+	// position and not a count of layers, so a panel that says where a print has got
+	// to says this and not "L42": a layer number would have to be derived from a
+	// layer height nothing here knows.
+	PathAxisZ = "/axis/z"
 )
 
 // The state machine values PathState and PathJobState carry. They are named

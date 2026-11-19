@@ -300,6 +300,7 @@ func (api framesAPI) frameOf(held bindingStatus, set bindings) (frameAnswer, err
 		Percent: held.Frame.Percent,
 		Name:    held.Frame.Name,
 		Reason:  render.Reason(held.Frame.Reason),
+		Panel:   panelFactsOf(held.Frame.Panel),
 	}
 
 	shape := shapeOf(held.Controller, held.Segment)
@@ -337,6 +338,43 @@ func (api framesAPI) frameOf(held bindingStatus, set bindings) (frameAnswer, err
 	}
 
 	return said, nil
+}
+
+// panelFactsOf is the published facts back as the composer reads them.
+//
+// It is the inverse of panelFactsViewOf in drive.go, and it exists because a thumbnail is drawn from
+// what the watch published rather than from a reading: the picture beside the wall has to carry the
+// same lines the wall carries, and the only place those are is the frame the writer published.
+func panelFactsOf(said *panelFactsView) render.PanelFacts {
+	facts := render.PanelFacts{RemainingSeconds: -1, PrintingSeconds: -1}
+
+	if said == nil {
+		return facts
+	}
+
+	if said.RemainingSeconds != nil {
+		facts.RemainingSeconds = *said.RemainingSeconds
+	}
+
+	if said.PrintingSeconds != nil {
+		facts.PrintingSeconds = *said.PrintingSeconds
+	}
+
+	if said.NozzleNow != nil && said.NozzleTarget != nil {
+		facts.Nozzle = render.Degrees{Now: *said.NozzleNow, Target: *said.NozzleTarget, Reported: true}
+	}
+
+	if said.BedNow != nil && said.BedTarget != nil {
+		facts.Bed = render.Degrees{Now: *said.BedNow, Target: *said.BedTarget, Reported: true}
+	}
+
+	facts.Material, facts.Printer = said.Material, said.Printer
+
+	if said.HeightMM != nil {
+		facts.HeightMM, facts.HeightReported = *said.HeightMM, true
+	}
+
+	return facts
 }
 
 // bindingOf is the light a published frame belongs to, and the binding itself, and whether the
@@ -560,6 +598,10 @@ func cacheKey(light string, held bindingStatus, shape bindingShape, width, heigh
 		light, held.Controller, held.Segment, width, height,
 		held.Frame.Colour, held.Frame.Lit, held.Frame.Total, held.Frame.Percent,
 		held.Frame.Name, held.Frame.Reason,
+		// The panel's optional lines are part of the picture, so a cached thumbnail served across a
+		// change in any of them — a temperature moving, a countdown ticking — would be a picture of
+		// a panel that no longer looks like that.
+		held.Frame.Panel,
 		// What the light is showing instead of that frame, and the arrangement a panel is composed
 		// with: a cached picture served across a change of any of these would be a thumbnail of a
 		// light that no longer looks like that.
@@ -567,6 +609,9 @@ func cacheKey(light string, held bindingStatus, shape bindingShape, width, heigh
 		shape.layout.bar, shape.layout.barBand, shape.layout.barRows, shape.layout.percent,
 		shape.layout.percentScale, shape.layout.name, shape.layout.rotation,
 		int(shape.layout.rotate/time.Second),
+		shape.layout.remaining, shape.layout.ends, shape.layout.temperatures,
+		shape.layout.elapsed, shape.layout.material, shape.layout.printer, shape.layout.layer,
+		zoneName(shape.layout.zone),
 	)
 
 	if shape.plain != nil {
@@ -587,6 +632,16 @@ func cacheKey(light string, held bindingStatus, shape bindingShape, width, heigh
 	}
 
 	return string(key)
+}
+
+// zoneName is a zone as a cache key: its own name, and "none" for a layout that has no zone to write
+// a clock in. A nil *time.Location has no name and cannot be put in a JSON key at all.
+func zoneName(location *time.Location) string {
+	if location == nil {
+		return ""
+	}
+
+	return location.String()
 }
 
 // layout is the arrangement of a panel this instance runs on, which is the one the painter composes

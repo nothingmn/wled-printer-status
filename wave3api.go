@@ -84,6 +84,22 @@ func (api tableAPI) zoneName() string {
 	return strings.TrimSpace(settings().Timezone)
 }
 
+// clockZone is the IANA zone a panel's ETA line writes its clock in, and empty when this module has
+// none it can load.
+//
+// It is judgedZone's question without the error: a layout is refused the ETA line when there is no
+// zone (see layoutRequest.stored), and an answer about a layout that already names one is due
+// whether or not the setting is still there — so this says yes or no and lets the sentence be the
+// screen's.
+func (api tableAPI) clockZone() string {
+	location, err := api.judgedZone()
+	if err != nil || location == nil {
+		return ""
+	}
+
+	return location.String()
+}
+
 // judgedZone is the zone the windows are judged in, and why there is none.
 //
 // It returns nil rather than falling back to UTC: a window judged in this process's clock is a window
@@ -172,13 +188,13 @@ func bindingNotFound(id string) *fault.Fault {
 // layoutRequest is what PUT /bindings/{id}/layout accepts: one layout, every key optional.
 //
 // Every field is a pointer for the reason storedLayout's are: absent is not zero, and a body that
-// leaves `bar_rows` out must not write a bar of no rows. A body carrying none of the eight is refused
+// leaves `bar_rows` out must not write a bar of no rows. A body carrying none of the keys is refused
 // rather than read as "clear the row", because clearing is what DELETE is for and a mistyped key
 // would otherwise reset a binding's layout in silence.
 //
-// `remaining` is accepted and may only be false. The mockup draws the control, so a client will send
-// it; this build draws no time remaining, so true is refused rather than ignored — a setting that
-// asks for a picture and gets none is a setting that lies.
+// The seven optional lines are the rest of it. `remaining` used to be accepted only as false,
+// because this build drew no time remaining; it draws one now, and the refusal that remains is the
+// ETA line's need for a zone — see stored.
 type layoutRequest struct {
 	Bar           *bool   `json:"bar"`
 	BarBand       *string `json:"bar_band"`
@@ -186,9 +202,18 @@ type layoutRequest struct {
 	Percent       *bool   `json:"percent"`
 	PercentScale  *int    `json:"percent_scale"`
 	Name          *bool   `json:"name"`
-	Remaining     *bool   `json:"remaining"`
 	Rotation      *string `json:"rotation"`
 	RotateSeconds *int    `json:"rotate_seconds"`
+
+	// The seven optional lines. `remaining` was here before and could only be false; it is a real
+	// key now, and the body's `carriesNothing` counts it like the rest.
+	Remaining    *bool `json:"remaining"`
+	Ends         *bool `json:"ends"`
+	Temperatures *bool `json:"temperatures"`
+	Elapsed      *bool `json:"elapsed"`
+	Material     *bool `json:"material"`
+	PrinterName  *bool `json:"printer_name"`
+	Layer        *bool `json:"layer"`
 }
 
 // readLayoutRequest is one request body, and what is wrong with it.
@@ -215,15 +240,23 @@ func readLayoutRequest(r *http.Request) (layoutRequest, error) {
 // carriesNothing says whether a body named no key at all.
 func (sent layoutRequest) carriesNothing() bool {
 	return sent.Bar == nil && sent.BarBand == nil && sent.BarRows == nil && sent.Percent == nil &&
-		sent.PercentScale == nil && sent.Name == nil && sent.Remaining == nil && sent.Rotation == nil &&
-		sent.RotateSeconds == nil
+		sent.PercentScale == nil && sent.Name == nil && sent.Rotation == nil &&
+		sent.RotateSeconds == nil && sent.Remaining == nil && sent.Ends == nil &&
+		sent.Temperatures == nil && sent.Elapsed == nil && sent.Material == nil &&
+		sent.PrinterName == nil && sent.Layer == nil
 }
 
 // stored is the row this body writes, for the binding it names.
-func (sent layoutRequest) stored(binding string) (storedLayout, error) {
-	if sent.Remaining != nil && *sent.Remaining {
+//
+// One thing is refused here and not by checkStoredLayout: the ETA line on a module that has no zone
+// it can load. It is this function's because the row is only written while the setting is readable,
+// and checkStoredLayout runs again on every read of the document — a rule there would refuse the
+// whole store at start-up because a host setting had been emptied, which is the failure
+// requireZone avoids for brightness windows in the same way.
+func (sent layoutRequest) stored(binding string, zone string) (storedLayout, error) {
+	if sent.Ends != nil && *sent.Ends && zone == "" {
 		return storedLayout{}, fmt.Errorf(
-			"remaining is true, and this build draws no time remaining: nothing would put it on the panel, so it is refused rather than ignored — switch it off, or ask for it as a change that draws it")
+			"ends is true, and this module has no zone to write the clock time in: the timezone setting names no zone this build can load, so a time on the panel would be this process's clock and not yours. Name an IANA zone such as America/Denver in the settings, or switch the ends line off")
 	}
 
 	one := storedLayout{
@@ -236,6 +269,13 @@ func (sent layoutRequest) stored(binding string) (storedLayout, error) {
 		Name:          sent.Name,
 		Rotation:      sent.Rotation,
 		RotateSeconds: sent.RotateSeconds,
+		Remaining:     sent.Remaining,
+		Ends:          sent.Ends,
+		Temperatures:  sent.Temperatures,
+		Elapsed:       sent.Elapsed,
+		Material:      sent.Material,
+		PrinterName:   sent.PrinterName,
+		Layer:         sent.Layer,
 	}
 
 	if err := checkStoredLayout(one); err != nil {
@@ -245,8 +285,9 @@ func (sent layoutRequest) stored(binding string) (storedLayout, error) {
 	return one, nil
 }
 
-// layoutAnswerFor is one binding's answer, from the document as it stands.
-func layoutAnswerFor(config storedConfig, b binding, light controllerAnswer) (layoutAnswer, error) {
+// layoutAnswerFor is one binding's answer, from the document as it stands, and the zone the ETA line
+// would write a clock in.
+func layoutAnswerFor(config storedConfig, b binding, light controllerAnswer, zone string) (layoutAnswer, error) {
 	rows, err := layoutRows(config)
 	if err != nil {
 		return layoutAnswer{}, err
@@ -254,7 +295,7 @@ func layoutAnswerFor(config storedConfig, b binding, light controllerAnswer) (la
 
 	row, stored := layoutFor(rows, b.ID)
 
-	return layoutAnswerOf(b, light, row, stored), nil
+	return layoutAnswerOf(b, light, row, stored, zone), nil
 }
 
 // readLayout is GET /bindings/{id}/layout: the layout one binding composes with, every value with the
@@ -280,7 +321,7 @@ func (api tableAPI) readLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	said, err := layoutAnswerFor(config, found, light)
+	said, err := layoutAnswerFor(config, found, light, api.clockZone())
 	if err != nil {
 		refuse(w, r, StoreUnavailable.New("this module's configuration store cannot be acted on: "+err.Error()))
 
@@ -328,7 +369,7 @@ func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	one, err := sent.stored(found.ID)
+	one, err := sent.stored(found.ID, api.clockZone())
 	if err != nil {
 		refuse(w, r, LayoutRefused.New(err.Error()).
 			With(fault.StringParam("binding", found.ID)))
@@ -344,7 +385,7 @@ func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
 
 	body := map[string]any{
 		"light":     light.Name,
-		"layout":    layoutAnswerOf(found, light, one, true),
+		"layout":    layoutAnswerOf(found, light, one, true, api.clockZone()),
 		"applied":   true,
 		"persisted": true,
 		"note":      persistedNote + " " + layoutDrawnNote + " " + layoutFitNote,
@@ -388,7 +429,7 @@ func (api tableAPI) deleteLayout(w http.ResponseWriter, r *http.Request) {
 
 	answer(w, http.StatusOK, map[string]any{
 		"light":     light.Name,
-		"layout":    layoutAnswerOf(found, light, storedLayout{}, false),
+		"layout":    layoutAnswerOf(found, light, storedLayout{}, false, api.clockZone()),
 		"removed":   removed,
 		"persisted": true,
 		"note":      persistedNote + " " + layoutDrawnNote,
@@ -432,7 +473,7 @@ func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
 
 	for _, one := range on {
 		row, stored := layoutFor(rows, one.ID)
-		out = append(out, layoutAnswerOf(one, light, row, stored))
+		out = append(out, layoutAnswerOf(one, light, row, stored, api.clockZone()))
 	}
 
 	said := map[string]any{
