@@ -32,7 +32,7 @@
     "several": "one of several bindings for this printer",
     "already_on": "\u2014 already on",
     "on_this_light": "\u2014 already on this light",
-    "no_printer_free": "Every printer this module knows is already on this light",
+    "no_printer_free": "Every printer this module knows is already on this light: name another light, or edit the row it is on",
     "taken_here": "Taken on this light:",
     "segment_taken": "That segment is already taken on this light by",
     "whole_takes_all": "A whole-light binding leaves no segment for anything else, and a segment leaves none for the whole light."

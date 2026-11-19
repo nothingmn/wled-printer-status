@@ -110,20 +110,6 @@
 	 */
 	const free = $derived(printers.filter((one) => !taken.some((held) => held.printer === one.id)));
 
-	/** The printers an add could still place somewhere: one on every light has nowhere to go. */
-	const addable = $derived(
-		controllers.length === 0
-			? printers
-			: printers.filter((one) =>
-					controllers.some(
-						(light) =>
-							!bindings.some(
-								(placed) => placed.light === lightName(light.address) && placed.printer === one.id,
-							),
-					),
-				),
-	);
-
 	/** The segment the editor is pointed at, read the way save() reads it: -1 is the whole light. */
 	const wanted = $derived.by(() => {
 		const segment = Number.parseInt(draft?.segment ?? '', 10);
@@ -527,7 +513,7 @@
 		</form>
 	{:else}
 		<div>
-			<Button variant="secondary" onclick={startNew} disabled={busy || addable.length === 0}>
+			<Button variant="secondary" onclick={startNew} disabled={busy || printers.length === 0}>
 				{t('bindings.add')}
 			</Button>
 		</div>
