@@ -31,7 +31,14 @@
 	// against the canvas — under AA — and is now the tone the guide allows for it.
 	import { onMount } from 'svelte';
 
-	import { moduleApi, type BindingRequest, type Frame, type PausedBinding, type Printer } from './api';
+	import {
+		moduleApi,
+		type BindingRequest,
+		type Frame,
+		type PausedBinding,
+		type Printer,
+		type TimezoneAnswer,
+	} from './api';
 	import { ageText, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
 	import {
@@ -53,7 +60,7 @@
 		resumeOne,
 	} from './pause.svelte';
 	import PrinterLink from './printer-link.svelte';
-	import { Button, Chip, Panel } from './ui';
+	import { Button, Chip, Field, FieldInput, Panel } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -80,6 +87,29 @@
 	let loading = $state(true);
 	/** True while a pause menu is being obeyed, so one press is one write. */
 	let working = $state(false);
+
+	/**
+	 * The zone this module judges a brightness window in and writes a clock in, as GET /timezone last
+	 * answered, and null before the first read.
+	 *
+	 * It is on this screen because it is the one thing that has to be set on the day of install and
+	 * there is nowhere else to set it: the manifest declares no settings, so a brightness window and a
+	 * panel's ends line both refused on every install until this field existed.
+	 */
+	let zone = $state<TimezoneAnswer | null>(null);
+	/** What is in the field, which is the stored zone until somebody edits it. */
+	let zoneDraft = $state('');
+	/** True while a write is in flight, so one press is one write. */
+	let zoneSaving = $state(false);
+	/** Why the last write failed, in the route's own words. Nothing is rendered as saved underneath it. */
+	let zoneError = $state('');
+	/** What the last write did, when it did it. */
+	let zoneNotice = $state('');
+	/**
+	 * True once this page has asked the route, so a capture can never be attempted twice: the refresh
+	 * below runs every ten seconds and a second capture is the one thing the browser must not do.
+	 */
+	let zoneAsked = $state(false);
 
 	/** A light's name as a frame or a binding gives it: the address without the scheme. */
 	const keyOf = (frame: Frame): string => frame.light.name !== '' ? frame.light.name : lightName(frame.light.address);
@@ -328,8 +358,108 @@
 		working = false;
 	};
 
+	/**
+	 * The zone this browser reports, in words a route can store, and '' when it reports nothing.
+	 *
+	 * A browser with no locale behind it, or one that has been told to leave the zone to the system's
+	 * own clock, answers nothing here. That is a fact and not a failure: the field is then left empty
+	 * and editable, and no write is made — an empty string sent as a zone would be refused by the route
+	 * anyway, and writing a guess would be worse than writing nothing.
+	 */
+	const browserZone = (): string => {
+		try {
+			return (Intl.DateTimeFormat().resolvedOptions().timeZone ?? '').trim();
+		} catch {
+			return '';
+		}
+	};
+
+	/**
+	 * Asks the route once, and captures this browser's zone if the module holds none.
+	 *
+	 * The rule the operator set: **capture on the first load where nothing is stored, and never again.**
+	 * `stored` is what decides it, and it is the route's answer rather than anything this page remembers,
+	 * so a reload after a capture finds a stored zone and writes nothing. A failed capture is said plainly
+	 * and the field keeps showing what the read answered — which is nothing — rather than the value that
+	 * was refused.
+	 */
+	const loadZone = async (): Promise<void> => {
+		// Asked once per page, which is what makes a capture a first-load act rather than a thing the
+		// ten-second refresh below could repeat.
+		if (zoneAsked) return;
+
+		zoneAsked = true;
+
+		let answer: TimezoneAnswer;
+
+		try {
+			answer = await api.readTimezone();
+		} catch (problem) {
+			zoneError = `${t('overview.timezone_read_failed')}: ${describe(problem)}`;
+
+			return;
+		}
+
+		zone = answer;
+		zoneDraft = answer.timezone;
+
+		if (answer.stored || answer.timezone !== '') return;
+
+		const here = browserZone();
+		if (here === '') return;
+
+		try {
+			const written = await api.writeTimezone(here, 'browser');
+			zone = written;
+			zoneDraft = written.timezone;
+			zoneNotice = t('overview.timezone_captured', { zone: written.timezone });
+		} catch (problem) {
+			// Not saved, and the screen says so: the field still shows the empty zone the read found,
+			// which is what the document holds, and the failure is the route's own sentence.
+			zoneError = `${t('overview.timezone_capture_failed')}: ${describe(problem)}`;
+		}
+	};
+
+	/** Stores the zone the operator typed, and renders the answer rather than the value that was sent. */
+	const saveZone = async (): Promise<void> => {
+		zoneSaving = true;
+		zoneError = '';
+		zoneNotice = '';
+
+		try {
+			const written = await api.writeTimezone(zoneDraft, 'operator');
+			zone = written;
+			zoneDraft = written.timezone;
+			zoneNotice = t('overview.timezone_saved', { zone: written.timezone });
+		} catch (problem) {
+			// The route's refusal names the value and an example that would be accepted. Nothing is
+			// rendered as saved: the field keeps the text, the document keeps the old zone.
+			zoneError = `${t('overview.timezone_save_failed')}: ${describe(problem)}`;
+		} finally {
+			zoneSaving = false;
+		}
+	};
+
+	/** One sentence saying where the zone in force came from, which is the thing a person needs to trust it. */
+	const zoneOriginText = (answer: TimezoneAnswer): string => {
+		if (answer.origin === 'none') return t('overview.timezone_none');
+
+		if (answer.origin === 'settings') return t('overview.timezone_from_settings');
+
+		switch (answer.source) {
+			case 'browser':
+				return t('overview.timezone_from_browser');
+			case 'operator':
+				return t('overview.timezone_from_operator');
+			case 'settings':
+				return t('overview.timezone_from_setting');
+			default:
+				return t('overview.timezone_from_store');
+		}
+	};
+
 	onMount(() => {
-		void Promise.all([load(), loadKnownLights(), refreshPauses()]);
+		void Promise.all([load(), loadKnownLights(), refreshPauses(), loadZone()]);
 	});
 
 	// The page answers "at this moment", so it keeps answering. Ten seconds is fast enough to
@@ -610,6 +740,62 @@
 			</p>
 		</Panel>
 	</div>
+
+	<!-- The zone, and nothing else. It is on this screen because it is the one setting that had no
+	     surface at all: the manifest declares none, and a brightness window and a panel's ends line both
+	     refused on every install until somebody could name a zone. The field shows the value in force and
+	     the line under it says where that value came from; the browser fills it once, on the first load
+	     that finds nothing stored, and after that only this button writes. -->
+	<Panel title={t('overview.timezone_heading')} data-zone-panel="right-now">
+		{#snippet meta()}
+			{#if zone?.stored}
+				<span class="font-ui text-xs font-normal text-wled-text-quiet">{t('overview.timezone_stored')}</span>
+			{/if}
+		{/snippet}
+
+		<div class="flex flex-col gap-row">
+			<Field
+				id="overview-timezone"
+				label={t('overview.timezone_label')}
+				hint={zone === null ? t('overview.timezone_loading') : zoneOriginText(zone)}
+			>
+				{#snippet children()}
+					<div class="flex flex-wrap items-end gap-row">
+						<FieldInput
+							id="overview-timezone"
+							class="w-64"
+							value={zoneDraft}
+							placeholder={t('overview.timezone_placeholder')}
+							disabled={zoneSaving || zone === null || zone.persisted === false}
+							aria-invalid={zoneError !== ''}
+							oninput={(value) => (zoneDraft = value)}
+						/>
+						<Button
+							variant="primary"
+							size="md"
+							disabled={zoneSaving || zone === null || zone.persisted === false || zoneDraft.trim() === ''}
+							onclick={() => void saveZone()}
+						>
+							{zoneSaving ? t('overview.timezone_saving') : t('overview.timezone_save')}
+						</Button>
+					</div>
+				{/snippet}
+			</Field>
+
+			{#if zone?.persisted === false}
+				<p class="font-ui text-xs text-wled-text-quiet">{t('overview.timezone_not_stored')}</p>
+			{/if}
+
+			<!-- One line under the field and not three: the hint above already says where the value came
+			     from, and a second sentence repeating what the zone is for is the clutter §5 removes. The
+			     route's own note is deliberately not drawn here. -->
+			{#if zoneError !== ''}
+				<p class="font-ui text-sm text-wled-danger" role="alert">{zoneError}</p>
+			{:else if zoneNotice !== ''}
+				<p class="font-ui text-sm" role="status">{zoneNotice}</p>
+			{/if}
+		</div>
+	</Panel>
 
 	{#if canBind}
 		<Panel title={t('overview.defaults_heading')}>

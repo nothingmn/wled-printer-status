@@ -125,7 +125,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.5.1")
+	release = extension.Version("0.6.0")
 )
 
 const (
@@ -222,6 +222,11 @@ type Settings struct {
 	// defaulted to UTC or to the process's local zone: a schedule judged in the wrong clock is a
 	// display that is wrong every evening and looks healthy, and a fallback would make that the
 	// module's quiet default. A zone that is written but will not load refuses the start.
+	//
+	// As of schema version 9 this is a migration source and not the authority: this module's own store
+	// holds the zone (storedConfig.Timezone), the Overview screen edits it, and the setting is read once
+	// on the start that finds the store without one (zoneFromSettings). A module the host granted no
+	// data directory still runs on it, because there is no store to hold anything.
 	Timezone string `json:"timezone"`
 
 	// Layout is the operator's arrangement of a panel: a progress bar in a band at the top or the
@@ -637,6 +642,43 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 	return nil
 }
 
+// zoneFromSettings writes the `timezone` setting into a document that names no zone, and reports
+// whether it wrote anything.
+//
+// This is the whole of the migration that schema version 9 made necessary. Until it, the zone was a
+// manifest setting and the manifest has declared no `options` since §4 made this store the only
+// editing surface — so no install could name one, and both things that need a zone refused on every
+// install. The setting still exists for the one install that was configured before that: it is read
+// here, once, on the start that finds the document without a zone, and never again. After this write the
+// store is the authority (zoneInForce, timezone.go), which is the same shape the brightness schedule and
+// the layout rows have.
+//
+// Three things it deliberately does not do:
+//
+//   - **It never overwrites.** A document that names a zone keeps it, whatever the setting says, so a
+//     zone the operator set on the Overview screen cannot be undone by a settings save.
+//   - **It invents nothing.** A setting that names no zone writes nothing, and the document keeps the
+//     empty string that refuses a window and draws no clock. UTC is not a fallback: it is this
+//     container's own clock and would look healthy while being seven hours out.
+//   - **It re-checks nothing.** The settings were judged by Settings.validate before the watch was
+//     built, and a zone that will not load refuses the start there, so a zone this function is handed
+//     has already been loaded once.
+func zoneFromSettings(config *storedConfig, sent Settings) bool {
+	if strings.TrimSpace(config.Timezone) != "" {
+		return false
+	}
+
+	named := strings.TrimSpace(sent.Timezone)
+	if named == "" {
+		return false
+	}
+
+	config.Timezone = named
+	config.TimezoneOrigin = zoneOriginSettings
+
+	return true
+}
+
 // originOf is where a set built from the settings came from, in the words GET /bindings answers
 // with: the list, the four settings that came before it, or nothing at all.
 func originOf(sent Settings) string {
@@ -698,7 +740,10 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 			return nil, "", renderErr
 		}
 
-		path, writeErr := saveStore(dataDir, storedConfig{
+		// The document this first start writes: the bindings, the lights those bindings name — with
+		// the address on each and no facts, because a start must not wait for a controller — and the
+		// zone, when the settings name one.
+		seed := storedConfig{
 			Version:  storeVersion,
 			Bindings: entries,
 			// And the lights those bindings name, as rows with the address on them: a fresh
@@ -706,7 +751,14 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 			// person who wrote two bindings in the settings must not have to retype the two
 			// addresses they already name. The start fills the facts in (fillLightFacts).
 			Lights: seededLightsOrNothing(entries),
-		})
+		}
+
+		// The setting is the migration source for the zone as it is for the bindings, and a module
+		// whose settings name none keeps the empty string — the state that refuses a window and
+		// draws no clock rather than reading UTC and looking healthy while being hours out.
+		zoneFromSettings(&seed, sent)
+
+		path, writeErr := saveStore(dataDir, seed)
 		if writeErr != nil {
 			return nil, "", writeErr
 		}
@@ -727,16 +779,25 @@ func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir
 		return nil, "", err
 	}
 
-	if found.Upgraded {
-		// The document was stepped up to this build's version. Writing it back now is what keeps
-		// the upgrade from being redone — and re-decided — on every start.
+	if seededZone := zoneFromSettings(&found.Config, sent); found.Upgraded || seededZone {
+		// The document was stepped up to this build's version, or the zone the settings name was
+		// written into a document that had none. Writing it back now is what keeps the upgrade from
+		// being redone — and re-decided — on every start, and what makes the setting the migration
+		// source for the zone: after this write, the store holds it and the setting is read no more.
 		path, writeErr := saveStore(dataDir, found.Config)
 		if writeErr != nil {
 			return nil, "", writeErr
 		}
 
-		log("%s: the configuration store at %s was upgraded from schema version %d to %d",
-			name, path, found.Version, storeVersion)
+		if found.Upgraded {
+			log("%s: the configuration store at %s was upgraded from schema version %d to %d",
+				name, path, found.Version, storeVersion)
+		}
+
+		if seededZone {
+			log("%s: the timezone setting named %s and the configuration store at %s, schema version %d, held none, so it was written into the store once; the setting is a migration source and is not read again",
+				name, found.Config.Timezone, path, storeVersion)
+		}
 	}
 
 	set, err := bindingsFrom(ctx, fleet, found.Config.Bindings)

@@ -903,8 +903,8 @@ func TestAVersionSevenStoreGainsTheIgnoredFlagIsFalseAndInventsNothingElse(t *te
 			found.Version, found.Upgraded)
 	}
 
-	if found.Config.Version != 8 {
-		t.Fatalf("the stepped document is at version %d, want 8", found.Config.Version)
+	if found.Config.Version != storeVersion {
+		t.Fatalf("the stepped document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
 	if len(found.Config.Lights) != 2 {

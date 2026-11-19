@@ -484,6 +484,32 @@ export interface StateRequest {
   holds?: Holds;
 }
 
+/**
+ * The zone this module judges a brightness window in and writes a clock in, as GET and PUT /timezone
+ * answer. `TimezoneAnswer` in openapi.json.
+ *
+ * It is the module's own store that holds it, so `stored` is the question a screen has to ask before it
+ * captures anything: a browser may fill the field once, on the first load that finds nothing stored, and
+ * never again. `origin` says where the value came from — this store, the `timezone` setting the schema-9
+ * upgrade migrated it from, or nowhere — and `source` says how a stored one got there.
+ */
+export interface TimezoneAnswer {
+  /** The IANA zone in force, as the loader spells it, and '' when this module names none. */
+  timezone: string;
+  /** Where the value came from: this module's own store, the setting it was migrated from, or nowhere. */
+  origin: 'store' | 'settings' | 'none';
+  /** How a stored zone got there. Absent unless origin is 'store', and absent when the row has no source. */
+  source?: 'browser' | 'operator' | 'settings';
+  /** True when the zone is in this module's own document, which is what forbids a capture. */
+  stored: boolean;
+  /** True when a change here could be kept. */
+  persisted: boolean;
+  note?: string;
+}
+
+/** Who wrote a zone: the first page load that found none, or a person on this screen. */
+export type TimezoneSource = 'browser' | 'operator';
+
 /** What PUT and DELETE on one state answer: the row now in force, and whether it was kept. */
 export interface StateAnswer {
   state: StateRow;
@@ -845,6 +871,13 @@ const routes = (namespace: string) => {
     changeState: operation('change-state', 'PUT', `${base}/states/{state}`, 'json', 'application/json'),
     resetState: operation('delete-state', 'DELETE', `${base}/states/{state}`, 'json'),
 
+    // The zone a brightness window is judged in and a clock is written in: one IANA name, kept in this
+    // module's own store. The read is what a screen asks before it captures one from the browser, and
+    // the write is the only way to change one — there is no DELETE, because this module never forgets a
+    // zone once it has one.
+    readTimezone: operation('read-timezone', 'GET', `${base}/timezone`, 'json'),
+    writeTimezone: operation('write-timezone', 'PUT', `${base}/timezone`, 'json', 'application/json'),
+
     readPause: operation('read-pause', 'GET', `${base}/pause`, 'json'),
     pauseEverything: operation('pause-everything', 'PUT', `${base}/pause`, 'json', 'application/json'),
     resumeEverything: operation('resume-everything', 'DELETE', `${base}/pause`, 'json'),
@@ -1006,6 +1039,17 @@ export const moduleApi = (host: ModuleHost) => {
     /** Puts one state back to Appendix A's colour, no word, and a hold of forever. */
     resetState: (state: string) =>
       transport.call<StateAnswer>(held.resetState, { path: { state } }, host.signal),
+
+    /** The zone in force, where it came from, and how a stored one got there. */
+    readTimezone: () => transport.call<TimezoneAnswer>(held.readTimezone, {}, host.signal),
+
+    /**
+     * Stores one zone. `source` is 'browser' for the first load's capture and 'operator' for a person
+     * typing it; an empty or unloadable zone is refused by the route and nothing is written, which is
+     * why a screen must show the refusal rather than the value it sent.
+     */
+    writeTimezone: (timezone: string, source: TimezoneSource = 'operator') =>
+      transport.call<TimezoneAnswer>(held.writeTimezone, { body: { timezone, source } }, host.signal),
 
     readPause: () => transport.call<PauseBody>(held.readPause, {}, host.signal),
 

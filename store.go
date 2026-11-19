@@ -101,7 +101,17 @@ const (
 	// rather than removed and forgotten. The step from 7 writes the flag as false on every row and
 	// invents nothing else: a version-7 document carries no such key, and the light it describes
 	// was not ignored because there was nothing to ignore it with.
-	storeVersion = 8
+	//
+	// Version 9 is the zone this module judges a clock and a brightness window in: `timezone` and
+	// `timezone_origin` on the document. The zone used to be a manifest setting, and the manifest has
+	// carried no `options` since the release that made this store the only editing surface — so no
+	// install could name one, and both the ends line and every brightness window refused. The step
+	// from 8 writes both keys empty, because version 8's build could store no zone and nothing it
+	// wrote had one; empty is also what version 8's rule was, so a module that names no zone goes on
+	// starting unchanged. The `timezone` setting is then read once as the migration source and written
+	// here (zoneFromSettings, main.go), and every consumer reads this document from then on. See
+	// timezone.go.
+	storeVersion = 9
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -176,6 +186,24 @@ type storedConfig struct {
 	// this process is reconstructed on every settings save and on every restart — a pause held in
 	// a timer is a pause that ends early the first time somebody saves the settings.
 	Pauses []storedPause `json:"pauses"`
+
+	// Timezone is the IANA zone this module judges a brightness window in and writes a clock in,
+	// such as America/Denver, and the empty string when it names none.
+	//
+	// It is the authority and not a copy of anything: the `timezone` setting was the migration
+	// source once (zoneFromSettings, main.go) and is not read again after that. It is never
+	// defaulted to UTC or to this process's own zone — inside the Prusa Connect container that is
+	// almost always UTC, and a schedule or a clock read there is hours away from the operator's
+	// evening while looking perfectly healthy (AGENTS.md §5.14). So an absent zone is absent, and
+	// the two things that need one refuse until somebody names one.
+	Timezone string `json:"timezone"`
+
+	// TimezoneOrigin says how the zone arrived in this document: `browser` for the first page load
+	// that found none and captured the browser's own, `operator` for one typed on the Overview
+	// screen, and `settings` for one the migration carried over. It is empty exactly when Timezone
+	// is, and it is here because the screen has to be able to say where the value came from — a
+	// zone a browser guessed and a zone a person chose are different claims about the same wall.
+	TimezoneOrigin string `json:"timezone_origin"`
 }
 
 // storedConfigV3 is the document at schema version 3: the version, the bindings list, the two
@@ -267,6 +295,24 @@ type storedConfigV7 struct {
 	Layouts  []storedLayout     `json:"layouts"`
 	Windows  []brightnessWindow `json:"windows"`
 	Lights   []storedLightV7    `json:"lights"`
+	Pauses   []storedPause      `json:"pauses"`
+}
+
+// storedConfigV8 is the document at schema version 8: everything version 9 holds, and no zone on
+// it. Both the step that writes it and the step that reads it use it; nothing else does.
+//
+// It is a type of its own for the reason storedConfigV7 is. The step from 7 writes version 8, and
+// the step from 8 reads it back; if the first wrote the current shape, the second would refuse the
+// document it had just produced — a version-8 document carrying `"timezone": ""` is not a
+// version-8 document, and the strict decode is what says so.
+type storedConfigV8 struct {
+	Version  int                `json:"version"`
+	Bindings []json.RawMessage  `json:"bindings"`
+	States   []storedState      `json:"states"`
+	Moments  []storedMoment     `json:"moments"`
+	Layouts  []storedLayout     `json:"layouts"`
+	Windows  []brightnessWindow `json:"windows"`
+	Lights   []storedLight      `json:"lights"`
 	Pauses   []storedPause      `json:"pauses"`
 }
 
@@ -588,7 +634,11 @@ var storeUpgrades = []storeUpgrade{
 				lights = append(lights, one.toStored())
 			}
 
-			return json.Marshal(storedConfig{
+			// At version 8 and not at the shape this build writes: the step above this one reads a
+			// version-8 document strictly, and a document carrying a zone is not one. The rows are the
+			// rows, and the zone this step cannot know is the step above's business — version 8's
+			// build had no zone to write, so no key is invented for it here.
+			return json.Marshal(storedConfigV8{
 				Version:  8,
 				Bindings: seventh.Bindings,
 				States:   seventh.States,
@@ -597,6 +647,38 @@ var storeUpgrades = []storeUpgrade{
 				Windows:  seventh.Windows,
 				Pauses:   seventh.Pauses,
 				Lights:   lights,
+			})
+		},
+	},
+	{
+		from: 8,
+		why:  "the document gained the zone this module judges a clock and a brightness window in, empty until somebody names one",
+		step: func(raw []byte) ([]byte, error) {
+			// Both keys are written empty, and empty is the truth: version 8's build had no field to
+			// put a zone in, so no document it wrote carries one, and inventing America/Denver (or UTC,
+			// which is worse — it is the container's own clock and looks healthy while being hours out)
+			// would be inventing a decision nobody made on every install.
+			//
+			// What fills it is the start that follows: the `timezone` setting is the migration source,
+			// read once, and written here by zoneFromSettings (main.go). A module with no setting keeps
+			// the empty string, which is the state that refuses a window and draws no clock — the same
+			// state version 8 was in, and the reason this upgrade changes no light.
+			var eighth storedConfigV8
+			if err := decodeStrictly(raw, &eighth); err != nil {
+				return nil, err
+			}
+
+			return json.Marshal(storedConfig{
+				Version:        9,
+				Bindings:       eighth.Bindings,
+				States:         eighth.States,
+				Moments:        eighth.Moments,
+				Layouts:        eighth.Layouts,
+				Windows:        eighth.Windows,
+				Lights:         eighth.Lights,
+				Pauses:         eighth.Pauses,
+				Timezone:       "",
+				TimezoneOrigin: "",
 			})
 		},
 	},

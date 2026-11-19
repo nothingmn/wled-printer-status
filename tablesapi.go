@@ -215,9 +215,10 @@ type tableAPI struct {
 	// not how to ask it.
 	clock func() time.Time
 
-	// zone is the IANA zone the brightness windows are judged in — the `timezone` setting — and nil
-	// means the settings this process is running on. It is a field so that a test can name a zone
-	// without a host, and because the setting is the host's and this struct is what a route reaches.
+	// zone is the IANA zone the brightness windows are judged in and a clock is written in, and nil
+	// means this module's own store (zoneName, wave3api.go). It is a field so that a test can hand a
+	// zone over instead of writing a document, and so that a test about a module with no zone can say
+	// so with one word. The zone route does not read it: its subject is the document.
 	zone func() string
 }
 
@@ -249,6 +250,10 @@ func (api tableAPI) mount(mux *http.ServeMux) {
 	// mounted here because they are the same store and the same watch; what they are for is in
 	// wave3api.go.
 	api.mountWave3(mux)
+
+	// And the zone those windows are judged in, which schema version 9 moved out of the manifest and
+	// into this store. It is mounted here for the same reason: one document, one set of routes.
+	api.mountTimezone(mux)
 }
 
 // document is the store as a read sees it: the document, and whether there is one to write to.

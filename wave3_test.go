@@ -347,9 +347,11 @@ func TestTheSevenOptionalLinesAreStoredPerBinding(t *testing.T) {
 
 // TestTheEndsLineIsRefusedOnAModuleWithNoZone is the one refusal the optional lines still carry.
 //
-// The clock time is written in the zone the `timezone` setting names and in nothing else (AGENTS.md
+// The clock time is written in the zone this module's own store holds and in nothing else (AGENTS.md
 // §5.14), so a layout that asks for it on a module with no zone would draw nothing every time —
-// which is the failure the old `remaining: true` refusal was there to prevent, in a new place.
+// which is the failure the old `remaining: true` refusal was there to prevent, in a new place. The
+// sentence names the screen that sets one, because the manifest has declared no settings since §4 and
+// "the timezone setting" would send a person to a pane that does not exist.
 func TestTheEndsLineIsRefusedOnAModuleWithNoZone(t *testing.T) {
 	under := newWave3UnderTest(t, twoPrinters(), twoBindings(), "", at(), "")
 
@@ -359,8 +361,9 @@ func TestTheEndsLineIsRefusedOnAModuleWithNoZone(t *testing.T) {
 	}
 
 	detail, _ := body["detail"].(string)
-	if !strings.Contains(detail, "ends is true") || !strings.Contains(detail, "timezone setting names no zone") {
-		t.Fatalf("the refusal %q does not name the setting that has to change", detail)
+	if !strings.Contains(detail, "ends is true") || !strings.Contains(detail, "Overview") ||
+		!strings.Contains(detail, "America/Denver") {
+		t.Fatalf("the refusal %q does not name where a zone is set or a value to set", detail)
 	}
 
 	// Every other line is still accepted, because only the clock needs a zone.
@@ -580,7 +583,7 @@ func TestAWindowCannotBeWrittenWithoutAZone(t *testing.T) {
 	}
 
 	detail, _ := body["detail"].(string)
-	for _, want := range []string{"timezone", "America/Denver"} {
+	for _, want := range []string{"Overview", "America/Denver"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("the refusal %q does not say %q", detail, want)
 		}

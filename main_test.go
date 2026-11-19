@@ -165,6 +165,7 @@ func TestTheFragmentParses(t *testing.T) {
 		"/states",
 		"/states/{state}",
 		"/status",
+		"/timezone",
 		"/windows",
 		"/windows/{index}",
 		"/wled-printer-status",

@@ -214,7 +214,7 @@ the arrangement, and each one is a part of the picture rather than a mode:
 | `name` | the job's own name, on the other half of the rotation | `true` |
 | `rotate_seconds` | how long each half holds the panel | `15` |
 | `remaining` | how long the job has left, as `42M` or `1H12M` | `false` |
-| `ends` | the clock time it ends at, as `ENDS 11:12`, in the `timezone` setting's zone | `false` |
+| `ends` | the clock time it ends at, as `ENDS 11:12`, in the zone this module holds | `false` |
 | `temperatures` | the nozzle and the bed, as `NOZ 221/220 BED 60` | `false` |
 | `elapsed` | how long it has been printing, as `1H12M` | `false` |
 | `material` | the filament's short name, as `PLA` | `false` |
@@ -592,7 +592,11 @@ carries is:
 ```
 
 The zone is kept in the same document, beside the windows and not inside each one: the windows are judged in
-one zone, and a zone per window would be several answers to one question.
+one zone, and a zone per window would be several answers to one question. It is set on the module's
+**Overview** screen, through `GET /timezone` and `PUT /timezone`, and it is an IANA name such as
+`America/Denver`. An install that has never had one filled in gets it from the browser on the first page load
+that finds none stored — once, and never again — and an empty or unloadable name is refused rather than
+stored, so a zone is never cleared by accident.
 
 Each window carries `from` and `to` as `HH:MM`, a `brightness` 0–255, and optionally `days` (`mon`
 through `sun`; absent or empty covers every day). The rules, in the order a person reads them:

@@ -307,7 +307,7 @@ var (
 	// the value, and the sentence names it beside the values that are accepted.
 	LayoutRefused = fault.Register(faultDomain, "LAYOUT_REFUSED", http.StatusConflict, fault.Document(
 		"The layout is not one this module can act on",
-		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is drawn. rotate_seconds is a whole number of seconds, one or more. The seven optional lines are each a true or a false, and the one that ends at a clock time needs the timezone setting to name a zone this build can load. A set of lines the panel cannot hold is refused when the frame is drawn, naming the lines that did not fit. The detail names the value that was sent and the values accepted. Nothing was changed.",
+		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is drawn. rotate_seconds is a whole number of seconds, one or more. The seven optional lines are each a true or a false, and the one that ends at a clock time needs this module to hold a zone it can load — one is set on its Overview screen. A set of lines the panel cannot hold is refused when the frame is drawn, naming the lines that did not fit. The detail names the value that was sent and the values accepted. Nothing was changed.",
 		fault.RetryNever,
 		fault.ShowDetail,
 		"binding", "bar_band", "bar_rows", "percent_scale", "rotation", "rotate_seconds", "ends",
@@ -335,13 +335,13 @@ var (
 	))
 
 	// WindowRefused is a well-formed window this module will not store, or a window write on a module
-	// with no timezone to judge it in: two ends the same, a time of day that is not HH:MM, a
-	// brightness outside 0-255, a day that is not one of the seven, or a `timezone` setting naming
-	// nothing or naming a zone that will not load. The zone cases are here because a window judged in
-	// the container's own clock fires hours away from the evening it was written for.
+	// with no zone to judge it in: two ends the same, a time of day that is not HH:MM, a brightness
+	// outside 0-255, a day that is not one of the seven, or no zone set, or one that will not load.
+	// The zone cases are here because a window judged in the container's own clock fires hours away
+	// from the evening it was written for.
 	WindowRefused = fault.Register(faultDomain, "WINDOW_REFUSED", http.StatusConflict, fault.Document(
 		"The window is not one this module can act on",
-		"from and to are a time of day written HH:MM; an end earlier than the start wraps midnight and is accepted. The two ends may not be the same, because that is either a whole day or no time at all and which was meant cannot be guessed. brightness is 0-255, which is what a WLED controller takes. days is optional and names any of mon, tue, wed, thu, fri, sat and sun. A window can only be judged in a zone: name one in the timezone setting, as an IANA name such as America/Denver. Nothing was changed.",
+		"from and to are a time of day written HH:MM; an end earlier than the start wraps midnight and is accepted. The two ends may not be the same, because that is either a whole day or no time at all and which was meant cannot be guessed. brightness is 0-255, which is what a WLED controller takes. days is optional and names any of mon, tue, wed, thu, fri, sat and sun. A window can only be judged in a zone: set one on this module's Overview screen, as an IANA name such as America/Denver. Nothing was changed.",
 		fault.RetryNever,
 		fault.ShowDetail,
 		"index", "timezone",
@@ -352,6 +352,29 @@ var (
 	WindowBodyInvalid = fault.Register(faultDomain, "WINDOW_BODY_INVALID", http.StatusBadRequest, fault.Document(
 		"The body is not a brightness window",
 		"Write a JSON object carrying from and to as a time of day written HH:MM, brightness as 0-255, and days optionally as a list of mon, tue, wed, thu, fri, sat and sun. Every other key is refused rather than ignored. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// TimezoneRefused is a zone this module will not store: an empty one, one the loader cannot find,
+	// or `Local`, which is this process's own clock and not a place. It is a 409 and not a 400 because
+	// the body parsed: what is wrong is the value, and the sentence names the value and an example of
+	// one that would be accepted. Nothing is written, and no zone is ever cleared — a module whose
+	// clock went silent because somebody sent an empty body would be a light that stopped saying the
+	// time for a reason nobody could find.
+	TimezoneRefused = fault.Register(faultDomain, "TIMEZONE_REFUSED", http.StatusConflict, fault.Document(
+		"The zone is not one this module can act on",
+		"timezone is an IANA name such as America/Denver, and it has to be a name this build can load. An empty value is refused rather than read as \"clear the zone\": this module never forgets a zone once one is stored, and a window or a clock read in this process's own clock would be hours away from the evening it was written for. Local is refused because inside the Prusa Connect container it is UTC. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"timezone",
+	))
+
+	// TimezoneBodyInvalid is a body that is not a zone at all: not JSON, a key this module does not
+	// read, or a source other than the two a zone can arrive from.
+	TimezoneBodyInvalid = fault.Register(faultDomain, "TIMEZONE_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a zone",
+		"Write a JSON object carrying timezone as an IANA name such as America/Denver, and source optionally as browser or operator. Every other key is refused rather than ignored, so a misspelt one is reported instead of being read as an empty zone. Nothing was changed.",
 		fault.RetryNever,
 		fault.ShowDetail,
 	))

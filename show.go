@@ -281,6 +281,18 @@ type storeView struct {
 	moments []storedMoment
 	layouts map[string]storedLayout
 
+	// stored says a document was read to fill this view, and false that there was none to read —
+	// a module the host granted no directory, or a start before the first document was written.
+	// It is what tells "this document names no zone" from "this module has no document", which are
+	// two different answers from zoneInForce (timezone.go): the first names no zone, the second
+	// reads the `timezone` setting once, as the migration source.
+	stored bool
+
+	// zone is the IANA zone this document names, and empty when it names none. Both consumers — the
+	// ends line's clock and the window evaluator — then refuse rather than read this process's own
+	// clock, which inside the container is UTC.
+	zone string
+
 	// refused is why the document could not be acted on. The painter then draws from the
 	// renderer's table, the fixed brightness and no pause — the picture every install had before
 	// the store existed — and says why once.
@@ -438,14 +450,22 @@ func (s *storeLights) location() (*time.Location, string, error) {
 	return s.zoned, s.zonedName, nil
 }
 
-// zoneName is the IANA zone the windows are judged in: the `timezone` setting, or the function a
-// test hands over instead.
+// zoneName is the IANA zone the windows are judged in and the clock is written in, out of this
+// module's own store — or the function a test hands over instead.
+//
+// It is the store's zone and not the setting's, and that is the whole of schema version 9: the setting
+// was the migration source once and no longer answers. A module with no document to read — granted no
+// data directory — still runs from the setting, because that is the module this one was before the
+// store existed and nothing has replaced it (zoneInForce, timezone.go).
 func (s *storeLights) zoneName() string {
 	if s.zone != nil {
 		return s.zone()
 	}
 
-	return settings().Timezone
+	view := s.view()
+	zone, _ := zoneInForce(view.zone, view.stored)
+
+	return zone
 }
 
 // view is the document as it stands, read again only when something says it has changed.
@@ -477,7 +497,7 @@ func (s *storeLights) view() storeView {
 		return held
 	}
 
-	view := storeView{stamp: stamp}
+	view := storeView{stamp: stamp, stored: true}
 
 	s.read(&view)
 
@@ -508,6 +528,11 @@ func (s *storeLights) read(view *storeView) {
 
 		return
 	}
+
+	// The zone is taken before the tables, and it is taken even when one of them refuses: a zone is a
+	// fact about the document, not a table, and the two consumers that read it — the ends line's
+	// clock and the window evaluator — each judge it themselves through zoneInForce.
+	view.zone = strings.TrimSpace(found.Config.Timezone)
 
 	if view.rows, err = rowsOf(found.Config); err != nil {
 		view.refused = err

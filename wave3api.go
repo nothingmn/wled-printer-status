@@ -70,18 +70,29 @@ func (api tableAPI) now() time.Time {
 	return time.Now()
 }
 
-// zoneName is the IANA zone the brightness windows are judged in: the `timezone` setting.
+// zoneName is the IANA zone the brightness windows are judged in and a clock is written in, out of this
+// module's own store.
 //
-// The setting stays the host's — §2.8 keeps it as the one thing the operator sets, because it is
-// read once at start and a route cannot write the host's settings — while the windows themselves move
-// into this module's store. So the zone is read from the settings and the windows from the document,
-// and an answer that carries a judged window carries the zone it was judged in beside it.
+// The zone used to be the host's — the `timezone` setting — and schema version 9 moved it into the
+// document, because the manifest has declared no `options` since §4 made this store the editing surface
+// and no install could name a zone at all. The setting is still read for a module with no document to
+// read, which is a module the host granted no data directory: it runs from its settings exactly as it
+// did before the store existed (zoneInForce, timezone.go).
 func (api tableAPI) zoneName() string {
 	if api.zone != nil {
 		return strings.TrimSpace(api.zone())
 	}
 
-	return strings.TrimSpace(settings().Timezone)
+	config, available, err := api.document()
+	if err != nil {
+		// A document this build cannot read names no zone it can be trusted to judge, and falling
+		// back to the setting would judge a window in a zone the store overrode long ago.
+		return ""
+	}
+
+	zone, _ := zoneInForce(config.Timezone, available)
+
+	return zone
 }
 
 // clockZone is the IANA zone a panel's ETA line writes its clock in, and empty when this module has
@@ -248,15 +259,15 @@ func (sent layoutRequest) carriesNothing() bool {
 
 // stored is the row this body writes, for the binding it names.
 //
-// One thing is refused here and not by checkStoredLayout: the ETA line on a module that has no zone
-// it can load. It is this function's because the row is only written while the setting is readable,
-// and checkStoredLayout runs again on every read of the document — a rule there would refuse the
-// whole store at start-up because a host setting had been emptied, which is the failure
-// requireZone avoids for brightness windows in the same way.
+// One thing is refused here and not by checkStoredLayout: the ETA line on a module that holds no zone
+// it can load. It is this function's because the row is only written while a zone is readable, and
+// checkStoredLayout runs again on every read of the document — a rule there would refuse the whole
+// store at start-up because a zone had been left unset, which is the failure requireZone avoids for
+// brightness windows in the same way.
 func (sent layoutRequest) stored(binding string, zone string) (storedLayout, error) {
 	if sent.Ends != nil && *sent.Ends && zone == "" {
 		return storedLayout{}, fmt.Errorf(
-			"ends is true, and this module has no zone to write the clock time in: the timezone setting names no zone this build can load, so a time on the panel would be this process's clock and not yours. Name an IANA zone such as America/Denver in the settings, or switch the ends line off")
+			"ends is true, and this module holds no zone to write the clock time in, so a time on the panel would be this process's clock and not yours. Set an IANA zone such as America/Denver on the Overview screen, or switch the ends line off")
 	}
 
 	one := storedLayout{
@@ -686,7 +697,7 @@ func (api tableAPI) createWindow(w http.ResponseWriter, r *http.Request) {
 func (api tableAPI) requireZone() error {
 	if api.zoneName() == "" {
 		return fmt.Errorf(
-			"a window cannot be written until this module knows which clock to judge it against, and the timezone setting names no zone: write an IANA name such as America/Denver. This process runs inside the Prusa Connect container, whose own clock is almost always UTC, so a window judged there would fire seven hours away from the evening it was written for")
+			"a window cannot be written until this module knows which clock to judge it against, and it holds no zone: set one as an IANA name such as America/Denver on this module's Overview screen. This process runs inside the Prusa Connect container, whose own clock is almost always UTC, so a window judged there would fire seven hours away from the evening it was written for")
 	}
 
 	// A zone that is written is checked, because a misspelt one accepted today is a window refused

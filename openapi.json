@@ -1433,11 +1433,83 @@
         }
       }
     },
+    "/timezone": {
+      "get": {
+        "operationId": "read-timezone",
+        "summary": "The zone this module judges a brightness window in and writes a clock in",
+        "description": "The IANA zone in force, and where it came from. It lives in this module's own configuration store, on the Overview screen, and never in this process's own clock: the process runs inside the Prusa Connect container, whose clock is almost always UTC, so a window judged or a clock drawn there is hours away from the operator's evening and nothing on the instance says so. origin is store when the document holds the zone, settings when this module was granted no data directory and still runs on the timezone setting, and none when no zone is named at all — in which case no window can be saved and a panel draws no clock. source says how a stored zone got there: browser for the first page load that found none and captured the browser's own, operator for one typed on the Overview screen, settings for one the schema-9 upgrade carried over. persisted is false on a module with nowhere to keep a change. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The zone in force, and where it came from.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TimezoneAnswer"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "write-timezone",
+        "summary": "Store the zone this module judges a window in and writes a clock in",
+        "description": "Writes the zone into this module's own store, over whatever it held, and answers the same body GET /timezone does. timezone is an IANA name such as America/Denver and has to be one this build can load: an empty value is refused rather than read as \"clear the zone\", because this module never forgets a zone once one is stored and a clock that went silent for a reason nobody can find is worse than an old zone. source is optional and is browser or operator — the two ways a zone arrives after the upgrade — and defaults to operator. Nothing is sent to a light, and a refusal stores nothing at all, so a screen that redraws from the read shows the document as it was rather than a change that did not happen. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/TimezoneRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The zone was stored, and the whole answer is repeated.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/TimezoneAnswer"}
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a zone at all: not JSON, an unknown key, or a source that is neither browser nor operator (TIMEZONE_BODY_INVALID).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The zone is empty, unloadable, or Local, which inside the container is UTC (TIMEZONE_REFUSED).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no configuration store to keep a zone in (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/windows": {
       "get": {
         "operationId": "list-windows",
-        "summary": "The brightness windows, judged at this instant in the timezone setting's zone",
-        "description": "The list the Brightness screen edits, in the operator's order, with the window in force at the instant of the answer named beside it. A window is judged in the IANA zone the timezone setting names and never in this process's own clock, which inside the Prusa Connect container is almost always UTC: a window judged there fires hours away from the evening it was written for, and the answer therefore always carries judged_in and now so that a person can check. A window whose end precedes its start wraps midnight and is accepted; the one whose two ends are the same is refused, because that is either a whole day or no time at all. Overlapping windows are allowed and the first one wins. This build still runs the brightness on the light from the brightness_schedule setting, so this is the list that decides the light's brightness, judged in the module's own timezone setting. The host takes view_resource on the module's instance before this is called.",
+        "summary": "The brightness windows, judged at this instant in the zone this module holds",
+        "description": "The list the Brightness screen edits, in the operator's order, with the window in force at the instant of the answer named beside it. A window is judged in the IANA zone this module's own store holds and never in this process's own clock, which inside the Prusa Connect container is almost always UTC: a window judged there fires hours away from the evening it was written for, and the answer therefore always carries judged_in and now so that a person can check. A window whose end precedes its start wraps midnight and is accepted; the one whose two ends are the same is refused, because that is either a whole day or no time at all. Overlapping windows are allowed and the first one wins. This build still runs the brightness on the light from the brightness_schedule setting, so this is the list that decides the light's brightness, judged in the zone this module's own store holds, which is named on its Overview screen. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The windows, judged.",
@@ -1452,7 +1524,7 @@
       "post": {
         "operationId": "add-window",
         "summary": "Add one brightness window to the end of the list",
-        "description": "Adds one window after every other, because the order decides which of two overlapping windows wins and a window added at the front would silently take over moments another one covers. A window is a time range and a brightness: from and to written HH:MM, brightness 0-255, and days optionally. The window cannot be written at all unless the timezone setting names a zone it can be judged in, and the refusal is that setting's own sentence. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Adds one window after every other, because the order decides which of two overlapping windows wins and a window added at the front would silently take over moments another one covers. A window is a time range and a brightness: from and to written HH:MM, brightness 0-255, and days optionally. The window cannot be written at all unless this module holds a zone it can be judged in, and the refusal says where to set one — the Overview screen. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowRequest"}}}
@@ -2552,7 +2624,7 @@
           "printer_name_origin": {"type": "string", "enum": ["default", "store"]},
           "layer": {"type": "boolean", "description": "Whether how far up the nozzle has got is drawn, as Z 8.6MM. A layer count is not reported by the machine, so this is the Z position and not a layer number."},
           "layer_origin": {"type": "string", "enum": ["default", "store"]},
-          "zone": {"type": "string", "description": "The IANA zone the ends line writes its clock in — the timezone setting's — and empty when this module has none it can load. With no zone that line is blank."},
+          "zone": {"type": "string", "description": "The IANA zone the ends line writes its clock in, out of this module's own store, and empty when it holds none it can load. With no zone that line is blank."},
           "origin": {"type": "string", "enum": ["default", "store"], "description": "store when this binding has a row in the store, default when it has none."},
           "overridden": {"type": "boolean", "description": "True when anything about this layout came from the store, which is what decides whether a screen offers a reset."},
           "rotation_note": {"type": "string", "description": "Present only when rotation is side-by-side: what this build does instead."}
@@ -2570,7 +2642,7 @@
           "percent_scale": {"type": "integer", "enum": [3, 4, 5], "description": "The scale the digits are drawn at."},
           "name": {"type": "boolean", "description": "Draw the job's own name."},
           "remaining": {"type": "boolean", "description": "Draw how long the job has left, as 42M. A set of lines the panel cannot hold is refused rather than cropped, and the refusal names the lines that did not fit."},
-          "ends": {"type": "boolean", "description": "Draw the clock time the job ends at, as ENDS 11:12, in the timezone setting's zone. With no zone the line is blank."},
+          "ends": {"type": "boolean", "description": "Draw the clock time the job ends at, as ENDS 11:12, in the zone this module holds. With no zone the line is blank."},
           "temperatures": {"type": "boolean", "description": "Draw the nozzle's temperature and target and the bed's, as NOZ 221/220 BED 60."},
           "elapsed": {"type": "boolean", "description": "Draw how long the job has been printing, as 1H12M."},
           "material": {"type": "boolean", "description": "Draw the filament's short name, as PLA."},
@@ -2607,13 +2679,35 @@
         },
         "required": ["from", "to", "brightness"]
       },
+      "TimezoneAnswer": {
+        "type": "object",
+        "description": "The zone in force and where it came from. timezone is the IANA name as the loader spells it, empty when this module names none. origin says where that value came from: store, settings or none. source says how a stored zone got there: browser, operator or settings, and it is absent when the document does not say — a document a person edited by hand can hold a zone with no origin. stored says the zone is in this module's own document, which is what a screen reads as \"do not capture one from this browser\". persisted says a change here could be kept.",
+        "properties": {
+          "timezone": {"type": "string", "description": "The zone in force, as the loader spells it, empty when this module names none."},
+          "origin": {"type": "string", "enum": ["store", "settings", "none"], "description": "Where the zone came from: this module's own store, the timezone setting it was migrated from, or nowhere."},
+          "source": {"type": "string", "enum": ["browser", "operator", "settings"], "description": "How a stored zone got there. Absent unless origin is store, and absent when the document carries a zone with no origin."},
+          "stored": {"type": "boolean", "description": "True when the zone is in this module's own document."},
+          "persisted": {"type": "boolean", "description": "True when a change here could be kept: this module was granted a data directory and its document can be written."},
+          "note": {"type": "string", "description": "One sentence saying what the zone does, or what is missing without one."}
+        },
+        "required": ["timezone", "origin", "stored", "persisted"]
+      },
+      "TimezoneRequest": {
+        "type": "object",
+        "description": "One zone as a caller writes it. timezone is an IANA name this build can load; source names which of the two things wrote it, and defaults to operator.",
+        "properties": {
+          "timezone": {"type": "string", "description": "The IANA zone, such as America/Denver. Empty is refused rather than read as a clear."},
+          "source": {"type": "string", "enum": ["browser", "operator"], "description": "Who wrote it: the first page load that found no zone, or a person on the Overview screen."}
+        },
+        "required": ["timezone"]
+      },
       "WindowsAnswer": {
         "type": "object",
-        "description": "The brightness windows, judged. judged_in is the IANA zone the windows are read in — the timezone setting — and now is the instant they were judged at, in that zone. Both are always present, because a brightness window an hour wrong is worse than none and these two are how a person checks. wins and level name the window in force at now and the brightness it asks for, and both are absent when none is in force.",
+        "description": "The brightness windows, judged. judged_in is the IANA zone the windows are read in — the one this module's own store holds — and now is the instant they were judged at, in that zone. Both are always present, because a brightness window an hour wrong is worse than none and these two are how a person checks. wins and level name the window in force at now and the brightness it asks for, and both are absent when none is in force.",
         "properties": {
           "windows": {"type": "array", "items": {"$ref": "#/components/schemas/Window"}},
           "count": {"type": "integer"},
-          "judged_in": {"type": "string", "description": "The zone the windows were judged in: the timezone setting's own name, empty when it names nothing."},
+          "judged_in": {"type": "string", "description": "The zone the windows were judged in: the name this module's own store holds, empty when it holds none."},
           "now": {"type": "string", "description": "The instant the windows were judged at, RFC 3339 in that zone."},
           "wins": {"type": "integer", "description": "The index of the window in force at now, absent when none is."},
           "level": {"type": "integer", "description": "The brightness the winning window asks for."},

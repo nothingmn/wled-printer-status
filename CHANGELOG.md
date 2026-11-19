@@ -10,7 +10,36 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
-## 0.5.1 — 2026-11-19
+## 0.6.0 — 2026-11-19
+
+**The zone lives in this module's own store, and the Overview screen sets it.** It was a manifest setting, and
+the manifest has declared no `options` since 0.4.0 took them out — so no install could name a zone at all, and
+both things that need one refused: a brightness window could not be saved, and a panel's ends line drew nothing.
+**The store moves to schema 9**; the upgrade writes an empty zone and reads the `timezone` setting once, so an
+instance that had one keeps it, and a 0.5.1 build refuses a document this one writes, by name.
+
+### Added
+
+- **`GET /timezone` and `PUT /timezone`: the zone, where it came from, and how it got there.** The answer
+  carries `timezone`, `origin` (`store`, `settings` or `none`), `source` (`browser`, `operator` or `settings`),
+  `stored` and `persisted`. A zone is an IANA name such as America/Denver; an empty one, an unloadable one, or
+  `Local` — which inside the container is UTC — is refused with `TIMEZONE_REFUSED` and **nothing is stored**.
+  This module never clears a zone once one is set.
+- **One field on the Overview screen shows the zone and where it came from.** On the first page load that finds
+  no zone stored, the browser's own zone (`Intl.DateTimeFormat().resolvedOptions().timeZone`) is written once
+  and the field says so; after that no browser overwrites a stored value, and the operator can change it at any
+  time. A browser that reports no zone writes nothing, and a refused save says so plainly and does not render
+  as saved.
+
+### Changed
+
+- **A brightness window is judged in this module's zone, and a panel's ends line writes its clock in it.** Both
+  read the store rather than the `timezone` setting, which is now a migration source read once by the upgrade.
+- **The refusals that said "the timezone setting" now say where a zone is set: the Overview screen.** A window
+  that cannot be judged and an ends line that cannot write a clock both name an IANA example and the screen.
+- **A module granted no data directory still runs on the `timezone` setting**, exactly as it did before the
+  store existed; nothing else reads the setting any more.
+
 
 **This release declares no outbound connections.** The manifest used to name two addresses, and they were the
 author's own lights: every installer read them in the approval prompt, and an instance driving a different
