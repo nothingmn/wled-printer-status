@@ -10,7 +10,15 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
-## Unreleased
+## 0.4.0 — 2026-11-19
+
+Nothing about the store, the routes or the manifest's grants changed: this release is screens, copy and
+links. The screen called *Right now* is called **Overview**, and the two gaps it can close — a printer on
+no light, a light with no printer — are always drawn on it. A light is shown by the name it calls itself
+with its address beside it, both parts links, and the lights with no printer come first. Every printer's
+name opens that printer's page in Prusa Connect. Bindings says when it last wrote to each light. On
+Layout a press lands where it is aimed, three explanatory blocks fold away, and every dropdown is
+readable in dark mode. The store is still schema 7 and no permission was added.
 
 ### Changed
 
