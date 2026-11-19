@@ -1182,12 +1182,15 @@ it reads. One thing to know before reaching for `LATEST`: it still names the `8b
 three releases behind what runs.
 
 The rest of this run is the functional check of the two-light install, on 2026-11-19 between 04:33 and
-04:40 MST: every route answered, a state's word reached the panel and its own `/json/state` carried it as
-the segment's name, a pause put both lights out and a resume brought them back within the second, a
-brightness window moved both controllers to 40 and back to 128, and both lights were left solid green at
-128 with the store's five tables empty again. The frames' own pixels were not read — nothing on this
-firmware exposes them — and both lights are still on the printer's finished green, so a composed layout
-and a progress bar remain questions for a print.
+04:40 MST. Every read route answered, a state's word reached the panel and the panel's own `/json/state`
+carried it as the segment's name, a pause put both lights out and a resume brought them back within the
+second, a brightness window moved both controllers to 40 and back to 128, and both lights were left solid
+green at 128 with the store's five tables empty again. Three routes did **not** answer:
+`preview-finished`, `preview-pattern` and `preview-frame` each refused with `PREVIEW_NOT_RUNNING` —
+*this module is not driving exactly one light* — which is `main.go`'s own rule, so on a two-light install
+the diagnostic ladder cannot be fired at all. The frames' own pixels were not read either — nothing on
+this firmware exposes them — and both lights are still on the printer's finished green, so a composed
+layout and a progress bar remain questions for a print.
 
 ## 6. Restart the core once, and prove it is well
 
