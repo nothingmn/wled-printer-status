@@ -1225,8 +1225,10 @@ $ docker logs prusa_connect 2>&1 | grep -a 'was upgraded from schema version'
 **The ladder, on both lights, at once.** `POST /preview-pattern?pattern=quarters&hold=8` answered `202`
 with `count: 2` and both lights named, each carrying its own sentence about what the picture answers; then
 `?pattern=solid&hold=8&light=10.0.0.253` answered with **one** light. What the lights were actually
-displaying was taken off the wire, because a picture never appears in `/json/state` (see §7's fact about
-DDP): a `tcpdump` in a `--net=host` container on `udp port 4048`, reassembled by DDP offset.
+displaying was taken off the wire, because a picture never appears in `/json/state`: the module writes one
+establishing body that names the picture and sends the pixels themselves over DDP, and no firmware here
+reads pixels back. A `tcpdump` in a `--net=host` container on `udp port 4048`, reassembled by DDP offset,
+is the picture.
 
 ```console
 WINDOW A — the quarters request, aimed at both lights
