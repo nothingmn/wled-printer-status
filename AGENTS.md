@@ -74,7 +74,9 @@ Everything odd about this repository follows from that one sentence:
 | `openapi.json` | The route fragment, every path relative to the mount. Held to `routesapi.ParseFragment` at launch. |
 | `install.sh` | **The generator's script, and stale.** It expects a Go toolchain on the machine and a Prusa Connect checkout at a fixed `/work/prusa-connect`. Do not trust it, do not "fix" it as a side errand, and do not cite it as documentation. |
 | `.github/workflows/release.yml` | Publishes to the marketplace on a released tag. Pins `core-ref: sdk/v0.1.0-beta.1`. |
-| `docs/product-requirements.md` | The product requirements. A **draft**, except the state table, which the operator locked on 2026-11-18. Fourteen questions there are still his to answer. |
+| `docs/product-requirements.md` | **The locked v2 product requirements** (approved 2026-11-19): eight screens, the cross-cutting decisions, the backend work list and a proved/unproved section. The operator-locked state table lives in its Appendix A. Where it disagrees with anything else in this repository, it wins. |
+| `docs/design/v2/` | **The design of record** — one working HTML mockup per screen, each with a `README.md` recording its decisions and the operator own words. The requirements describe these screens; if the two differ, the requirements win and the mockup is stale. |
+| `docs/handoff.md` | **Start here if you are new to this repository.** The handoff: where things live, how to build and prove, what is settled and what is not, the backend work list, and the measured facts worth not re-deriving. |
 
 The split matters in one direction only: a change to a `internal/` package or to `drive.go`'s painting is
 a change to working code that has tests, and a change to *what* the light should show — a new colour, an
@@ -488,9 +490,9 @@ points at an id that no longer exists.
 ## 10. If you are asked to change what the light shows
 
 The wiring exists: `main.go` builds a source, a driver and a writer from the settings, and `drive.go`
-paints. What is left in the product is mostly decisions rather than plumbing. Read
-`docs/product-requirements.md` first and treat every item marked **open** as a decision that is not
-yours. The hard parts:
+paints. What is left is plumbing behind screens that are already decided: read
+`docs/product-requirements.md` first — it is **locked**, and it lists what is built and what is not. A change to
+*what* the light shows is a change to that document, never a decision to take quietly. The hard parts:
 
 - **choosing a tier per controller** — from `Info` and `Capabilities`, not from a hardcoded guess, with a
   designed fallback for a 1D strip when the feature is 2D-only (§5.4);
