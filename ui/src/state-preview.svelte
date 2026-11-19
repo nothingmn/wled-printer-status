@@ -53,8 +53,15 @@
 
 		// An unlit pixel is black — render.Frame{}.Unfilled(), which is what the module paints
 		// behind a word — and a state without a word is the colour over the whole rectangle.
-		context.fillStyle = '#000';
-		context.fillRect(0, 0, PANEL.width, PANEL.height);
+		// The black is the token layer's (`--wled-pixel-off`), read from this element rather
+		// than written here: a colour literal in a screen is the defect style guide §0 names,
+		// and this one line was the module's last. Empty means the token is missing, and a
+		// canvas left unfilled is better than a screen inventing a value of its own.
+		const off = getComputedStyle(surface).getPropertyValue('--wled-pixel-off').trim();
+		if (off !== '') {
+			context.fillStyle = off;
+			context.fillRect(0, 0, PANEL.width, PANEL.height);
+		}
 
 		context.globalAlpha = pending ? 0.45 : 1;
 		context.fillStyle = painted;

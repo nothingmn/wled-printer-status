@@ -789,3 +789,10 @@ The product requirements are **locked** at
 eight screens they specify, on 2026-11-19, and that file — not this README — is the place to argue
 with what the light should show. The screens themselves are design mockups in
 [`docs/design/v2/`](docs/design/v2/README.md).
+
+What they look like is a separate document, and it is the one a restyle is judged against:
+[`docs/style-guide.md`](docs/style-guide.md), the operator's own style guide for this module, derived
+from his instance's printer page in both themes. The module renders *inside* that page, so the guide's
+rule outranks its own palette — every colour comes from the host's CSS custom properties, mapped once in
+[`ui/src/tokens.css`](ui/src/tokens.css), and every shape in every screen is one of the eight primitives
+in [`ui/src/ui/`](ui/src/ui/). A component that writes a hex value is the defect the guide names.

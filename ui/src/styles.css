@@ -1,18 +1,93 @@
-/* The module's own Tailwind, four statements, and only the third emits anything.
+/* The module's own Tailwind, and the registration of its tokens.
    The host's `@source` lines scan the host and the library's dist, and this
    module is absent from that build, so a utility only this module names would
    reach the browser as a class with no rule behind it.
 
-     1. Tailwind's own theme, in scope but not emitted. Without it the build
+     1. the module's tokens — every colour, space step, radius and type role,
+        each mapped from a host token, with the one fallback marked. This is
+        the only place a value is written down (tokens.css explains each one)
+     2. Tailwind's own theme, in scope but not emitted. Without it the build
         stops on `--spacing`
-     2. the library's theme, its own utilities and its `dark` variant, also not
+     3. the library's theme, its own utilities and its `dark` variant, also not
         emitted. The variables resolve from the host page's `:root`
-     3. the utilities this module names, and nothing else. `moduleBuild()`
+     4. the registration of the module's tokens with Tailwind, so a class name
+        in this module refers to a token: `bg-wled-panel`, `p-panel`,
+        `font-data`, `rounded-control`. It sits after 2 and 3 because the host's
+        theme resets the colour and the radius namespaces, and a declaration
+        before that reset is dropped — measured, not assumed: the first build
+        emitted the spacing and font utilities and nothing at all for colour
+     5. the utilities this module names, and nothing else. `moduleBuild()`
         scopes them to the module's own markup. The preflight is not here: it
         would restyle the host page
-     4. the tree Tailwind reads class names out of, which is this module's own */
+     6. the tree Tailwind reads class names out of, which is this module's own */
+@import './tokens.css';
 @reference 'tailwindcss';
 @reference '@prusa/connect-ui/tokens.css';
+
+@theme inline {
+  --color-wled-canvas: var(--wled-canvas);
+  --color-wled-panel: var(--wled-panel);
+  --color-wled-panel-ink: var(--wled-panel-ink);
+  --color-wled-quiet: var(--wled-quiet);
+  --color-wled-sunken: var(--wled-sunken);
+  --color-wled-hover: var(--wled-hover);
+
+  --color-wled-line: var(--wled-line);
+  --color-wled-line-field: var(--wled-line-field);
+
+  --color-wled-text: var(--wled-text);
+  --color-wled-text-quiet: var(--wled-text-quiet);
+  --color-wled-text-off: var(--wled-text-off);
+  --color-wled-off: var(--wled-off);
+
+  --color-wled-accent: var(--wled-accent);
+  --color-wled-accent-ink: var(--wled-accent-ink);
+  --color-wled-accent-text: var(--wled-accent-text);
+  --color-wled-accent-fill: var(--wled-accent-fill);
+  --color-wled-accent-fill-ink: var(--wled-accent-fill-ink);
+  --color-wled-accent-fill-hover: var(--wled-accent-fill-hover);
+  --color-wled-accent-fill-press: var(--wled-accent-fill-press);
+  --color-wled-accent-quiet: var(--wled-accent-quiet);
+  --color-wled-accent-quiet-ink: var(--wled-accent-quiet-ink);
+  --color-wled-accent-quiet-hover: var(--wled-accent-quiet-hover);
+  --color-wled-progress: var(--wled-progress);
+  --color-wled-focus: var(--wled-focus);
+
+  --color-wled-danger: var(--wled-danger);
+  --color-wled-danger-fill: var(--wled-danger-fill);
+  --color-wled-danger-ink: var(--wled-danger-ink);
+
+  --color-wled-status-printing: var(--wled-status-printing);
+  --color-wled-status-printing-ink: var(--wled-status-printing-ink);
+  --color-wled-status-done: var(--wled-status-done);
+  --color-wled-status-done-ink: var(--wled-status-done-ink);
+  --color-wled-status-error: var(--wled-status-error);
+  --color-wled-status-error-ink: var(--wled-status-error-ink);
+  --color-wled-status-idle: var(--wled-status-idle);
+  --color-wled-status-idle-ink: var(--wled-status-idle-ink);
+  --color-wled-status-quiet: var(--wled-status-quiet);
+  --color-wled-status-quiet-ink: var(--wled-status-quiet-ink);
+
+  /* Shape and rhythm, from the host's own corner scale and its one spacing
+     unit. Named rather than numbered on purpose: the guide's complaint is eight
+     different paddings on one screen, and four names cannot drift into eight
+     values. */
+  --radius-panel: var(--wled-radius);
+  --radius-control: var(--wled-radius);
+  --radius-chip: var(--wled-radius-xs);
+
+  --spacing-tight: var(--wled-space-1);
+  --spacing-row: var(--wled-space-2);
+  --spacing-panel: var(--wled-space-4);
+  --spacing-section: var(--wled-space-5);
+  --spacing-page: var(--wled-space-6);
+
+  /* Type: the host's two families, and the tracking an uppercase label wears. */
+  --font-ui: var(--wled-font-ui);
+  --font-data: var(--wled-font-data);
+  --tracking-label: var(--wled-track-label);
+}
+
 @layer utilities {
   @tailwind utilities;
 }

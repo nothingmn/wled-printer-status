@@ -1,0 +1,204 @@
+/* ── The module's tokens. The one place a value is written down. ──────────────
+ *
+ * THE RULE (style guide §0). The module is drawn *inside* Prusa Connect's own
+ * page, so the host is the source of truth and the style guide's hex values are
+ * the acceptance reference, not the source. Every token below is a host token
+ * read at the use site — `var(--card)`, not `#1B1B1D`. A component that writes
+ * a colour has stopped following the host's theme; this file is the only one
+ * allowed to name a value at all, and even here the only literal is the one
+ * line marked FALLBACK, for a value the host publishes no token for.
+ *
+ * WHY THERE IS NO `.dark` BLOCK. The host re-declares its own semantic tokens
+ * under `.dark` on `<html>` (node_modules/@prusa/connect-ui/dist/styles/
+ * tokens.css, "Block 2"). Those declarations cascade into this module's markup
+ * as ordinary inherited custom properties, so a token defined once against
+ * `--card` resolves to the host's light value or its dark value according to
+ * the theme in force *at the moment the page paints*. A theme flipped while the
+ * page is open is therefore followed with no JavaScript, no observer and no
+ * second block to keep in step — `scheme.ts` still states `color-scheme` for
+ * the browser's own popups, which is a different job.
+ *
+ * WHAT IS A FALLBACK. The module keeps the host's own name in the fallback
+ * column of the table below; the reference values in the comments are the
+ * guide's, quoted so a reviewer can compare what the host resolves to against
+ * what the operator saw. Only `--wled-pixel-off` has no host token behind it.
+ *
+ * ── Colour, and what it maps to ─────────────────────────────────────────────
+ *
+ *   module token            host token                    light ref / dark ref
+ *   --wled-canvas           --background                  #FFFFFF / #000000
+ *   --wled-panel            --card                        #FFFFFF / #1B1B1D
+ *   --wled-panel-ink        --card-foreground             #202127 / #E8E8EB
+ *   --wled-quiet            --surface                     #EDEEF1 / #303034
+ *   --wled-sunken           --muted                       #F6F7F9 / #1B1B1D
+ *   --wled-hover            --accent                      #EDEEF1 / #303034
+ *   --wled-line             --border                      #DEE1E7 / #303034
+ *   --wled-line-field       --input                       #8B8F9A / #6E737C
+ *   --wled-text             --foreground                  #202127 / #E8E8EB
+ *   --wled-text-quiet       --muted-foreground            #767B87 / #B7B9C1
+ *   --wled-text-off         --disabled-foreground         #B8BCC4 / #6E737C
+ *   --wled-off              --disabled                    #FAFAFB / #181A1C
+ *   --wled-accent           --selected                    #F4511E / #FF5A1F
+ *   --wled-accent-ink       --selected-foreground         #FFF7F4 / #E8E8EB
+ *   --wled-accent-text      --link                        #CF3C00 / #FF5A1F
+ *   --wled-accent-fill      --primary-fill                #F4511E / #FF5A1F
+ *   --wled-accent-fill-ink  FALLBACK — #000               #000 / #000
+ *                           (the host's own --primary-foreground is #FFF7F4 /
+ *                            #E8E8EB, and white on the accent fill measures
+ *                            2.86:1 dark and 3.25:1 light — under WCAG AA)
+ *   --wled-accent-quiet     --secondary                   #FBEDE8 / #45271F
+ *   --wled-accent-quiet-ink --secondary-foreground        #4A1B0C / #FBD9CE
+ *   --wled-progress         --progress                    #F4511E / #FF5A1F
+ *   --wled-focus            --ring                        #F4511E / #FE6737
+ *   --wled-danger           --destructive-text            #C22F16 / #FF8F8B
+ *   --wled-danger-fill      --destructive                 #C22F16 / #E5484D
+ *   --wled-danger-ink       --destructive-foreground      #FFF5F4 / #170F0E
+ *   --wled-status-printing  --state-active                #E9F0FB / #24313D
+ *   --wled-status-…-ink     --state-active-text           #1E2A46 / #93B6E8
+ *   --wled-status-done      --state-done                  #E8F7EF / #24301F
+ *   --wled-status-…-ink     --state-done-text             #193B2D / #A3D3B8
+ *   --wled-status-error     --state-fault                 #FBE9E9 / #2C1F1F
+ *   --wled-status-…-ink     --state-fault-text            #4A1515 / #FF8F8B
+ *   --wled-status-idle      --state-idle                  #FDF6DE / #2A230A
+ *   --wled-status-…-ink     --state-idle-text             #3D2C0B / #FBD23C
+ *   --wled-status-quiet     --state-quiet                 #EDEEF1 / #303034
+ *   --wled-status-…-ink     --state-quiet-text            #202127 / #B7B9C1
+ *
+ * The light/dark columns are the values those host tokens resolve to on the
+ * install's own instance, measured from the running page rather than typed
+ * from memory; the guide's reference palette is what the operator saw on that
+ * page. Where the two differ by a step, the host wins (guide §0).
+ *
+ * ── Shape, space and type ───────────────────────────────────────────────────
+ *
+ *   --wled-radius        --corner-sm  (0px in the host's default skin, 4px at
+ *                                     the top of its corner scale)
+ *   --wled-radius-xs     --corner-xs  (0px)
+ *   --wled-hairline      1px          — the only border width; `border` IS 1px
+ *   --wled-space-1..6    --spacing × n, the host's one unit (0.25rem × its
+ *                                     density), which is also what every
+ *                                     Tailwind `p-*`, `gap-*` and `size-*` uses
+ *   --wled-font-ui       --font-sans   the host's stack
+ *   --wled-font-data     --font-mono   the host's stack, for machine data
+ *   --wled-track-label   0.06em        uppercase label tracking (guide §3)
+ *
+ * The space steps are named rather than numbered in the Tailwind layer below
+ * (`gap-row`, `p-panel`), because the guide's complaint is eight different
+ * paddings on one screen: five names cannot drift into eight values.
+ */
+
+:where([data-module], .wled-ui) {
+  /* Surfaces. `--wled-canvas` is the page the module sits on; `--wled-panel`
+     is a box on it; `--wled-quiet` is the quieter fill *inside* a panel — a
+     progress track, a disabled button, a grouping strip — and `--wled-sunken`
+     is the page's own surface one step down, for a header row.
+
+     `--wled-quiet` is the host's `--surface` and not its `--muted`, and that is
+     a correction made by measuring rather than a preference: in the dark theme
+     the host's `--muted` is the same value as `--card`, so a track or a
+     disabled fill drawn with it is invisible on a panel. `--surface` is defined
+     by the host as the step above a card for exactly this job, and it is a
+     visible step below one in the light theme.
+
+     Nothing floats, so there is no elevation token. */
+  --wled-canvas: var(--background);
+  --wled-panel: var(--card);
+  --wled-panel-ink: var(--card-foreground);
+  --wled-quiet: var(--surface);
+  --wled-sunken: var(--muted);
+  --wled-hover: var(--accent);
+
+  /* Hairlines. They separate; they never decorate. */
+  --wled-line: var(--border);
+  --wled-line-field: var(--input);
+  --wled-hairline: 1px;
+
+  /* Text: primary, secondary, and the one grey for disabled. No fourth.
+     `--wled-off` is the fill under it, the host's own disabled surface — the
+     pair its own button uses, taken rather than mixed here. Disabled text is
+     outside WCAG 1.4.3 by the criterion's own words ("part of an inactive user
+     interface component"), and the host's pair is deliberately faint. */
+  --wled-text: var(--foreground);
+  --wled-text-quiet: var(--muted-foreground);
+  --wled-text-off: var(--disabled-foreground);
+  --wled-off: var(--disabled);
+
+  /* The one accent: the current tab, the progress fill, a link, the primary
+     action. `--wled-accent` marks where you are, `--wled-accent-fill` is what
+     you press; the host keeps those two claims apart and so does this. */
+  --wled-accent: var(--selected);
+  --wled-accent-ink: var(--selected-foreground);
+  --wled-accent-text: var(--link);
+  --wled-accent-fill: var(--primary-fill);
+  --wled-accent-fill-ink: #000;
+  --wled-accent-fill-hover: var(--primary-hovered);
+  --wled-accent-fill-press: var(--primary-pressed);
+  --wled-accent-quiet: var(--secondary);
+  --wled-accent-quiet-ink: var(--secondary-foreground);
+  --wled-accent-quiet-hover: var(--secondary-hovered);
+  --wled-progress: var(--progress);
+  --wled-focus: var(--ring);
+
+  /* Destructive, and error with it. An outline and a text tone, not a fill. */
+  --wled-danger: var(--destructive-text);
+  --wled-danger-fill: var(--destructive);
+  --wled-danger-ink: var(--destructive-foreground);
+
+  /* Status: a step-3 fill under its own hue's darker text, which is what the
+     guide asks a chip to be. The host's six families give that pairing; its
+     printer-lifecycle palette gives a fill with no text tone, and a chip has
+     words in it. */
+  --wled-status-printing: var(--state-active);
+  --wled-status-printing-ink: var(--state-active-text);
+  --wled-status-done: var(--state-done);
+  --wled-status-done-ink: var(--state-done-text);
+  --wled-status-error: var(--state-fault);
+  --wled-status-error-ink: var(--state-fault-text);
+  --wled-status-idle: var(--state-idle);
+  --wled-status-idle-ink: var(--state-idle-text);
+  --wled-status-quiet: var(--state-quiet);
+  --wled-status-quiet-ink: var(--state-quiet-text);
+
+  /* Shape. Almost square, and the host's own scale is what "almost" means. */
+  --wled-radius: var(--corner-sm);
+  --wled-radius-xs: var(--corner-xs);
+
+  /* Space: one unit, five steps. tight inside a chip, row inside a data row,
+     panel for a panel's padding, section between sections, page around the
+     module. */
+  --wled-space-1: calc(var(--spacing) * 1);
+  --wled-space-2: calc(var(--spacing) * 2);
+  --wled-space-3: calc(var(--spacing) * 3);
+  --wled-space-4: calc(var(--spacing) * 4);
+  --wled-space-5: calc(var(--spacing) * 5);
+  --wled-space-6: calc(var(--spacing) * 6);
+
+  /* Type. Two families, two jobs — and the host's own stacks, not a guess at
+     Inter or Plex. */
+  --wled-font-ui: var(--font-sans);
+  --wled-font-data: var(--font-mono);
+  --wled-track-label: 0.06em;
+
+  /* FALLBACK — the two values in this file the host publishes nothing usable
+     for. A literal here and nowhere else is what §0 allows: a component that
+     wrote one would have stopped following the host.
+
+     THE UNLIT PIXEL. A pixel that is not lit is black, in both themes: it is
+     what the light itself shows, not a colour of the page (render.Frame's
+     Unfilled, which is what the module paints behind a word). The panel sketch
+     and any thumbnail mat read it, so a screen never writes a colour to a
+     canvas.
+
+     THE INK ON THE ACCENT FILL. This is a correction, not a preference. The
+     host's own primary button is the brand orange under
+     `--primary-foreground`, and that pair measures 2.86:1 in the dark theme and
+     3.25:1 in the light one — under WCAG AA's 4.5:1 for text this size. The
+     host's design system already answers the same problem for its other
+     saturated fills: `--success-foreground`, `--warning-foreground` and
+     `--info-foreground` are all #000, its own comment saying so. Black on the
+     same orange measures 6.75:1 and 6.10:1. The fill therefore stays the
+     host's (`--primary-fill`) and only the ink is the module's, so the primary
+     action is readable. It is the one place this module's palette knowingly
+     parts with the host's, and putting it back is this one line. */
+  --wled-pixel-off: #000;
+}

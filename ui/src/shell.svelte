@@ -20,9 +20,14 @@
 	// controls are in (scheme.ts). `color-scheme` inherits, so one declaration here
 	// reaches every select, input and textarea on every screen -- which is what makes an
 	// open dropdown's own list readable in the dark theme instead of white on white.
+	//
+	// It is also where the module's tokens are established: `wled-ui` is the root the
+	// token layer hangs on (tokens.css), so every screen below it inherits the host's
+	// own values and follows the host's theme, including a flip while the page is open.
+	// Nothing here writes a colour, a radius or a spacing value of its own, and no
+	// control is drawn twice: the rail is the tab-bar primitive, the header's buttons
+	// are the button primitive, and the two banners are panels.
 	import { onMount } from 'svelte';
-
-	import { Button } from '@prusa/connect-ui/primitives';
 
 	import { lengthText } from './format';
 	import { heldHost } from './host';
@@ -37,6 +42,7 @@
 	} from './pause.svelte';
 	import { colourScheme } from './scheme';
 	import { SCREENS } from './screens';
+	import { Button, Panel, Tabs } from './ui';
 
 	const host = heldHost();
 	const t = host.t;
@@ -49,6 +55,9 @@
 	const paused = $derived(everythingPaused());
 	const global = $derived(globalPause());
 	const left = $derived(global === null ? '' : lengthText(t, global.remaining_seconds, global.forever));
+
+	/** The six screens as the rail wants them: an id to compare, and the words to show. */
+	const rail = $derived(SCREENS.map((screen) => ({ id: screen.id, label: t(screen.key) })));
 
 	/** The failure as the screen says it: its own sentence, in the reader's language. */
 	const failure = $derived(
@@ -65,38 +74,32 @@
 	});
 </script>
 
-<section class="flex flex-col gap-3 p-4" use:colourScheme>
-	<div class="flex flex-col gap-3 md:flex-row md:items-start md:gap-5">
-		<!-- The rail. A top strip on a phone that scrolls sideways; a column from md. -->
-		<nav
-			aria-label={t('shell.screens')}
-			class="flex gap-1 overflow-x-auto md:w-40 md:shrink-0 md:flex-col md:overflow-visible"
-		>
-			{#each SCREENS as screen (screen.id)}
-				<button
-					type="button"
-					class={current === screen.id
-						? 'shrink-0 whitespace-nowrap rounded-md bg-black/5 px-3 py-1.5 text-sm font-semibold dark:bg-white/10'
-						: 'shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm opacity-70 hover:opacity-100'}
-					aria-current={current === screen.id ? 'page' : undefined}
-					onclick={() => (current = screen.id)}
-				>
-					{t(screen.key)}
-				</button>
-			{/each}
-		</nav>
+<section
+	class="wled-ui flex flex-col gap-section bg-wled-canvas p-page font-ui text-sm text-wled-text"
+	use:colourScheme
+>
+	<div class="flex flex-col gap-section md:flex-row md:items-start">
+		<!-- The rail. A top strip on a phone that scrolls sideways; a column from md,
+		     with the accent rule moved to its leading edge. -->
+		<Tabs
+			label={t('shell.screens')}
+			items={rail}
+			active={current}
+			orientation="rail"
+			onSelect={(id) => (current = id)}
+			class="md:w-40 md:shrink-0"
+		/>
 
-		<div class="flex min-w-0 flex-1 flex-col gap-3">
+		<div class="flex min-w-0 flex-1 flex-col gap-section">
 			<!-- The header's panic button: on every tab, because §3 makes it one. -->
-			<div class="flex flex-wrap items-center gap-2">
+			<div class="flex flex-wrap items-center gap-row">
 				{#if paused}
-					<Button variant="secondary" size="sm" disabled={pauses.busy} onclick={() => void resumeEverything()}>
+					<Button variant="secondary" disabled={pauses.busy} onclick={() => void resumeEverything()}>
 						{t('shell.resume_now')}
 					</Button>
 				{:else}
 					<Button
 						variant="secondary"
-						size="sm"
 						disabled={pauses.busy}
 						aria-expanded={menu}
 						onclick={() => (menu = !menu)}
@@ -105,27 +108,31 @@
 					</Button>
 				{/if}
 				{#if failure !== ''}
-					<span class="text-xs opacity-70" role="alert">{failure}</span>
+					<span class="text-xs text-wled-danger" role="alert">{failure}</span>
 				{/if}
 			</div>
 
 			{#if menu}
-				<div class="flex flex-wrap items-center gap-1.5 rounded border px-3 py-2">
-					<span class="pr-1 text-xs opacity-70">{t('shell.stop_writing_for')}</span>
-					{#each LENGTHS as length (length.id)}
-						<Button variant="ghost" size="sm" disabled={pauses.busy} onclick={() => void stopFor(length.id)}>
-							{t(length.key)}
-						</Button>
-					{/each}
-					<Button variant="link" size="sm" onclick={() => (menu = false)}>{t('shell.cancel')}</Button>
-				</div>
+				<Panel>
+					<div class="flex flex-wrap items-center gap-row">
+						<span class="pr-1 text-xs text-wled-text-quiet">{t('shell.stop_writing_for')}</span>
+						{#each LENGTHS as length (length.id)}
+							<Button variant="ghost" disabled={pauses.busy} onclick={() => void stopFor(length.id)}>
+								{t(length.key)}
+							</Button>
+						{/each}
+						<Button variant="ghost" onclick={() => (menu = false)}>{t('shell.cancel')}</Button>
+					</div>
+				</Panel>
 			{/if}
 
 			{#if paused}
-				<div class="flex flex-wrap items-center gap-2 rounded border px-3 py-2 text-sm" role="status">
-					<span class="font-medium">{t('shell.paused_heading')}</span>
-					<span class="opacity-70">{t('shell.paused_banner', { length: left })}</span>
-				</div>
+				<Panel>
+					<div class="flex flex-wrap items-center gap-row" role="status">
+						<span class="font-medium">{t('shell.paused_heading')}</span>
+						<span class="text-wled-text-quiet">{t('shell.paused_banner', { length: left })}</span>
+					</div>
+				</Panel>
 			{/if}
 
 			{#each SCREENS as screen (screen.id)}
