@@ -165,6 +165,17 @@ type tableAPI struct {
 
 	// bound is how long one read of the printer list may take, and zero means resolveTimeout.
 	bound time.Duration
+
+	// clock is the clock a pause and a brightness window are judged against, and nil means
+	// time.Now. A test hands it a fixed instant, because "is this window in force at 20:00" is a
+	// question with one right answer and running the test at whatever time it happened to start is
+	// not how to ask it.
+	clock func() time.Time
+
+	// zone is the IANA zone the brightness windows are judged in — the `timezone` setting — and nil
+	// means the settings this process is running on. It is a field so that a test can name a zone
+	// without a host, and because the setting is the host's and this struct is what a route reaches.
+	zone func() string
 }
 
 // timeout is how long one read of the host's printer list may take.
@@ -190,6 +201,11 @@ func (api tableAPI) mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /lights/{light}/moments/{moment}", api.readMoment)
 	mux.HandleFunc("PUT /lights/{light}/moments/{moment}", api.updateMoment)
 	mux.HandleFunc("DELETE /lights/{light}/moments/{moment}", api.deleteMoment)
+
+	// The layout, the brightness windows and the pause: the three surfaces wave 3 added. They are
+	// mounted here because they are the same store and the same watch; what they are for is in
+	// wave3api.go.
+	api.mountWave3(mux)
 }
 
 // document is the store as a read sees it: the document, and whether there is one to write to.

@@ -243,6 +243,81 @@ var (
 		fault.RetryNever,
 		fault.ShowDetail,
 	))
+
+	// LayoutRefused is a well-formed layout that breaks one of its own rules: a band this build does
+	// not know, a bar taller than the panel can spare, a percentage scale outside 3-5, a rotation
+	// that is neither take-turns nor side-by-side, a rotation of no seconds, or remaining asked for
+	// on a build that draws none. It is a 409 and not a 400 because the body parsed: what is wrong is
+	// the value, and the sentence names it beside the values that are accepted.
+	LayoutRefused = fault.Register(faultDomain, "LAYOUT_REFUSED", http.StatusConflict, fault.Document(
+		"The layout is not one this module can act on",
+		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is stored and not yet drawn. rotate_seconds is a whole number of seconds, one or more. remaining may only be false: this build draws no time remaining. The detail names the value that was sent and the values accepted. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"printer", "bar_band", "bar_rows", "percent_scale", "rotation", "rotate_seconds",
+	))
+
+	// LayoutBodyInvalid is a body that is not a layout at all: not JSON, a key this module does not
+	// read, or none of the eight keys. A body carrying none of them is refused rather than read as
+	// "clear the layout", because clearing is what DELETE is for.
+	LayoutBodyInvalid = fault.Register(faultDomain, "LAYOUT_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a layout",
+		"Write a JSON object carrying at least one of bar, bar_band, bar_rows, percent, percent_scale, name, rotation and rotate_seconds. Every other key is refused rather than ignored, so a misspelt one is reported instead of silently doing nothing. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// WindowNotFound is a window position this module's list does not hold. Positions are indices
+	// counting from zero, as the list reports them, and they shift when a window before them is
+	// removed.
+	WindowNotFound = fault.Register(faultDomain, "WINDOW_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module holds no brightness window at that position",
+		"Read GET /windows for the list. A window is addressed by its index, counting from zero, and the list reports each one's index beside it. Removing a window moves the ones after it up one position.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"index",
+	))
+
+	// WindowRefused is a well-formed window this module will not store, or a window write on a module
+	// with no timezone to judge it in: two ends the same, a time of day that is not HH:MM, a
+	// brightness outside 0-255, a day that is not one of the seven, or a `timezone` setting naming
+	// nothing or naming a zone that will not load. The zone cases are here because a window judged in
+	// the container's own clock fires hours away from the evening it was written for.
+	WindowRefused = fault.Register(faultDomain, "WINDOW_REFUSED", http.StatusConflict, fault.Document(
+		"The window is not one this module can act on",
+		"from and to are a time of day written HH:MM; an end earlier than the start wraps midnight and is accepted. The two ends may not be the same, because that is either a whole day or no time at all and which was meant cannot be guessed. brightness is 0-255, which is what a WLED controller takes. days is optional and names any of mon, tue, wed, thu, fri, sat and sun. A window can only be judged in a zone: name one in the timezone setting, as an IANA name such as America/Denver. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"index", "timezone",
+	))
+
+	// WindowBodyInvalid is a body that is not a window at all: not JSON, or a key this module does
+	// not read.
+	WindowBodyInvalid = fault.Register(faultDomain, "WINDOW_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a brightness window",
+		"Write a JSON object carrying from and to as a time of day written HH:MM, brightness as 0-255, and days optionally as a list of mon, tue, wed, thu, fri, sat and sun. Every other key is refused rather than ignored. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// PauseRefused is a well-formed pause this module will not store: a length that is not one of the
+	// six the panic button offers.
+	PauseRefused = fault.Register(faultDomain, "PAUSE_REFUSED", http.StatusConflict, fault.Document(
+		"The pause is not one this module can act on",
+		"for is one of 10m, 1h, 6h, 1d, 3d and forever, and it is refused by name rather than rounded to the nearest because a pause of about an hour is not the thing anybody asked for. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"for",
+	))
+
+	// PauseBodyInvalid is a body that is not a pause at all: not JSON, a key this module does not
+	// read, or no length at all.
+	PauseBodyInvalid = fault.Register(faultDomain, "PAUSE_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a pause",
+		"Write a JSON object carrying for, one of 10m, 1h, 6h, 1d, 3d and forever. Every other key is refused rather than ignored. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

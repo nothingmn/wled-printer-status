@@ -125,10 +125,14 @@ func TestTheFragmentParses(t *testing.T) {
 	want := []string{
 		"/bindings",
 		"/bindings/{id}",
+		"/bindings/{id}/layout",
+		"/bindings/{id}/pause",
 		"/controllers",
 		"/controllers/{name}",
+		"/lights/{light}/layouts",
 		"/lights/{light}/moments",
 		"/lights/{light}/moments/{moment}",
+		"/pause",
 		"/preview-finished",
 		"/preview-frame",
 		"/preview-pattern",
@@ -136,6 +140,8 @@ func TestTheFragmentParses(t *testing.T) {
 		"/states",
 		"/states/{state}",
 		"/status",
+		"/windows",
+		"/windows/{index}",
 		"/wled-printer-status",
 	}
 

@@ -44,6 +44,29 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - The configuration document is at schema version 2. A version 1 document is stepped up in place, bindings
   and all, with both new tables empty; one written before the version was stamped is stepped through both
   shapes rather than skipping to the current one.
+- `GET /bindings/{id}/layout` answers the layout one binding composes with — `bar`, `bar_band`, `bar_rows`,
+  `percent`, `percent_scale`, `name`, `rotation` and `rotate_seconds` — with, beside each value, whether it
+  is yours or the built-in default. `PUT /bindings/{id}/layout` writes one and `DELETE` puts it back to the
+  default; `GET /lights/{light}/layouts` answers every binding on one light. A layout is per binding
+  because a panel and a strip do not compose the same way. A binding nobody has edited answers the default
+  rather than an empty object. `rotation: side-by-side` is kept and reported, and the answer says this build
+  still takes turns.
+- `GET /windows` answers the brightness windows, judged in the zone the `timezone` setting names and never in
+  the container's own clock, with the zone and the instant written beside them. `POST /windows` adds one,
+  `PUT /windows/{index}` replaces one in its place and `DELETE /windows/{index}` removes one. A window whose
+  end precedes its start wraps midnight and is accepted; one whose two ends are the same is refused, as is a
+  brightness outside 0-255 and a window written with no `timezone` to judge it in. Overlapping windows are
+  allowed and the first one wins. Nothing here moves the light yet.
+- `GET /pause` answers every pause of both scopes: whether it is on, which scope it is, and the absolute
+  instant it ends at — or that it does not. `PUT /pause` pauses everything and `PUT /bindings/{id}/pause`
+  pauses one binding; `DELETE` on either resumes. The six lengths are `10m`, `1h`, `6h`, `1d`, `3d` and
+  `forever`. The expiry is kept as an instant rather than a timer, so a timed pause survives a restart and a
+  settings save. A binding that drives a borrowed zone is reported as `hands-back` and never `off`, because
+  the rest of that strip belongs to its owner. This release stores and reports a pause and does not yet
+  switch the light off.
+- The configuration document is at schema version 3. A version 2 document is stepped up in place, bindings,
+  state table and moment table and all, with the layout table, the windows and the pause arriving empty. A
+  version 4 document is refused, naming both versions.
 
 ## 0.1.0 - 2026-11-18
 

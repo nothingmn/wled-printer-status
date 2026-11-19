@@ -52,7 +52,11 @@ type brightnessWindow struct {
 
 	// Days restricts the window to some days of the week: ["sat", "sun"]. Absent or empty
 	// covers every day.
-	Days []string `json:"days"`
+	//
+	// It is omitted when it holds nothing, which matters in one place only: this is also the shape
+	// the store keeps a window in, and a document a person opens should say "every day" by leaving
+	// a field out rather than by carrying a null to be looked up.
+	Days []string `json:"days,omitempty"`
 }
 
 // scheduleWindow is one window after it has been read: the times as minutes since the zone's
@@ -243,40 +247,52 @@ func parseScheduleWindows(entries []json.RawMessage) ([]scheduleWindow, error) {
 }
 
 // window is one checked line of the list, or the sentence saying what is wrong with it.
+//
+// It names the line the way the settings list numbers it, and hands the reading to parsed with that
+// name: the store's windows are the same concept read from a different place, and this is the one
+// function that decides what a window means.
 func (b brightnessWindow) window(line int) (scheduleWindow, error) {
+	return b.parsed(fmt.Sprintf("brightness_schedule[%d]", line))
+}
+
+// parsed is one line of a window list after it has been read and checked, with `where` naming the
+// line in whatever list it came from — `brightness_schedule[0]` in the settings, `windows[0]` in
+// this module's own store. One reader for the two, so that a window written through a route and a
+// window written in the settings file cannot mean two different things.
+func (b brightnessWindow) parsed(where string) (scheduleWindow, error) {
 	from, err := parseClock(b.From)
 	if err != nil {
-		return scheduleWindow{}, fmt.Errorf("brightness_schedule[%d]: from %w", line, err)
+		return scheduleWindow{}, fmt.Errorf("%s: from %w", where, err)
 	}
 
 	to, err := parseClock(b.To)
 	if err != nil {
-		return scheduleWindow{}, fmt.Errorf("brightness_schedule[%d]: to %w", line, err)
+		return scheduleWindow{}, fmt.Errorf("%s: to %w", where, err)
 	}
 
 	span := fmt.Sprintf("%02d:%02d-%02d:%02d", from/60, from%60, to/60, to%60)
 
 	if from == to {
 		return scheduleWindow{}, fmt.Errorf(
-			"brightness_schedule[%d] runs from %s to %s, which is no time at all: a window whose two ends are the same is refused rather than read as a whole day or as nothing, because which one was meant is not something this module can guess",
-			line, span[:5], span[6:])
+			"%s runs from %s to %s, which is no time at all: a window whose two ends are the same is refused rather than read as a whole day or as nothing, because which one was meant is not something this module can guess",
+			where, span[:5], span[6:])
 	}
 
 	if b.Brightness == nil {
 		return scheduleWindow{}, fmt.Errorf(
-			"brightness_schedule[%d] (%s) carries no brightness: every window says what brightness it applies, 0-255",
-			line, span)
+			"%s (%s) carries no brightness: every window says what brightness it applies, 0-255",
+			where, span)
 	}
 
 	if *b.Brightness < 0 || *b.Brightness > 255 {
 		return scheduleWindow{}, fmt.Errorf(
-			"brightness_schedule[%d] (%s) carries brightness %d, and a WLED controller takes 0-255",
-			line, span, *b.Brightness)
+			"%s (%s) carries brightness %d, and a WLED controller takes 0-255",
+			where, span, *b.Brightness)
 	}
 
 	days, err := parseDays(b.Days)
 	if err != nil {
-		return scheduleWindow{}, fmt.Errorf("brightness_schedule[%d] (%s): %w", line, span, err)
+		return scheduleWindow{}, fmt.Errorf("%s (%s): %w", where, span, err)
 	}
 
 	return scheduleWindow{from: from, to: to, level: *b.Brightness, days: days, span: span}, nil

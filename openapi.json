@@ -1013,6 +1013,257 @@
         }
       }
     },
+    "/bindings/{id}/layout": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "description": "The binding's name on these routes: the host's device id for the printer it shows.", "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "read-layout",
+        "summary": "The layout one binding composes with, and where each value came from",
+        "description": "A layout is per binding, because a 256x64 panel and a 48-LED strip do not compose the same way and two bindings on one light can be laid out differently. Every value in the answer carries the origin it came from: store when this binding has a row in this module's configuration store, default when it has none. A binding nobody has laid out therefore answers the built-in default rather than null or an empty object, which is what lets a screen offer a reset on exactly the values that have something to reset. Nothing here reads the light. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The layout in force for this binding.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"light": {"type": "string", "description": "The light the binding sits on, named the way GET /controllers names one."}, "layout": {"$ref": "#/components/schemas/Layout"}, "persisted": {"type": "boolean", "description": "True when this module has a store to keep a change in."}, "note": {"type": "string", "description": "What this build does with the layout, and why a change here could not be kept when it could not."}}, "required": ["light", "layout", "persisted"]}}}
+          },
+          "404": {"description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "put": {
+        "operationId": "change-layout",
+        "summary": "Set the layout one binding composes with",
+        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more; remaining may only be false, because this build draws no time remaining and a key that asks for a picture it will not draw is refused rather than ignored. side-by-side is stored and not yet drawn: the painter still alternates, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LayoutRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The layout was written and is the one this binding has.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"light": {"type": "string"}, "layout": {"$ref": "#/components/schemas/Layout"}, "applied": {"type": "boolean", "description": "True when the layout is the one written."}, "persisted": {"type": "boolean", "description": "Always true here: the row was written into this module's own store."}, "note": {"type": "string", "description": "What was written, and what it does not yet change."}}, "required": ["light", "layout", "applied", "persisted"]}}}
+          },
+          "400": {"description": "The body is not a layout: not JSON, a key this module does not read, or none of the eight keys (LAYOUT_BODY_INVALID). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "404": {"description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "409": {"description": "A band this build does not know, a bar taller than the panel can spare, a scale outside 3-5, a rotation that is neither take-turns nor side-by-side, a rotation of no seconds, or remaining asked for on a build that draws none (LAYOUT_REFUSED). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "delete-layout",
+        "summary": "Put one binding back to the built-in layout",
+        "description": "Removes the stored row for one binding, so it composes with the default again. A binding with no row is not an error: the answer says removed: false beside the default it was already using, because a screen distinguishing \"already at the default\" from \"no such binding\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The row is gone and the binding is at its default.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"light": {"type": "string"}, "layout": {"$ref": "#/components/schemas/Layout"}, "removed": {"type": "boolean", "description": "True when there was a stored row and it was taken away."}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["light", "layout", "removed", "persisted"]}}}
+          },
+          "404": {"description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
+    "/bindings/{id}/pause": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true, "description": "The binding's name on these routes: the host's device id for the printer it shows.", "schema": {"type": "string"}}
+      ],
+      "put": {
+        "operationId": "pause-binding",
+        "summary": "Pause one binding, and leave the rest of the module alone",
+        "description": "Writes one binding's own pause with the absolute instant it ends at. The six lengths are 10m, 1h, 6h, 1d, 3d and forever, and a length outside them is refused by name rather than rounded. A pause switches the light off when it is obeyed; a binding that drives one segment of a strip somebody else also drives is handed back instead, because the rest of that strip belongs to its owner — the answer's effect says which of the two this binding is. This build stores and reports the pause and does not yet switch anything off: the wiring lands in a later wave, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The pause was written, with the instant it ends at.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"pause": {"$ref": "#/components/schemas/Pause"}, "paused": {"type": "boolean", "description": "True when the pause is in force now."}, "effect": {"type": "string", "enum": ["off", "hands-back"], "description": "off for a binding that drives its whole light; hands-back for one that drives a borrowed zone."}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["pause", "paused", "persisted"]}}}
+          },
+          "400": {"description": "The body is not a pause: not JSON, a key this module does not read, or no length at all (PAUSE_BODY_INVALID). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "404": {"description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "409": {"description": "A length that is not one of the six the panic button offers (PAUSE_REFUSED). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "resume-binding",
+        "summary": "Take one binding's own pause out of the store",
+        "description": "Removes one binding's own pause, so nothing will pause that binding on the next start either. A binding with no pause is not an error: the answer says resumed: false. This build does not yet repaint from a resume, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The pause is gone, or there was none.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["global", "binding"]}, "printer": {"type": "string"}, "resumed": {"type": "boolean", "description": "True when there was a pause and it was taken away."}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["scope", "resumed", "persisted"]}}}
+          },
+          "404": {"description": "This module drives no binding of that printer (BINDING_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
+    "/lights/{light}/layouts": {
+      "parameters": [
+        {"name": "light", "in": "path", "required": true, "description": "The light's name: the controller's address without its scheme, as GET /controllers names one.", "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "list-layouts",
+        "summary": "Every binding on one light, each with its layout",
+        "description": "The Layout screen is scoped to one light, so this is the answer it is drawn from: one entry per binding that light carries, in the operator's order, each with every value in force and the origin of each. A stored row naming a printer the running set does not drive is reported in unknown_layouts rather than applied or deleted: a printer that was unbound keeps its layout in the file, and rebinding it should find it again. Nothing here reads the light. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light's bindings and their layouts.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"light": {"type": "string"}, "layouts": {"type": "array", "items": {"$ref": "#/components/schemas/Layout"}}, "count": {"type": "integer"}, "persisted": {"type": "boolean"}, "unknown_layouts": {"type": "array", "items": {"type": "string"}, "description": "Printers the store holds a layout for that this module does not drive."}, "note": {"type": "string"}}, "required": ["light", "layouts", "count", "persisted"]}}}
+          },
+          "404": {"description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
+    "/windows": {
+      "get": {
+        "operationId": "list-windows",
+        "summary": "The brightness windows, judged at this instant in the timezone setting's zone",
+        "description": "The list the Brightness screen edits, in the operator's order, with the window in force at the instant of the answer named beside it. A window is judged in the IANA zone the timezone setting names and never in this process's own clock, which inside the Prusa Connect container is almost always UTC: a window judged there fires hours away from the evening it was written for, and the answer therefore always carries judged_in and now so that a person can check. A window whose end precedes its start wraps midnight and is accepted; the one whose two ends are the same is refused, because that is either a whole day or no time at all. Overlapping windows are allowed and the first one wins. This build still runs the brightness on the light from the brightness_schedule setting, so this is the list the screen edits and not yet a change on the light. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The windows, judged.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowsAnswer"}}}
+          },
+          "409": {"description": "A window in the store is one this module cannot act on (WINDOW_REFUSED).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "post": {
+        "operationId": "add-window",
+        "summary": "Add one brightness window to the end of the list",
+        "description": "Adds one window after every other, because the order decides which of two overlapping windows wins and a window added at the front would silently take over moments another one covers. A window is a time range and a brightness: from and to written HH:MM, brightness 0-255, and days optionally. The window cannot be written at all unless the timezone setting names a zone it can be judged in, and the refusal is that setting's own sentence. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The window was added, and the whole list is answered.",
+            "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/WindowsAnswer"}, {"type": "object", "properties": {"added": {"type": "integer", "description": "The position the new window holds, counting from zero."}}}]}}}
+          },
+          "400": {"description": "The body is not a brightness window (WINDOW_BODY_INVALID). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "409": {"description": "Two ends the same, a time of day that is not HH:MM, a brightness outside 0-255, a day that is not one of the seven, or no timezone to judge the window in (WINDOW_REFUSED). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
+    "/windows/{index}": {
+      "parameters": [
+        {"name": "index", "in": "path", "required": true, "description": "The window's position in the list, counting from zero, as GET /windows reports it.", "schema": {"type": "integer"}}
+      ],
+      "put": {
+        "operationId": "replace-window",
+        "summary": "Replace one brightness window, in place",
+        "description": "Replaces one window whole, at the position it holds, so its place in the order is kept and it takes over nothing it did not already cover. The same rules apply as when a window is added, and nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The window was replaced, and the whole list is answered.",
+            "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/WindowsAnswer"}, {"type": "object", "properties": {"replaced": {"type": "integer", "description": "The position that was replaced."}}}]}}}
+          },
+          "400": {"description": "The body is not a brightness window (WINDOW_BODY_INVALID). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "404": {"description": "The list holds no window at that position (WINDOW_NOT_FOUND). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "409": {"description": "The window is not one this module can act on, or there is no timezone to judge it in (WINDOW_REFUSED). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "remove-window",
+        "summary": "Remove one brightness window",
+        "description": "Removes one window, and every window after it moves up one position: the index is a place in a list and not a minted identity, which the list reports and the answer's note says. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The window was removed, and the whole list is answered.",
+            "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/WindowsAnswer"}, {"type": "object", "properties": {"removed": {"type": "boolean", "description": "True when a window at that position was removed."}}}]}}}
+          },
+          "404": {"description": "The list holds no window at that position (WINDOW_NOT_FOUND). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
+    "/pause": {
+      "get": {
+        "operationId": "read-pause",
+        "summary": "Every pause there is: whether it is on, why, and when it ends",
+        "description": "Answers the three questions the pause has to answer about every one of them — is it on, why, and when exactly it ends, and for forever that it does not — and beside them every binding's own fate, which is where the borrowed-zone exception is visible. A pause is on when the clock is before the instant it ends at: nothing runs a timer, the row carries an absolute instant, and an expired row is still reported with expired: true rather than deleted, because a read is not a write. A binding that drives one segment of a strip somebody else also drives reads effect hands-back and never off. This build does not yet switch a light off. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The pause state, and every binding's fate.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"now": {"type": "string", "description": "The instant the answer was made, RFC 3339 in UTC."}, "paused": {"type": "boolean", "description": "True when any pause is in force."}, "why": {"type": "string", "enum": ["global", "binding"], "description": "Which scope pauses this module: the global pause or one binding's own."}, "until": {"type": "string", "description": "When the global pause ends, absent for forever."}, "forever": {"type": "boolean"}, "paused_by": {"type": "array", "items": {"type": "string"}, "description": "The printers whose own pause is in force, when no global pause is."}, "pauses": {"type": "array", "items": {"$ref": "#/components/schemas/Pause"}}, "bindings": {"type": "array", "items": {"type": "object", "properties": {"printer": {"type": "string"}, "light": {"type": "string"}, "segment": {"type": "integer"}, "whole": {"type": "boolean"}, "borrowed": {"type": "boolean", "description": "True when this binding drives one zone of a light this module does not own outright."}, "paused": {"type": "boolean"}, "due_to": {"type": "string", "enum": ["global", "binding"]}, "effect": {"type": "string", "enum": ["off", "hands-back"]}, "until": {"type": "string"}, "forever": {"type": "boolean"}}, "required": ["printer", "light", "segment", "whole", "borrowed", "paused", "effect"]}}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["now", "paused", "pauses", "bindings", "persisted"]}}}
+          },
+          "503": {"description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "put": {
+        "operationId": "pause-everything",
+        "summary": "Pause every binding, for one of the six lengths",
+        "description": "The header's panic button. A pause switches the light off when it is obeyed, one write and then nothing until it ends; a binding that drives a borrowed zone is handed back instead, because powering that controller down would take somebody else's strip with it. The expiry is stored as an absolute instant and not as a length or a timer, so a pause survives a restart and a settings save — this process is rebuilt on both. This build stores and reports the pause and does not yet switch anything off, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The pause was written, with the instant it ends at.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"pause": {"$ref": "#/components/schemas/Pause"}, "paused": {"type": "boolean"}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["pause", "paused", "persisted"]}}}
+          },
+          "400": {"description": "The body is not a pause: not JSON, a key this module does not read, or no length at all (PAUSE_BODY_INVALID). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "409": {"description": "A length that is not one of the six (PAUSE_REFUSED). Nothing was changed.",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "resume-everything",
+        "summary": "Take the global pause out of the store",
+        "description": "Removes the global pause, so nothing will pause this module on the next start either. A module with no global pause is not an error: the answer says resumed: false. This build does not yet repaint from a resume, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The global pause is gone, or there was none.",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["global", "binding"]}, "resumed": {"type": "boolean"}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["scope", "resumed", "persisted"]}}}
+          },
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+              "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "read-status",
@@ -1318,6 +1569,122 @@
           }
         },
         "required": ["controller", "segment", "printer", "reading", "frame", "last_send"]
+      },
+      "Layout": {
+        "type": "object",
+        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, and whether the two take turns or sit side by side. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. remaining is always false and is reported rather than omitted, because the approved mockup draws the control and this build draws no time remaining. rotation_note is present only when the rotation was set to side-by-side, and says that this build still takes turns: the value is stored and not yet drawn.",
+        "properties": {
+          "printer": {"type": "string", "description": "The binding's name: the host's device id for the printer it shows."},
+          "light": {"type": "string", "description": "The light the binding sits on."},
+          "segment": {"type": "integer", "description": "The segment the binding drives, -1 for the whole light."},
+          "whole": {"type": "boolean", "description": "True when the binding drives its whole light."},
+          "bar": {"type": "boolean", "description": "Whether the progress bar is drawn."},
+          "bar_origin": {"type": "string", "enum": ["default", "store"]},
+          "bar_band": {"type": "string", "enum": ["top", "bottom"], "description": "Which end of the panel the bar sits at."},
+          "bar_band_origin": {"type": "string", "enum": ["default", "store"]},
+          "bar_rows": {"type": "integer", "description": "How many rows of a 64-row panel the bar takes, 1 to 48."},
+          "bar_rows_origin": {"type": "string", "enum": ["default", "store"]},
+          "percent": {"type": "boolean", "description": "Whether the job's progress is drawn in digits."},
+          "percent_origin": {"type": "string", "enum": ["default", "store"]},
+          "percent_scale": {"type": "integer", "enum": [3, 4, 5], "description": "The scale the digits are drawn at."},
+          "percent_scale_origin": {"type": "string", "enum": ["default", "store"]},
+          "name": {"type": "boolean", "description": "Whether the job's own name is drawn."},
+          "name_origin": {"type": "string", "enum": ["default", "store"]},
+          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side is stored and not yet drawn."},
+          "rotation_origin": {"type": "string", "enum": ["default", "store"]},
+          "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel, in seconds."},
+          "rotate_seconds_origin": {"type": "string", "enum": ["default", "store"]},
+          "remaining": {"type": "boolean", "description": "Always false: this build draws no time remaining."},
+          "origin": {"type": "string", "enum": ["default", "store"], "description": "store when this binding has a row in the store, default when it has none."},
+          "overridden": {"type": "boolean", "description": "True when anything about this layout came from the store, which is what decides whether a screen offers a reset."},
+          "rotation_note": {"type": "string", "description": "Present only when rotation is side-by-side: what this build does instead."}
+        },
+        "required": ["printer", "light", "segment", "whole", "bar", "bar_band", "bar_rows", "percent", "percent_scale", "name", "rotation", "rotate_seconds", "remaining", "origin", "overridden"]
+      },
+      "LayoutRequest": {
+        "type": "object",
+        "description": "One layout as a caller writes it. Every key is optional and every key that is left out goes back to its default, because the write replaces the row rather than merging into it. A body carrying none of them is refused rather than read as \"clear the row\", because clearing is what DELETE is for.",
+        "properties": {
+          "bar": {"type": "boolean", "description": "Draw the progress bar."},
+          "bar_band": {"type": "string", "enum": ["top", "bottom"], "description": "Which end of the panel the bar sits at."},
+          "bar_rows": {"type": "integer", "minimum": 1, "maximum": 48, "description": "How many rows the bar takes of a 64-row panel."},
+          "percent": {"type": "boolean", "description": "Draw the job's progress in digits."},
+          "percent_scale": {"type": "integer", "enum": [3, 4, 5], "description": "The scale the digits are drawn at."},
+          "name": {"type": "boolean", "description": "Draw the job's own name."},
+          "remaining": {"type": "boolean", "description": "May only be false: this build draws no time remaining, so true is refused rather than ignored."},
+          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side is stored and not yet drawn."},
+          "rotate_seconds": {"type": "integer", "minimum": 1, "description": "How long each half holds the panel."}
+        }
+      },
+      "Window": {
+        "type": "object",
+        "description": "One brightness window: a span of the day and the brightness to run at inside it. index is the window's position in the list and the name these routes address it by. wraps_midnight says the end precedes the start, which is the evening window rather than a mistake. active says whether the window contains the instant of the answer, judged in the zone named beside the list, and is absent when this module has no zone to judge it in. wins is true on the one window the list would follow: more than one may be active when they overlap, and the first one wins.",
+        "properties": {
+          "index": {"type": "integer", "description": "The window's position in the list, counting from zero."},
+          "from": {"type": "string", "description": "When the window opens, HH:MM."},
+          "to": {"type": "string", "description": "When it closes, HH:MM."},
+          "brightness": {"type": "integer", "description": "The brightness inside the window, 0-255."},
+          "days": {"type": "array", "items": {"type": "string", "enum": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]}, "description": "The days the window covers. Empty covers every day."},
+          "span": {"type": "string", "description": "The two ends as the parser normalised them, such as 20:00-07:00."},
+          "wraps_midnight": {"type": "boolean", "description": "True when the end precedes the start."},
+          "active": {"type": "boolean", "description": "Whether the window contains the instant of the answer, in the zone named beside the list."},
+          "wins": {"type": "boolean", "description": "True on the one window the list would follow at that instant."}
+        },
+        "required": ["index", "from", "to", "brightness", "days", "span", "wraps_midnight", "wins"]
+      },
+      "WindowRequest": {
+        "type": "object",
+        "description": "One brightness window as a caller writes it, in the same shape the brightness_schedule setting carries, so that a window written here and one written in the settings file mean the same thing.",
+        "properties": {
+          "from": {"type": "string", "description": "When the window opens, as a time of day written HH:MM."},
+          "to": {"type": "string", "description": "When it closes, HH:MM. An end earlier than the start wraps midnight and is accepted."},
+          "brightness": {"type": "integer", "minimum": 0, "maximum": 255, "description": "The brightness inside the window, 0-255."},
+          "days": {"type": "array", "items": {"type": "string", "enum": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]}, "description": "The days the window covers. Leave it out to cover every day."}
+        },
+        "required": ["from", "to", "brightness"]
+      },
+      "WindowsAnswer": {
+        "type": "object",
+        "description": "The brightness windows, judged. judged_in is the IANA zone the windows are read in — the timezone setting — and now is the instant they were judged at, in that zone. Both are always present, because a brightness window an hour wrong is worse than none and these two are how a person checks. wins and level name the window in force at now and the brightness it asks for, and both are absent when none is in force.",
+        "properties": {
+          "windows": {"type": "array", "items": {"$ref": "#/components/schemas/Window"}},
+          "count": {"type": "integer"},
+          "judged_in": {"type": "string", "description": "The zone the windows were judged in: the timezone setting's own name, empty when it names nothing."},
+          "now": {"type": "string", "description": "The instant the windows were judged at, RFC 3339 in that zone."},
+          "wins": {"type": "integer", "description": "The index of the window in force at now, absent when none is."},
+          "level": {"type": "integer", "description": "The brightness the winning window asks for."},
+          "persisted": {"type": "boolean"},
+          "note": {"type": "string"}
+        },
+        "required": ["windows", "count", "judged_in", "now", "persisted"]
+      },
+      "Pause": {
+        "type": "object",
+        "description": "One pause. on is computed from the clock at read time and never cached; expired says the row is still in the store with its instant behind it, which is a different answer from nobody having set one. why names the scope the pause is. until is the absolute instant it ends at, in UTC, and forever says in one word that it does not end. effect is what the pause does to its binding: off, or hands-back for a borrowed zone.",
+        "properties": {
+          "scope": {"type": "string", "enum": ["global", "binding"]},
+          "printer": {"type": "string", "description": "The binding a binding-scoped pause is about."},
+          "light": {"type": "string"},
+          "segment": {"type": "integer"},
+          "on": {"type": "boolean", "description": "Whether the pause is in force now."},
+          "expired": {"type": "boolean", "description": "True when the row is still stored and its instant has passed."},
+          "why": {"type": "string", "enum": ["global", "binding"]},
+          "until": {"type": "string", "description": "The absolute instant this pause ends at, RFC 3339 in UTC. Absent for forever."},
+          "forever": {"type": "boolean", "description": "True when the pause does not end."},
+          "remaining_seconds": {"type": "integer", "description": "How long is left, when the pause is on."},
+          "chosen": {"type": "string", "enum": ["10m", "1h", "6h", "1d", "3d", "forever"]},
+          "set_at": {"type": "string", "description": "When the pause was set, RFC 3339 in UTC."},
+          "effect": {"type": "string", "enum": ["off", "hands-back"]}
+        },
+        "required": ["scope", "on", "expired", "why", "forever", "chosen", "set_at"]
+      },
+      "PauseRequest": {
+        "type": "object",
+        "description": "How long a pause lasts. The six are refused by name rather than rounded, because a pause of about an hour is not the thing anybody asked for.",
+        "properties": {
+          "for": {"type": "string", "enum": ["10m", "1h", "6h", "1d", "3d", "forever"], "description": "The length of the pause."}
+        },
+        "required": ["for"]
       },
       "Refusal": {
         "type": "object",

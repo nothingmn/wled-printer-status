@@ -220,8 +220,8 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 	}{
 		{
 			name:    "a document from a newer release",
-			fixture: `{"version": 3, "bindings": [], "states": [], "moments": []}`,
-			want:    []string{"schema version 3", "version 2"},
+			fixture: `{"version": 4, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": []}`,
+			want:    []string{"schema version 4", "version 3"},
 		},
 		{
 			name:    "a negative version, which no release wrote",
@@ -230,8 +230,17 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 		},
 		{
 			name:    "a key this build does not know",
-			fixture: `{"version": 2, "bindings": [], "moments": [], "layouts": []}`,
+			fixture: `{"version": 3, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": [], "colours": []}`,
 			want:    []string{"unknown field"},
+		},
+		{
+			// The three lists version 3 added do not exist at version 2, and the upgrade from it
+			// reads the version-2 shape. A document that claims version 2 and carries them is
+			// refused rather than stepped up, which is what makes the steps separate shapes rather
+			// than one lenient read.
+			name:    "a version 2 document carrying a list version 2 does not have",
+			fixture: `{"version": 2, "bindings": [], "states": [], "moments": [], "layouts": []}`,
+			want:    []string{"schema version 2", "unknown field"},
 		},
 		{
 			// The two tables do not exist at version 1, and the upgrade from it reads the version-1
@@ -464,10 +473,10 @@ func TestAStoreNamingAPrinterTheHostDoesNotHoldIsRefusedNamingTheFile(t *testing
 	}
 }
 
-// TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings is the upgrade this wave exists to
-// prove: the document the first release wrote is read, stepped up once, and written back stamped —
-// with the bindings it held untouched and both new tables arriving empty rather than filled with
-// a copy of the code's own defaults.
+// TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings is the upgrade this wave builds on: the
+// document the first release wrote is read, stepped up one version at a time to this build's
+// version, and written back stamped — with the bindings it held untouched and every new list
+// arriving empty rather than filled with a copy of the code's own defaults.
 func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	dir := writeStoreFile(t, `{"version": 1, "bindings": [{"printer": "printer-a", "controller": "http://10.0.0.136", "segment": 3}]}`)
 
@@ -484,8 +493,8 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 2 {
-		t.Fatalf("the upgraded document is at version %d, want 2", found.Config.Version)
+	if found.Config.Version != storeVersion || storeVersion != 3 {
+		t.Fatalf("the upgraded document is at version %d, want 3", found.Config.Version)
 	}
 
 	// The bindings are the previous release's own record and must cross the upgrade unchanged: a
@@ -519,17 +528,17 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 2 {
-		t.Fatalf("the store on disk carries version %v after the upgrade, want 2", onDisk["version"])
+	if version, _ := onDisk["version"].(float64); int(version) != 3 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want 3", onDisk["version"])
 	}
 
 	if lines, _ := onDisk["bindings"].([]any); len(lines) != 1 {
 		t.Fatalf("the store on disk holds %v bindings after the upgrade, want 1", onDisk["bindings"])
 	}
 
-	// Both tables are written as empty lists rather than as null, so that an upgraded document and
-	// one this build wrote from scratch are the same document on disk.
-	for _, name := range []string{"states", "moments"} {
+	// Every list is written as empty rather than as null, so that an upgraded document and one this
+	// build wrote from scratch are the same document on disk.
+	for _, name := range []string{"states", "moments", "layouts", "windows", "pauses"} {
 		held, present := onDisk[name].([]any)
 		if !present || len(held) != 0 {
 			t.Fatalf("the store on disk carries %q as %v, want an empty list", name, onDisk[name])
@@ -542,8 +551,94 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	}
 
 	if again.Upgraded || again.Version != storeVersion {
-		t.Fatalf("the store reads at version %d with upgraded %v after being written back, want 2 and false",
+		t.Fatalf("the store reads at version %d with upgraded %v after being written back, want 3 and false",
 			again.Version, again.Upgraded)
+	}
+}
+
+// TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables is this wave's upgrade step, on its own: a
+// document the previous release wrote, with a binding, a state override and a moment entry in it, is
+// stepped up once — and everything it held is still there afterwards, with the three lists wave 3
+// added arriving empty.
+//
+// The bindings, states and moments are asserted one by one because a step that rebuilt the document
+// from a struct with three fields would compile, run, and silently drop the two tables the Colours
+// and Events screens had already filled in.
+func TestAVersionTwoStoreIsSteppedToThreeAndKeepsBothTables(t *testing.T) {
+	dir := writeStoreFile(t, `{
+  "version": 2,
+  "bindings": [{"printer": "printer-a", "controller": "http://10.0.0.136", "segment": 3}],
+  "states": [{"state": "PAUSED", "colour": {"r": 1, "g": 2, "b": 3}, "word": "HOLD", "holds": "60s"}],
+  "moments": [{"light": "10.0.0.253", "printer": "printer-a", "moment": "print-started",
+               "enabled": true, "shows": "Preset", "which": "Snow Fall", "for": "30s"}]
+}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 2 document was refused: %v", err)
+	}
+
+	if found.Version != 2 {
+		t.Fatalf("the read says the document carried version %d, want 2", found.Version)
+	}
+
+	if !found.Upgraded {
+		t.Fatal("the read does not say the document was upgraded, and it was written at version 2")
+	}
+
+	if found.Config.Version != 3 {
+		t.Fatalf("the upgraded document is at version %d, want 3", found.Config.Version)
+	}
+
+	if len(found.Config.Bindings) != 1 {
+		t.Fatalf("the upgraded document holds %d bindings, want the one it had", len(found.Config.Bindings))
+	}
+
+	if len(found.Config.States) != 1 {
+		t.Fatalf("the upgraded document holds %d state rows, want the one it had", len(found.Config.States))
+	}
+
+	if word := found.Config.States[0].Word; word == nil || *word != "HOLD" {
+		t.Fatalf("the state row the upgrade kept reads %+v, want the word HOLD", found.Config.States[0])
+	}
+
+	if len(found.Config.Moments) != 1 {
+		t.Fatalf("the upgraded document holds %d moment rows, want the one it had", len(found.Config.Moments))
+	}
+
+	if which := found.Config.Moments[0].Which; which != "Snow Fall" {
+		t.Fatalf("the moment row the upgrade kept reads %+v, want the preset Snow Fall", found.Config.Moments[0])
+	}
+
+	// The three lists arrive empty rather than filled with the code's own defaults, for the reason
+	// the two tables did: a default copied into the file is a second statement to keep in step by
+	// hand, and this is a document that has never had a layout, a window or a pause in it.
+	if found.Config.Layouts == nil || len(found.Config.Layouts) != 0 {
+		t.Fatalf("the upgraded document holds %d layout rows, want none copied in", len(found.Config.Layouts))
+	}
+
+	if found.Config.Windows == nil || len(found.Config.Windows) != 0 {
+		t.Fatalf("the upgraded document holds %d brightness windows, want none copied in", len(found.Config.Windows))
+	}
+
+	if found.Config.Pauses == nil || len(found.Config.Pauses) != 0 {
+		t.Fatalf("the upgraded document holds %d pauses, want none copied in", len(found.Config.Pauses))
+	}
+
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the upgraded store back: %v", err)
+	}
+
+	onDisk := storedRaw(t, dir)
+	if version, _ := onDisk["version"].(float64); int(version) != 3 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want 3", onDisk["version"])
+	}
+
+	for _, name := range []string{"layouts", "windows", "pauses"} {
+		held, present := onDisk[name].([]any)
+		if !present || len(held) != 0 {
+			t.Fatalf("the store on disk carries %q as %v, want an empty list", name, onDisk[name])
+		}
 	}
 }
 
@@ -583,15 +678,20 @@ func TestAStoreFromBeforeTheVersionStepsThroughEveryShapeToTheCurrentOne(t *test
 			}
 
 			if found.Config.Version != storeVersion {
-				t.Fatalf("the document reached version %d, want 2", found.Config.Version)
+				t.Fatalf("the document reached version %d, want 3", found.Config.Version)
 			}
 
-			// Both steps ran: the version was stamped, and then the two tables were added. A step
-			// that jumped from 0 straight to 2 would answer here with the bindings intact and the
-			// tables still nil.
+			// All three steps ran: the version was stamped, the two tables were added, and the
+			// three version-3 lists were added after them. A step that jumped from 0 straight to 3
+			// would answer here with the bindings intact and everything after it still nil.
 			if found.Config.States == nil || found.Config.Moments == nil {
 				t.Fatalf("the stepped document has states %v and moments %v, want both present and empty",
 					found.Config.States, found.Config.Moments)
+			}
+
+			if found.Config.Layouts == nil || found.Config.Windows == nil || found.Config.Pauses == nil {
+				t.Fatalf("the stepped document has layouts %v, windows %v and pauses %v, want all three present and empty",
+					found.Config.Layouts, found.Config.Windows, found.Config.Pauses)
 			}
 		})
 	}

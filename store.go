@@ -56,7 +56,12 @@ const (
 	// what the release that introduced this store wrote. Version 2 adds the state table and the
 	// moment table beside the bindings — the two tables the Colours and Events screens edit — and
 	// a version-1 document is stepped up to it by an entry in storeUpgrades that adds both, empty.
-	storeVersion = 2
+	//
+	// Version 3 adds the three things the Layout, Brightness and Overview screens edit: the layout
+	// a binding composes with, the brightness windows, and the pause with its absolute expiry. All
+	// three arrive empty from version 2 for the reason the two tables did — absent is a default and
+	// not a zero — and the step is an entry in storeUpgrades like every other.
+	storeVersion = 3
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -98,6 +103,44 @@ type storedConfig struct {
 	// The key is the pair because that is what multi-room means — the same printer on two lights
 	// carries two independent sets — and because the moment list itself belongs to the light.
 	Moments []storedMoment `json:"moments"`
+
+	// Layouts is the layout table the Layout screen edits, one row per binding somebody has
+	// changed. A binding with no row here composes with the built-in default and says so with an
+	// origin of `default`, for the reason the state table has none: absent is a default, the
+	// default belongs to the code, and a copy of it in this file would be a second statement to
+	// keep in step by hand.
+	//
+	// The row is named by the printer, which is the binding's own name on the routes
+	// (`/bindings/{id}`) because one printer is shown by one binding — bindings.check refuses a
+	// second. It is the one key that survives a light being replaced.
+	Layouts []storedLayout `json:"layouts"`
+
+	// Windows is the brightness windows the Brightness screen edits, in the operator's order: the
+	// first one that contains a moment decides, and the rest are not consulted. They are the same
+	// shape the `brightness_schedule` setting carries, deliberately — one concept, read by one
+	// parser, so that a window written through a route and a window written in the settings file
+	// cannot mean two different things.
+	Windows []brightnessWindow `json:"windows"`
+
+	// Pauses is the pause state: at most one row of `global` scope, and at most one per binding.
+	// Each row carries the absolute instant it ends at, never a duration and never a timer, because
+	// this process is reconstructed on every settings save and on every restart — a pause held in
+	// a timer is a pause that ends early the first time somebody saves the settings.
+	Pauses []storedPause `json:"pauses"`
+}
+
+// storedConfigV2 is the document at schema version 2: the version, the bindings list, and the two
+// tables the Colours and Events screens edit. Only the upgrade from it reads it; nothing writes it.
+//
+// It is a type of its own rather than storedConfig minus three fields, because the step below
+// decodes it strictly: a version-2 document read into the current shape would accept a `layouts`
+// key that version 2 never wrote, and a document that is half one shape and half another is the
+// one thing the version stamp exists to catch.
+type storedConfigV2 struct {
+	Version  int               `json:"version"`
+	Bindings []json.RawMessage `json:"bindings"`
+	States   []storedState     `json:"states"`
+	Moments  []storedMoment    `json:"moments"`
 }
 
 // storedConfigV1 is the document at schema version 1: the version and the bindings list, and
@@ -184,11 +227,41 @@ var storeUpgrades = []storeUpgrade{
 			// goes on showing exactly what it showed before the upgrade. Nothing is invented
 			// for a table nobody has edited yet — a default copied in here would be a second
 			// copy of the code's own table, drifting from it one release later.
-			return json.Marshal(storedConfig{
+			//
+			// The shape at 2 and not storedConfig, which is the shape at 3: a step answers the
+			// document exactly one version later, and a step that stamped this one with the
+			// three version-3 keys would be writing a document that version 3's own upgrade
+			// would then decode and refuse for carrying keys version 2 never had.
+			return json.Marshal(storedConfigV2{
 				Version:  2,
 				Bindings: first.Bindings,
 				States:   []storedState{},
 				Moments:  []storedMoment{},
+			})
+		},
+	},
+	{
+		from: 2,
+		why:  "the document gained the per-binding layout, the brightness windows and the pause, all empty",
+		step: func(raw []byte) ([]byte, error) {
+			var second storedConfigV2
+			if err := decodeStrictly(raw, &second); err != nil {
+				return nil, err
+			}
+
+			// Three empty lists, for the reason version 2's two arrived empty. An install with no
+			// pause set is an install that is not paused; a binding nobody has laid out composes
+			// with the default the painter holds; and a window list with nothing in it is the
+			// fixed brightness, which is what every install before windows ran. Copying any of
+			// those into the file would be a second copy of a decision the code already makes.
+			return json.Marshal(storedConfig{
+				Version:  3,
+				Bindings: second.Bindings,
+				States:   second.States,
+				Moments:  second.Moments,
+				Layouts:  []storedLayout{},
+				Windows:  []brightnessWindow{},
+				Pauses:   []storedPause{},
 			})
 		},
 	},
@@ -371,6 +444,21 @@ func saveStore(dir string, config storedConfig) (string, error) {
 
 	if config.Moments == nil {
 		config.Moments = []storedMoment{}
+	}
+
+	// The three lists version 3 added, for the same reason and one more: the first start of an
+	// install writes this document from the settings without naming any of them, and a null there
+	// would read as a field this build does not know.
+	if config.Layouts == nil {
+		config.Layouts = []storedLayout{}
+	}
+
+	if config.Windows == nil {
+		config.Windows = []brightnessWindow{}
+	}
+
+	if config.Pauses == nil {
+		config.Pauses = []storedPause{}
 	}
 
 	document, err := json.MarshalIndent(config, "", "  ")
