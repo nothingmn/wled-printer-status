@@ -251,7 +251,7 @@ var (
 	// the value, and the sentence names it beside the values that are accepted.
 	LayoutRefused = fault.Register(faultDomain, "LAYOUT_REFUSED", http.StatusConflict, fault.Document(
 		"The layout is not one this module can act on",
-		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is stored and not yet drawn. rotate_seconds is a whole number of seconds, one or more. remaining may only be false: this build draws no time remaining. The detail names the value that was sent and the values accepted. Nothing was changed.",
+		"bar_band is top or bottom. bar_rows is 1 to 48 of a 64-row panel. percent_scale is 3, 4 or 5. rotation is take-turns or side-by-side, and side-by-side is drawn. rotate_seconds is a whole number of seconds, one or more. remaining may only be false: this build draws no time remaining. The detail names the value that was sent and the values accepted. Nothing was changed.",
 		fault.RetryNever,
 		fault.ShowDetail,
 		"printer", "bar_band", "bar_rows", "percent_scale", "rotation", "rotate_seconds",

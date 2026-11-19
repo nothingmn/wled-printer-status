@@ -976,7 +976,7 @@ func routes() http.Handler {
 			return
 		}
 
-		bands, _ := target.pen.layout.bandsOn(geometry)
+		bands, _ := target.pen.composing().bandsOn(geometry)
 
 		answer(w, http.StatusAccepted, map[string]any{
 			"controller": target.where,
@@ -987,9 +987,9 @@ func routes() http.Handler {
 			// What the rotation shows, in the order it shows them, so that a caller holding the
 			// light for two minutes is told what he will see rather than what he would see now.
 			"halves":           picture.halves(geometry, bands),
-			"layout":           target.pen.layout.view(),
+			"layout":           target.pen.composing().view(),
 			"holds_seconds":    int(holds / time.Second),
-			"rotation_seconds": int(target.pen.layout.rotate / time.Second),
+			"rotation_seconds": int(target.pen.composing().rotate / time.Second),
 		})
 	})
 

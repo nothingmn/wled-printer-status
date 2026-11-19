@@ -60,9 +60,13 @@ const (
 		"a word - shows the state's colour instead. A state nobody has edited keeps the colour internal/render " +
 		"holds for it, and holds it as a default rather than as a copy written into this store."
 
-	// momentsFiredNote says the same about the moment table: one moment is fired today.
-	momentsFiredNote = "This build fires one moment today — the finished word, held for a minute — so this is the record " +
-		"the Events screen edits and not yet a change on the light."
+	// momentsFiredNote says the same about the moment table: every moment in it is fired, on its own
+	// transition, for the length it names.
+	momentsFiredNote = "Every moment in this table is fired on its transition, on every binding whose printer sits on " +
+		"that light, and held for the length its `for` names: a preset takes the whole light and puts it back, a word " +
+		"is drawn on a panel and becomes the moment's colour on a strip, a colour is painted as the whole light, and " +
+		"nothing does nothing. A moment with no row behaves as its default does, which is the finished word for a " +
+		"minute and nothing for the rest."
 
 	// noStoreNote is what a read says when there is nothing to write to, so that a screen can say
 	// why its save button is off rather than leaving a person to discover it by pressing it.

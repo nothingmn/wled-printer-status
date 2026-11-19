@@ -109,9 +109,23 @@ func (w *writer) switchOff(ctx context.Context, end pauseEnd) {
 	// Whatever the light was holding, it is not holding it any more: the composed picture is not
 	// being pushed, and a word is not being re-pushed. Leaving either behind would have the writer
 	// believe the panel is still live when the light is off.
+	//
+	// A preset moment is given back rather than paused, for the reason it exists: the light is not
+	// this module's for those seconds, so what it was doing has to be put back before it is switched
+	// off — or, on a borrowed zone, instead of it.
+	if w.held != nil && w.held.took != nil {
+		w.giveLightBack(ctx, w.held.took)
+
+		w.held.took = nil
+	}
+
+	w.held = nil
 	w.composed = nil
 	w.spoken = nil
 	w.level = -1
+
+	// The light is off, and the thumbnail says so: black, because black is what is on the wall.
+	w.holding.Store(&holding{paused: true})
 
 	if w.pauseEffect == effectHandsBack {
 		w.handBack(ctx)
@@ -149,6 +163,10 @@ func (w *writer) switchOff(ctx context.Context, end pauseEnd) {
 func (w *writer) switchOn(ctx context.Context) {
 	w.paused = false
 	w.afterPause = true
+
+	// The light is being drawn again, so nothing is holding it: the first frame painted after this
+	// is what the thumbnail shows.
+	w.holding.Store(nil)
 
 	if w.pauseEffect == effectHandsBack {
 		w.borrow(ctx)
@@ -284,6 +302,7 @@ func (w *writer) speak(ctx context.Context) (time.Duration, bool, error) {
 		w.spoken = nil
 		w.composed = nil
 		w.handedBack = true
+		w.holding.Store(nil)
 
 		return 0, false, nil
 	}
@@ -337,6 +356,11 @@ func (w *writer) holdWord(ctx context.Context, wanted show) error {
 		repush:  w.now().Add(pixelRepeat),
 		painted: true,
 	}
+
+	// What the light is showing, for the Overview's thumbnail: the word, in its own colour. It is
+	// published here rather than worked out again by the route, because the route cannot know which
+	// word the panel is holding without asking this goroutine.
+	w.holding.Store(&holding{word: wanted.word, colour: wanted.colour})
 
 	// One line, on the way up, like every other transition in this log: a picture that stood all
 	// evening says nothing, and an operator who wants to know why his panel is showing a word needs

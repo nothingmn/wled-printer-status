@@ -27,6 +27,34 @@ type handTable struct {
 	windows  []scheduleWindow
 	zone     *time.Location
 	zoneName string
+
+	// moments and layout are the two tables a picture is composed from: what a moment shows on this
+	// binding, and the arrangement it draws a panel with. A moment with no entry here answers the
+	// code's default, exactly as the document's own reader does.
+	moments map[string]momentEntry
+	shape   *layout
+}
+
+func (h *handTable) moment(id string) (momentEntry, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if one, held := h.moments[id]; held {
+		return one, true
+	}
+
+	return momentDefault(id), false
+}
+
+func (h *handTable) layout() (layout, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.shape == nil {
+		return layout{}, false
+	}
+
+	return *h.shape, true
 }
 
 func (h *handTable) show(state string) (show, bool) {

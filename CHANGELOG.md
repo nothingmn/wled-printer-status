@@ -39,8 +39,16 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   its `shows` is refused with the reason. Only the finished moment is on by default, showing the word
   this build already draws for a minute.
 - A moment can be edited while the light is not answering: a preset name is taken as written and the light
-  is never asked. Editing a moment, or a state, does not repaint the light yet — what a moment shows and
-  what colour a state is drawn in are still the built-in ones until a later release reads the table.
+  is never asked.
+- The moment table is what the light shows when something happens, and this release fires it. The
+  transitions the printer reports are looked up per binding — finished, started, paused, cancelled,
+  filament change, error or attention — and the entry is shown for its `for`, a duration or `forever`, and
+  then handed back; a printer that stops reporting while a job is live shows the `printer-went-quiet`
+  entry. `Preset` takes the whole light, names one of its own presets and puts back what it captured, and
+  is refused on a borrowed zone with the segment named. `Word` is drawn on a panel, and a strip shows the
+  moment's colour instead. `Colour` paints that state's colour, so a recoloured state is what a moment
+  about it paints. `Nothing`, and an entry that is switched off, show nothing at all. A binding nobody has
+  edited fires what this module has always fired: the finished word, for a minute.
 - The configuration document is at schema version 2. A version 1 document is stepped up in place, bindings
   and all, with both new tables empty; one written before the version was stamped is stepped through both
   shapes rather than skipping to the current one.
@@ -49,8 +57,13 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   is yours or the built-in default. `PUT /bindings/{id}/layout` writes one and `DELETE` puts it back to the
   default; `GET /lights/{light}/layouts` answers every binding on one light. A layout is per binding
   because a panel and a strip do not compose the same way. A binding nobody has edited answers the default
-  rather than an empty object. `rotation: side-by-side` is kept and reported, and the answer says this build
-  still takes turns.
+  rather than an empty object.
+- The layout table composes the panel, and `percent_scale` and `rotation` are drawn rather than only
+  reported. `percent_scale` pins the digits to 5, 4 or 3, and a scale the band cannot hold is refused
+  rather than cropped. `rotation: side-by-side` puts the digits on the left and the job's name on the
+  right at scale 2, cut to the columns that are left, with the digits a scale smaller there, and a name
+  with less than three glyphs of room is not drawn at all. `take-turns`, and a binding with no row of its
+  own, draw exactly what this module drew before.
 - `GET /windows` answers the brightness windows, judged in the zone the `timezone` setting names and never in
   the container's own clock, with the zone and the instant written beside them. `POST /windows` adds one,
   `PUT /windows/{index}` replaces one in its place and `DELETE /windows/{index}` removes one. A window whose
@@ -73,8 +86,12 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   that draws the light, so a thumbnail cannot disagree with the panel, and it is a reconstruction: this
   firmware cannot read its pixels back. Nothing on this route opens a socket to a controller, so a light
   that has stopped answering still has a picture, from its last reading, with `stale` true and the age in
-  seconds beside it. A panel is composed exactly as the painter composes it while a job is running, and is
-  otherwise its own fill; a binding that borrows a segment draws only that segment's run.
+  seconds beside it. A panel is composed exactly as the painter composes it while a job is running — with
+  the layout that binding composes with, and the half of a take-turns rotation that is up — and is
+  otherwise its own fill; a light that is paused is drawn dark, a light holding a moment's word or colour
+  is drawn as that word or colour, and a light running one of its own presets keeps the steady frame with
+  a sentence saying so, because a preset cannot be read back. A binding that borrows a segment draws only
+  that segment's run.
 - `GET /devices/{name}/snapshot` answers the snapshots this module holds of one light, newest first, and
   `POST` on the same route takes one now: the light's `/json/cfg`, its `/presets.json`, its `/json/state`,
   and the identity a restore is checked against — the address, the name the light calls itself, its

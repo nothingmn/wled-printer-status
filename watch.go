@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
+	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
 
 // gate is one controller's door: every write this module makes to a controller passes through
@@ -177,9 +179,16 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 
 			// The store, as this binding's painter reads it: one reader per binding, because a
 			// pause is kept per binding and one reader shared between two would be answering for
-			// whichever printer happened to be asked last.
+			// whichever printer happened to be asked last. The light's name travels with it because
+			// the moment table is keyed on the (light, printer) pair — the same printer on two lights
+			// carries two independent sets, which is what multi-room means (§2.3).
 			if c.tables != nil {
-				pen.store = &storeLights{tables: c.tables, printer: b.DeviceID, logging: c.logf}
+				pen.store = &storeLights{
+					tables:  c.tables,
+					printer: b.DeviceID,
+					light:   lightName(b.Address),
+					logging: c.logf,
+				}
 				pen.printer = b.DeviceID
 			}
 
@@ -418,6 +427,29 @@ type bindingShape struct {
 	// light. It is what makes the strip thumbnail the binding's own zone rather than somebody
 	// else's 48 pixels.
 	span *[2]int
+
+	// layout is the arrangement this binding composes a panel with — the store's row for it, or the
+	// `layout` setting when it has none — and laidOut says one was published at all.
+	//
+	// It travels here because the thumbnail has to be composed by the same arrangement the painter
+	// uses: a picture drawn from the instance's setting while the panel composes with its own row
+	// would be a thumbnail of a light that does not exist. laidOut is a second field rather than a
+	// test on the layout, because a binding deliberately laid out with every part switched off draws
+	// nothing, and that is not the same fact as "nothing was published".
+	layout  layout
+	laidOut bool
+
+	// paused, word, wordColour, plain and preset are what the light is showing instead of its steady
+	// frame: a pause that switched it off, a state's word, a moment's colour, or a preset the light
+	// itself is running. All zero means the steady frame is what is on the wall.
+	//
+	// They are published by the writer, which is the only thing that decides them, and read by the
+	// thumbnail route, which must never ask the light.
+	paused     bool
+	word       string
+	wordColour wled.RGB
+	plain      *render.Frame
+	preset     string
 }
 
 // kind is panel or strip, in the words the routes use.
@@ -427,6 +459,21 @@ func (s bindingShape) kind() string {
 	}
 
 	return snapshotKindStrip
+}
+
+// composing is the arrangement to draw this binding's picture with: the one the binding published,
+// and the instance's own setting for a shape that published none.
+//
+// The fallback is real and not a formality: a test's hand-built shape, and a frame published before a
+// writer existed, both arrive with nothing laid out, and the picture they describe is the one the
+// instance composes. laidOut is what tells "published nothing" from "published a layout that draws
+// nothing", which are different pictures.
+func (s bindingShape) composing(fallback layout) layout {
+	if s.laidOut {
+		return s.layout
+	}
+
+	return fallback
 }
 
 // pixelsOf is the picture this binding draws for one frame: the panel's own geometry, the borrowed
@@ -461,6 +508,19 @@ var (
 // and its segment, which is the pair that survives a printer being renamed.
 func shapeKey(controller string, segment int) string {
 	return fmt.Sprintf("%s#%d", controller, segment)
+}
+
+// lightName is a controller's address as the moment table keys it: the name the routes give a light,
+// which is its key without the scheme (`http://10.0.0.136` is `10.0.0.136`). An address this module
+// cannot parse answers with the address itself, which is the name the moment routes would have
+// written for it.
+func lightName(address string) string {
+	key, err := controllerKey(address)
+	if err != nil {
+		return strings.TrimRight(strings.TrimSpace(address), "/")
+	}
+
+	return nameOfController(key)
 }
 
 // publishShape records what one binding draws on, as its writer last saw it.

@@ -154,16 +154,23 @@ type brightnessNow struct {
 	covered bool
 }
 
-// lights is the store as one painter reads it: three questions, each with the answer "nothing of
+// lights is the store as one painter reads it: five questions, each with the answer "nothing of
 // mine to say".
 //
 // It is an interface for one reason: a test paints from a table it wrote by hand, with a clock it
 // moves, and never touches a file. The process's only implementation is storeLights below, and a
 // writer built without one behaves exactly as this module did before the store was obeyed.
+//
+// The last two are the two tables the picture itself comes from rather than the light's condition:
+// **layout** is the per-binding arrangement of a panel, and **moment** is what a transition shows.
+// Neither ever answers "nothing of mine" in a way that leaves the light blank — see their comments
+// for the default each falls back to, which is the code's and not a copy in the document.
 type lights interface {
 	show(state string) (show, bool)
 	paused(at time.Time) (pauseEnd, bool)
 	level(at time.Time) (brightnessNow, bool)
+	moment(id string) (momentEntry, bool)
+	layout() (layout, bool)
 }
 
 // storeLights is one binding's view of this module's own configuration: the document's three
@@ -179,6 +186,14 @@ type storeLights struct {
 	// printer is the binding's own device id, which is the name a pause on one binding is kept
 	// under, and empty for a writer that is not a binding (a test's).
 	printer string
+
+	// light is the binding's light by the name the moment table keys it with — the controller's
+	// address without its scheme — and empty for a writer that is not a binding.
+	//
+	// The moment table is keyed on (light, printer) because the same printer on two lights carries
+	// two independent sets (docs/product-requirements.md §2.3), so a reader that did not know its
+	// light could not find its own rows.
+	light string
 
 	// zone is the `timezone` setting's name, which is the zone the windows are judged in. It is a
 	// function rather than a value because the setting is the host's and arrives on configure,
@@ -215,13 +230,20 @@ type storeStamp struct {
 	size     int64
 }
 
-// storeView is one read of the document as the painter needs it: the three tables, already
-// checked, and the refusal that stopped them being read when there was one.
+// storeView is one read of the document as the painter needs it: the tables, already checked, and
+// the refusal that stopped them being read when there was one.
 type storeView struct {
 	stamp   storeStamp
 	rows    []stateRow
 	pauses  []storedPause
 	windows []windowRow
+
+	// moments and layouts are the two tables a picture is composed from: what a transition shows
+	// for this binding, and how a panel arranges its parts. They are kept here rather than read on
+	// demand for the reason the three above are — one read of one file per pass of the loop, and
+	// one refusal that stops the whole document being obeyed rather than half of it.
+	moments []storedMoment
+	layouts map[string]storedLayout
 
 	// refused is why the document could not be acted on. The painter then draws from the
 	// renderer's table, the fixed brightness and no pause — the picture every install had before
@@ -294,6 +316,48 @@ func (s *storeLights) level(at time.Time) (brightnessNow, bool) {
 	// The sentence says whose list decided it, because the two are edited in different places and a
 	// person reading "the light's brightness is 40" needs to know which one to change.
 	return brightnessNow{level: level, why: "this module's own windows: " + why, covered: covered}, true
+}
+
+// moment is what this binding's row for one moment says the light shows, and whether that answer
+// came from the document.
+//
+// A moment with no row answers the default `momentDefault` gives it, which is not a copy of what
+// the module does — it *is* what the module does: only the finished moment is on, showing the word
+// FINISHED for a minute. So an install that never opens the Events screen fires exactly the event
+// this module has fired since the word was built, and this reader is what says so.
+//
+// A row is found by the (light, printer) pair — the table's own key — so the same printer on two
+// lights carries two sets, which is what multi-room means (§2.3).
+func (s *storeLights) moment(id string) (momentEntry, bool) {
+	for _, one := range s.view().moments {
+		if !strings.EqualFold(strings.TrimSpace(one.Light), s.light) || one.Printer != s.printer {
+			continue
+		}
+
+		if !strings.EqualFold(strings.TrimSpace(one.Moment), id) {
+			continue
+		}
+
+		return one.momentEntry, true
+	}
+
+	return momentDefault(id), false
+}
+
+// layout is the arrangement this binding composes with, and false when it has no row of its own —
+// in which case the painter falls back to the `layout` setting, which is the migration source
+// (docs/product-requirements.md §4).
+//
+// The row is resolved against the defaults on the way out, so a row that names one field answers for
+// all eight and a screen and the painter read one picture. A row that will not check refuses the
+// whole document in `read`, so nothing here refuses anything.
+func (s *storeLights) layout() (layout, bool) {
+	row, held := layoutFor(s.view().layouts, s.printer)
+	if !held {
+		return layout{}, false
+	}
+
+	return row.resolved().shape(), true
 }
 
 // location is the zone the windows are judged in, and the refusal when there is none to judge them
@@ -377,7 +441,7 @@ func (s *storeLights) view() storeView {
 }
 
 // read fills one view from the document, and is the whole of what a refusal can be about: the file,
-// then each of the three tables.
+// then each of the tables.
 //
 // A table that will not read refuses the whole document rather than being skipped, for the reason
 // the routes refuse a read of it: a bad line in a file a person edits is a line a person has to
@@ -402,8 +466,21 @@ func (s *storeLights) read(view *storeView) {
 		return
 	}
 
-	view.windows, err = windowsOf(found.Config)
-	if err != nil {
+	if view.windows, err = windowsOf(found.Config); err != nil {
+		view.refused = err
+
+		return
+	}
+
+	// The five tables are judged together: a document is obeyed as one thing or not at all, which is
+	// what makes "the store's answer or the code's" a question with two answers rather than six.
+	if view.moments, err = momentsStored(found.Config); err != nil {
+		view.refused = err
+
+		return
+	}
+
+	if view.layouts, err = layoutRows(found.Config); err != nil {
 		view.refused = err
 	}
 }

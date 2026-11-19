@@ -255,10 +255,11 @@ func TestAnInvalidRotationIsRefusedByName(t *testing.T) {
 	}
 }
 
-// TestASideBySideRotationIsStoredAndSaysItIsNotDrawn is the operator's decision as this wave keeps
-// it: the value is kept and reported, and the answer says in one line that the picture has not
-// changed — because it has not.
-func TestASideBySideRotationIsStoredAndSaysItIsNotDrawn(t *testing.T) {
+// TestASideBySideRotationIsStoredAndSaysWhatItDraws is the operator's decision built: the value is
+// kept, reported, and drawn — the digits on the left and the name on the right, cut to the room that
+// is left — and the answer says in one line what the picture will look like, because the digits give
+// up a scale there.
+func TestASideBySideRotationIsStoredAndSaysWhatItDraws(t *testing.T) {
 	under := newWave3UnderTest(t, twoPrinters(), twoBindings(), "", at(), "America/Denver")
 
 	status, body := under.do(t, http.MethodPut, "/bindings/printer-a/layout", `{"rotation": "side-by-side"}`)
@@ -272,12 +273,12 @@ func TestASideBySideRotationIsStoredAndSaysItIsNotDrawn(t *testing.T) {
 		t.Fatalf("rotation reads %q, want %q", got, rotationSideBySide)
 	}
 
-	if note := readString(t, layout, "rotation_note"); !strings.Contains(note, "still takes turns") {
-		t.Fatalf("the answer does not say this build still takes turns: %q", note)
+	if note := readString(t, layout, "rotation_note"); !strings.Contains(note, "side by side, the digits sit on the left") {
+		t.Fatalf("the answer does not say what side by side draws: %q", note)
 	}
 
-	if note := readString(t, body, "note"); !strings.Contains(note, "still takes turns") {
-		t.Fatalf("the write's note does not say this build still takes turns: %q", note)
+	if note := readString(t, body, "note"); !strings.Contains(note, "side by side, the digits sit on the left") {
+		t.Fatalf("the write's note does not say what side by side draws: %q", note)
 	}
 
 	held := under.stored(t)
@@ -291,8 +292,8 @@ func TestASideBySideRotationIsStoredAndSaysItIsNotDrawn(t *testing.T) {
 		t.Fatalf("reading the layout back answered %d: %v", status, body)
 	}
 
-	if note := readString(t, readObject(t, body, "layout"), "rotation_note"); !strings.Contains(note, "still takes turns") {
-		t.Fatalf("the read does not say this build still takes turns: %q", note)
+	if note := readString(t, readObject(t, body, "layout"), "rotation_note"); !strings.Contains(note, "side by side, the digits sit on the left") {
+		t.Fatalf("the read does not say what side by side draws: %q", note)
 	}
 }
 
@@ -1136,7 +1137,7 @@ func TestEveryWriteInThisWaveSaysWhatItDoes(t *testing.T) {
 		kept   string
 	}{
 		{http.MethodPut, "/bindings/printer-a/layout", `{"name": false}`,
-			"not yet a change on the light", "survives a restart and an upgrade"},
+			"is what the light draws", "survives a restart and an upgrade"},
 		{http.MethodPut, "/pause", `{"for": "10m"}`,
 			"switched off now and stays off", "survives a restart and a settings save"},
 		{http.MethodPut, "/bindings/printer-a/pause", `{"for": "10m"}`,

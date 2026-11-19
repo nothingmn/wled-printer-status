@@ -309,9 +309,19 @@ func (api framesAPI) frameOf(held bindingStatus, set bindings) (frameAnswer, err
 	}
 
 	said.Kind, said.Width, said.Height = shape.kind(), width, height
-	said.Image, err = api.encode(pixels, width, height, cacheKey(found, held, width, height))
+	said.Image, err = api.encode(pixels, width, height, cacheKey(found, held, shape, width, height, api.now()))
 	if err != nil {
 		return frameAnswer{}, err
+	}
+
+	// A preset the light is running is the one picture this module cannot reconstruct: the light draws
+	// it and this firmware cannot be read back. So the frame stands and the sentence says what is
+	// actually there, which is the honest half of a thumbnail rather than a picture of something else.
+	if shape.preset != "" {
+		said.Note = fmt.Sprintf(
+			"This light is running its own preset %q for a moment, and a preset cannot be reconstructed: "+
+				"the picture beside this sentence is the steady frame the moment will hand back to.",
+			shape.preset)
 	}
 
 	if held.Reading.Stale && said.Note == "" {
@@ -357,11 +367,26 @@ func (api framesAPI) bindingOf(held bindingStatus, set bindings) (string, bindin
 
 // pictureOf is one frame as pixels, drawn by the painter's own code.
 //
-// The three cases are the writer's three. A panel that the layout would compose is composed, by the
-// same function the steady picture goes through. A panel with nothing to compose is the raster the
-// panel's own segment bodies draw. A strip is the frame's fill: its colour across the pixels the job
-// has completed and black past them, which is exactly what the strip body writes — the run's length
-// is the frame's own Lit, with no rounding between, because a strip's unit is one LED.
+// # What the painter is showing, not just what the frame says
+//
+// A thumbnail that disagrees with the panel is worse than no thumbnail, so the picture is the one the
+// light is holding rather than the steady frame this module decided. Four things can be on a light
+// instead of that frame, and each is published by the writer for exactly this route:
+//
+//	paused   the light is off, so the picture is black — §3: "The thumbnail shows black because
+//	         black is what is on the wall."
+//	plain    a moment that shows a colour painted the whole light in it, and that is the picture.
+//	word     a state's word is on the panel, drawn by the same rasteriser the event layer uses.
+//	preset   the light is running one of its own presets, which this firmware cannot be read back,
+//	         so the steady frame stands and the answer says in a sentence that a preset is running.
+//
+// # The three cases that are left
+//
+// A panel that its own layout composes is composed, by the same function the steady picture goes
+// through, with the layout that binding composes with. A panel with nothing to compose is the raster
+// the panel's own segment bodies draw. A strip is the frame's fill: its colour across the pixels the
+// job has completed and black past them, which is exactly what the strip body writes — the run's
+// length is the frame's own Lit, with no rounding between, because a strip's unit is one LED.
 func (api framesAPI) pictureOf(frame render.Frame, shape bindingShape) ([]wled.RGB, error) {
 	width, height := shape.pixelsOf(frame)
 
@@ -369,8 +394,27 @@ func (api framesAPI) pictureOf(frame render.Frame, shape bindingShape) ([]wled.R
 		return nil, fmt.Errorf("a frame of %d x %d is not a picture", width, height)
 	}
 
-	if shape.geometry.matrix() && drawsComposed(frame, shape.geometry, api.layout()) {
-		picture := panelPicture{frame: frame, layout: api.layout(), at: api.now()}
+	if shape.paused {
+		return dark(width * height), nil
+	}
+
+	if shape.plain != nil {
+		return api.plainPicture(*shape.plain, shape)
+	}
+
+	if shape.word != "" && shape.geometry.matrix() {
+		pixels, err := event{word: shape.word, colour: shape.wordColour}.draw(shape.geometry, api.now())
+		if err != nil {
+			return nil, fmt.Errorf("the word %q the panel is holding was not drawn: %w", shape.word, err)
+		}
+
+		return pixels, nil
+	}
+
+	shape.layout = shape.composing(api.layout())
+
+	if shape.geometry.matrix() && drawsComposed(frame, shape.geometry, shape.layout) {
+		picture := panelPicture{frame: frame, layout: shape.layout, at: api.now()}
 
 		pixels, err := picture.draw(shape.geometry)
 		if err != nil {
@@ -404,6 +448,39 @@ func (api framesAPI) pictureOf(frame render.Frame, shape bindingShape) ([]wled.R
 	}
 
 	return pixels, nil
+}
+
+// plainPicture is a moment's colour as the whole light: the colour over the binding's own run, which
+// is what the segments write that painted it did.
+func (api framesAPI) plainPicture(frame render.Frame, shape bindingShape) ([]wled.RGB, error) {
+	width, height := shape.pixelsOf(frame)
+
+	if width <= 0 || height <= 0 {
+		return nil, fmt.Errorf("a frame of %d x %d is not a picture", width, height)
+	}
+
+	if shape.geometry.matrix() {
+		return matrix.Raster(frame, matrix.Geometry{Width: shape.geometry.width, Height: shape.geometry.height})
+	}
+
+	pixels := make([]wled.RGB, width)
+	for index := range pixels {
+		pixels[index] = frame.Colour
+	}
+
+	return pixels, nil
+}
+
+// dark is a light that is off: every pixel in the colour an empty range is drawn in, which is the
+// black this module paints behind everything else.
+func dark(pixels int) []wled.RGB {
+	off := make([]wled.RGB, pixels)
+
+	for index := range off {
+		off[index] = render.Frame{}.Unfilled()
+	}
+
+	return off
 }
 
 // encode is one picture as a PNG, from the cache when the frame has not changed.
@@ -471,12 +548,33 @@ func pngOf(pixels []wled.RGB, width, height int) ([]byte, error) {
 
 // cacheKey is what makes a cached picture honest: every fact the picture is made from, and nothing
 // else. Two frames that draw the same bytes share an entry; a frame that moved does not.
-func cacheKey(light string, held bindingStatus, width, height int) string {
-	key, err := json.Marshal([]any{
+func cacheKey(light string, held bindingStatus, shape bindingShape, width, height int, at time.Time) string {
+	parts := make([]any, 0, 10)
+	parts = append(parts,
 		light, held.Controller, held.Segment, width, height,
 		held.Frame.Colour, held.Frame.Lit, held.Frame.Total, held.Frame.Percent,
 		held.Frame.Name, held.Frame.Reason,
-	})
+		// What the light is showing instead of that frame, and the arrangement a panel is composed
+		// with: a cached picture served across a change of any of these would be a thumbnail of a
+		// light that no longer looks like that.
+		shape.paused, shape.word, shape.wordColour, shape.preset, shape.laidOut,
+		shape.layout.bar, shape.layout.barBand, shape.layout.barRows, shape.layout.percent,
+		shape.layout.percentScale, shape.layout.name, shape.layout.rotation,
+		int(shape.layout.rotate/time.Second),
+	)
+
+	if shape.plain != nil {
+		parts = append(parts, shape.plain.Colour, shape.plain.Lit, shape.plain.Total, shape.plain.Reason)
+	} else {
+		parts = append(parts, nil)
+	}
+
+	// The half of the rotation a take-turns panel is showing is part of the picture: two pictures of
+	// one frame that differ only in which half is up are two pictures, and a cache that served one for
+	// the other would disagree with the panel for fifteen seconds at a time.
+	parts = append(parts, rotationHalf(at, shape.layout.rotate))
+
+	key, err := json.Marshal(parts)
 	if err != nil {
 		// A key that cannot be built is a cache that cannot be used, and never a wrong picture.
 		return ""

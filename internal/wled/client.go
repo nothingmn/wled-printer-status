@@ -76,10 +76,11 @@
 // # What this package does not do
 //
 // It never writes {"live":true}, which hijacks the strip into realtime mode and
-// blanks it, and it never writes a preset, a playlist, or the segment geometry of
-// a controller whose matrix it has not read. It draws nothing and maps no printer
-// state to a colour: which tier to use, and what a colour means, are the caller's
-// decisions.
+// blanks it, and it never writes a playlist or the segment geometry of
+// a controller whose matrix it has not read. It writes **one** of the controller's own presets, and
+// only when a caller names one (RunPreset, preset.go): that is the picture a moment shows when the
+// operator chose to let the light render it rather than this module. It draws nothing and maps no
+// printer state to a colour: which tier to use, and what a colour means, are the caller's decisions.
 package wled
 
 import (
@@ -1542,10 +1543,14 @@ func decodeFXData(raw json.RawMessage) []string {
 // the body names, and a brightness of 0 that arrived by accident would darken a
 // strip.
 type writeState struct {
-	On         *bool          `json:"on,omitempty"`
-	Brightness *int           `json:"bri,omitempty"`
-	Transition *int           `json:"transition,omitempty"`
-	Segments   []writeSegment `json:"seg,omitempty"`
+	On         *bool `json:"on,omitempty"`
+	Brightness *int  `json:"bri,omitempty"`
+	Transition *int  `json:"transition,omitempty"`
+	// Preset runs one of the controller's own presets: the id its /presets.json keys it by, which
+	// is what "ps" takes. It is written by RunPreset alone (preset.go), which resolves the name the
+	// operator typed into this id, and never alongside a segment body: a preset carries its own.
+	Preset   *int           `json:"ps,omitempty"`
+	Segments []writeSegment `json:"seg,omitempty"`
 }
 
 // writeSegment is one segment of that body, in the order the WLED documentation

@@ -104,19 +104,31 @@ func steadyPaints(strip *panelStrip) []paintCall {
 }
 
 // TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant is the decision itself:
-// (from, to, geometry) to (word, colour, duration), or nothing.
+// (from, to, geometry) to (what the moment table says, which is the word) or nothing.
 //
-// The cases that return nothing are the ones that would be wrong in a way nobody would notice
-// on the light: a strip, which cannot draw a word at all; a panel too small to hold the word at
-// the scale this build draws it; a pair that is not a transition, which includes a restart's
-// baseline and a state that stood still; and a pause that ends in a finish, which is a pair
-// nobody has decided about.
+// It is the *default* table — the code's own rows, with no store to ask — which is what an install
+// that has never opened the Events screen acts on, and what this module did before the table drove
+// anything. The finished moment's default is the word FINISHED in the finished green for a minute:
+// the same picture, in the same colour, for the same hold as the special case this replaces.
+//
+// The cases that produce nothing are the ones that would be wrong in a way nobody would notice on
+// the light: a pair that is not a transition at all — which includes a restart's baseline, a state
+// that stood still, and a pause that ends in a finish — and the moments whose default is off, which
+// is every one of the eight but this.
 func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testing.T) {
 	if finishedEventHolds != time.Minute {
 		t.Fatalf("the finished event holds for %s, and this build says a minute", finishedEventHolds)
 	}
 
-	ev, ok := eventFor(printer.StatePrinting, printer.StateFinished, livePanel)
+	// The default entry's own `for` is the same minute, which is what makes the table the statement of
+	// the behaviour rather than a second copy of it.
+	holds, finite, err := momentLength(momentDefault(momentPrintFinished).For)
+	if err != nil || !finite || holds != finishedEventHolds {
+		t.Fatalf("the finished moment's default holds for %q (%s, finite %v, %v), want the %s the event holds",
+			momentDefault(momentPrintFinished).For, holds, finite, err, finishedEventHolds)
+	}
+
+	ev, ok := defaultMomentEvent(printer.StatePrinting, printer.StateFinished, livePanel, render.ColourFinished)
 	if !ok {
 		t.Fatal("PRINTING to FINISHED on a panel produced no event")
 	}
@@ -134,31 +146,51 @@ func TestTheEventListIsATransitionAndTheFinishedWordHoldsForItsConstant(t *testi
 	}
 
 	for _, shape := range []struct {
-		name     string
-		from     string
-		to       string
-		geometry panel
+		name string
+		from string
+		to   string
 	}{
-		{name: "a strip", from: printer.StatePrinting, to: printer.StateFinished},
-		{
-			name: "a panel 32 rows tall, which cannot hold a 35-pixel word",
-			from: printer.StatePrinting, to: printer.StateFinished, geometry: panel{width: 256, height: 32},
-		},
-		{
-			name: "a panel 234 columns wide, which is one column short",
-			from: printer.StatePrinting, to: printer.StateFinished, geometry: panel{width: 234, height: 64},
-		},
-		{name: "a pause", from: printer.StatePrinting, to: printer.StatePaused, geometry: livePanel},
-		{name: "a pause that ends in a finish", from: printer.StatePaused, to: printer.StateFinished, geometry: livePanel},
-		{name: "a state that stood still", from: printer.StateFinished, to: printer.StateFinished, geometry: livePanel},
-		{name: "a print beginning", from: printer.StateIdle, to: printer.StatePrinting, geometry: livePanel},
-		{name: "the first word a process saw", from: "", to: printer.StateFinished, geometry: livePanel},
-		{name: "a job stopped by a person", from: printer.StatePrinting, to: printer.StateStopped, geometry: livePanel},
+		{name: "a pause that ends in a finish", from: printer.StatePaused, to: printer.StateFinished},
+		{name: "a state that stood still", from: printer.StateFinished, to: printer.StateFinished},
+		{name: "a print beginning, whose moment is off by default", from: printer.StateIdle, to: printer.StatePrinting},
+		{name: "the first word a process saw", from: "", to: printer.StateFinished},
+		{name: "a job stopped by a person, whose moment is off by default", from: printer.StatePrinting, to: printer.StateStopped},
+		{name: "a printer going into error, whose moment is off by default", from: printer.StatePrinting, to: printer.StateError},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
-			if _, ok := eventFor(shape.from, shape.to, shape.geometry); ok {
-				t.Fatalf("%s to %s produced an event on a %dx%d light, want none",
-					shape.from, shape.to, shape.geometry.width, shape.geometry.height)
+			if _, ok := defaultMomentEvent(shape.from, shape.to, livePanel, render.ColourFinished); ok {
+				t.Fatalf("%s to %s produced an event, want none", shape.from, shape.to)
+			}
+		})
+	}
+}
+
+// TestAWordMomentOnALightThatCannotCarryOneShowsItsColour is the locked fallback, and the one place
+// where a moment the table *does* fire is answered with no word: a strip has no second dimension for
+// text, and a panel too small for the word at the scale this build draws it has no room. Both are
+// given the moment's colour instead, which on a strip is the same picture the steady frame paints —
+// so the light does not change, and it costs one body rather than a failed write and a widening retry.
+func TestAWordMomentOnALightThatCannotCarryOneShowsItsColour(t *testing.T) {
+	for _, shape := range []struct {
+		name     string
+		geometry panel
+	}{
+		{name: "a strip"},
+		{name: "a panel 32 rows tall, which cannot hold a 35-pixel word", geometry: panel{width: 256, height: 32}},
+		{name: "a panel 234 columns wide, which is one column short", geometry: panel{width: 234, height: 64}},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			ev, ok := defaultMomentEvent(printer.StatePrinting, printer.StateFinished, shape.geometry, render.ColourFinished)
+			if !ok {
+				t.Fatalf("%s produced no event, and the finished moment is on", shape.name)
+			}
+
+			if ev.word != "" {
+				t.Fatalf("the event spells %q on a light that cannot carry it", ev.word)
+			}
+
+			if ev.plain == nil || ev.plain.Colour != render.ColourFinished {
+				t.Fatalf("the event is %+v, want the moment's colour %+v as the whole picture", ev, render.ColourFinished)
 			}
 		})
 	}
@@ -337,14 +369,15 @@ func TestTheFrameThatEndsTheEventClearsTheWordFromTheSegmentName(t *testing.T) {
 	}
 }
 
-// TestAStripGetsNoEventAndKeepsItsSolidFrame is the strip half of the rule, through the driver
-// rather than through the decision: a 48-LED strip that finishes a print is written the solid
-// green it was already being written, and nothing else.
+// TestAStripIsGivenTheFinishedMomentsColourAndNoWord is the strip half of the rule, through the driver
+// rather than through the decision: a 48-LED strip that finishes a print is written the solid green it
+// was already being written, and nothing else.
 //
-// The reason is the light's: a word is drawn in two dimensions and a strip has one. The operator
-// asked for the strip to keep its green, and that is what it does — no establishment, no pixels,
-// no request a strip cannot answer.
-func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
+// A word is drawn in two dimensions and a strip has one, so §2.3's fallback is the moment's colour —
+// which on this moment is the same finished green the steady frame carries. The picture on the strip
+// is therefore exactly what it was before the moment existed; what the moment adds is one body, not an
+// establishment and not pixels, because there is nothing a strip cannot answer here.
+func TestAStripIsGivenTheFinishedMomentsColourAndNoWord(t *testing.T) {
 	source := &changingReadings{}
 	strip := newFakeStrip()
 
@@ -367,10 +400,18 @@ func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
 	source.show(snapshotOf(printer.StateFinished, true, false, at.Add(tickEvery)))
 	reader.step(ctx, at.Add(tickEvery))
 
-	// Nothing was even offered to the writer: the decision refused it, so the writer has no event
-	// in its hand and no request to make.
-	if fired := pen.fired.Load(); fired != nil {
-		t.Fatalf("a strip was offered the %q event, want none", fired.word)
+	// What was offered to the writer is a colour and not a word: nothing to establish, nothing to push.
+	fired := pen.fired.Load()
+	if fired == nil {
+		t.Fatal("a strip was offered no event, and the finished moment's colour is what it shows")
+	}
+
+	if fired.word != "" || fired.plain == nil {
+		t.Fatalf("a strip was offered the %q event, want the moment's colour as a plain picture", fired.word)
+	}
+
+	if fired.plain.Colour != render.ColourFinished {
+		t.Fatalf("the strip was offered %+v, want the finished green", fired.plain)
 	}
 
 	waitFor(t, "the finished frame to reach the strip", func() bool {
@@ -385,9 +426,11 @@ func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
 		t.Fatalf("the finished frame on a strip is %+v, want 48 pixels in the finished colour with no rows", solid)
 	}
 
-	// The log still carries the transition. The event is what the light shows, not what the
-	// history records, and both come from the same comparison.
-	written.want(t, "wled-printer-status: the printer Morpheus went from PRINTING to FINISHED")
+	// The log still carries the transition, and now also what the moment did with it: the light is what
+	// it shows, the history is what changed, and both come from the same comparison.
+	written.want(t,
+		"wled-printer-status: the printer Morpheus went from PRINTING to FINISHED",
+		"wled-printer-status: the print-finished moment shows its colour for 60s, because this light cannot carry the word \"FINISHED\"")
 }
 
 // TestABorrowedSegmentIsNeverGivenTheEvent is the suppression, and it is tested where the two

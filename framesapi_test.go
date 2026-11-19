@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/text"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
@@ -436,3 +437,236 @@ func TestNoFrameDecidedYetIsRefusedRatherThanDrawn(t *testing.T) {
 		t.Fatalf("the refusal is %q, want NO_READING_YET", code)
 	}
 }
+
+// ---------------------------------------------------------------------------------------------
+// What the painter is showing, rather than what the frame says
+// ---------------------------------------------------------------------------------------------
+
+// publishedPicture is one answer's picture, decoded, with the body it came in.
+func publishedPicture(t *testing.T, under *framesUnderTest) ([]wled.RGB, int, int, map[string]any) {
+	t.Helper()
+
+	status, body := under.do(t)
+	if status != http.StatusOK {
+		t.Fatalf("the route answered %d: %v", status, body)
+	}
+
+	one := readObjects(t, body, "frames")[0]
+
+	pixels, width, height := pixelsOf(t, readObject(t, one, "image"))
+
+	return pixels, width, height, one
+}
+
+// TestAThumbnailUnderAPauseIsDark is §3's own sentence, and the case a thumbnail is most likely to get
+// wrong: the frame says printing — it is what the light was showing before somebody pressed the button
+// — and the light is off. A thumbnail drawn from the frame would show a green panel that is not on the
+// wall; the picture has to be the black that is.
+func TestAThumbnailUnderAPauseIsDark(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	publishPanel(t, 41, false, time.Second)
+
+	shape := bindingShape{geometry: livePanel, layout: defaultLayout(), laidOut: true, paused: true}
+	publishShape(panelBinding(), shape)
+
+	pixels, width, height, _ := publishedPicture(t, under)
+
+	if width != 256 || height != 64 {
+		t.Fatalf("the picture is %dx%d, want the panel's 256x64", width, height)
+	}
+
+	for index, colour := range pixels {
+		if colour != (wled.RGB{}) {
+			t.Fatalf("pixel %d is %+v on a paused light, want black", index, colour)
+		}
+	}
+}
+
+// TestAThumbnailInAWordedStateCarriesTheWord is the other half of "draw what the painter draws": a
+// state carrying a word beats the composer, so the thumbnail is the word and not the bar and digits.
+func TestAThumbnailInAWordedStateCarriesTheWord(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	publishPanel(t, 41, false, time.Second)
+
+	publishShape(panelBinding(), bindingShape{
+		geometry:   livePanel,
+		layout:     defaultLayout(),
+		laidOut:    true,
+		word:       "HELLO",
+		wordColour: render.ColourPrinting,
+	})
+
+	pixels, width, height, _ := publishedPicture(t, under)
+
+	want, err := text.Raster("HELLO", finishedWordScale, text.Geometry{Width: width, Height: height})
+	if err != nil {
+		t.Fatalf("rasterise HELLO: %v", err)
+	}
+
+	if got := pixelsIn(pixels, render.ColourPrinting); len(got) != len(want) {
+		t.Fatalf("the picture carries %d pixels of the word, want the %d the font draws", len(got), len(want))
+	}
+
+	for index, one := range want {
+		if pixels[one] != render.ColourPrinting {
+			t.Fatalf("pixel %d of the word is not the word's colour", index)
+		}
+	}
+}
+
+// TestAThumbnailOfAMomentsColourIsThatColour is a moment that shows a colour: for its length the light
+// is one colour and not the bar, and the thumbnail says the same.
+func TestAThumbnailOfAMomentsColourIsThatColour(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	publishPanel(t, 41, false, time.Second)
+
+	plain := render.Frame{Colour: render.ColourError, Total: 16384, Reason: render.ReasonProgress}
+	publishShape(panelBinding(), bindingShape{
+		geometry: livePanel, layout: defaultLayout(), laidOut: true, plain: &plain,
+	})
+
+	pixels, _, _, _ := publishedPicture(t, under)
+
+	for index, colour := range pixels {
+		if colour != render.ColourError {
+			t.Fatalf("pixel %d is %+v, want the moment's colour %+v", index, colour, render.ColourError)
+		}
+	}
+}
+
+// TestAThumbnailComposesWithTheBindingsOwnLayout is the fix for the gap the last wave's report named:
+// the picture is composed with the arrangement the *binding* uses, not with the instance's setting. The
+// runner here carries the default layout — a bar at the bottom, digits at scale five — and the binding
+// has been laid out with no bar and scale-three digits, so a thumbnail drawn from the setting would be
+// a picture of a light that does not exist.
+func TestAThumbnailComposesWithTheBindingsOwnLayout(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	frame := publishPanel(t, 41, false, time.Second)
+
+	own := layout{bar: false, percent: true, percentScale: 3, name: false, rotation: rotationTakeTurns}
+	publishShape(panelBinding(), bindingShape{geometry: livePanel, layout: own, laidOut: true})
+
+	pixels, width, height, _ := publishedPicture(t, under)
+
+	want, err := panelPicture{frame: frame, layout: own, at: framesAt}.draw(livePanel)
+	if err != nil {
+		t.Fatalf("draw the binding's own layout: %v", err)
+	}
+
+	if len(want) != width*height {
+		t.Fatalf("the composition is %d pixels and the picture %dx%d", len(want), width, height)
+	}
+
+	for index := range want {
+		if pixels[index] != want[index] {
+			t.Fatalf("pixel %d is %+v, want the binding's own layout's %+v", index, pixels[index], want[index])
+		}
+	}
+
+	// And it really is not the instance's layout: the default draws a bar, and this picture has none.
+	other, err := panelPicture{frame: frame, layout: defaultLayout(), at: framesAt}.draw(livePanel)
+	if err != nil {
+		t.Fatalf("draw the default layout: %v", err)
+	}
+
+	if len(other) == len(pixels) && other[0] == pixels[0] {
+		for index := range other {
+			if other[index] != pixels[index] {
+				return
+			}
+		}
+
+		t.Fatal("the picture is the instance's default layout, so this test proves nothing")
+	}
+}
+
+// TestAThumbnailNeverWritesToTheLight is the cost rule: the Overview asks once per binding per draw,
+// and a picture that reached for the controller would be a request per row per refresh on a light that
+// may not be answering at all. Nothing on this route has a controller to write to, and this pins that
+// the light is untouched across a draw.
+func TestAThumbnailNeverWritesToTheLight(t *testing.T) {
+	under := newFramesUnderTest(t, bindings{panelBinding()})
+
+	strip := newPanelStrip()
+	publishPanel(t, 41, false, time.Second)
+
+	publishShape(panelBinding(), bindingShape{
+		geometry:   livePanel,
+		layout:     defaultLayout(),
+		laidOut:    true,
+		word:       "HELLO",
+		wordColour: render.ColourPrinting,
+	})
+
+	for range 3 {
+		if status, body := under.do(t); status != http.StatusOK {
+			t.Fatalf("the route answered %d: %v", status, body)
+		}
+	}
+
+	if got := strip.wrote(); got != 0 {
+		t.Fatalf("drawing a thumbnail wrote %d frames to the light, want none", got)
+	}
+
+	if got := strip.settleWrites(); got != 0 {
+		t.Fatalf("drawing a thumbnail wrote %d brightness or power writes, want none", got)
+	}
+
+	if got := strip.ranPresets(); len(got) != 0 {
+		t.Fatalf("drawing a thumbnail ran the presets %v, want none", got)
+	}
+}
+
+// TestTheWriterReportsWhatItsLightIsHolding is the link between the two halves. watch.start publishes
+// shapeOf once per tick, and shapeOf is the only thing that knows what the light is holding besides the
+// frame: a state's word cannot be worked out from the frame at all, and a pause is the case whose
+// picture is black. So the assertion is on shapeOf, and the route's own reading of it is the two tests
+// above.
+func TestTheWriterReportsWhatItsLightIsHolding(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 22, 0, 0, 0, time.UTC)
+
+	table := &handTable{states: map[string]show{
+		printer.StatePrinting: {colour: render.ColourPrinting, origin: fromStore, word: "HELLO", holds: durationForever},
+	}}
+
+	strip := newPanelStrip()
+	pen := newWriter(strip, 128, quiet)
+
+	pushInto(pen)
+
+	watchOne(t, pen, printingAt(41, at), strip, table)
+
+	waitFor(t, "the writer to report the word its light is holding", func() bool { return pen.shapeOf().word == "HELLO" })
+
+	held := pen.shapeOf()
+	if held.wordColour != render.ColourPrinting {
+		t.Fatalf("the word is reported in %+v, want the state's colour", held.wordColour)
+	}
+
+	if !held.laidOut {
+		t.Fatal("the shape says no layout was published, and the writer composes with one")
+	}
+
+	if held.paused {
+		t.Fatal("the writer reports a pause and none is set")
+	}
+
+	// A pause switches the light off, and what the writer reports says so: black is what is on the wall.
+	//
+	// The pause goes into the same table rather than into a second one, because the writer is running:
+	// swapping its store underneath it is a race, and the store it has is the one the process would
+	// have written a pause into.
+	pausedAt := at.Add(time.Minute)
+	table.pausing(storedPause{
+		Scope: pauseGlobal, Chosen: pause10m, SetAt: pausedAt, Expires: ptr(pausedAt.Add(10 * time.Minute)),
+	})
+
+	waitFor(t, "the pause to be reported", func() bool { return pen.shapeOf().paused })
+}
+
+// ptr is a pointer to one value, for the expiry a pause carries.
+func ptr[T any](value T) *T { return &value }

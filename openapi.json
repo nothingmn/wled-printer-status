@@ -439,7 +439,7 @@
       "put": {
         "operationId": "change-moment",
         "summary": "Set what one printer on one light shows for one moment",
-        "description": "Writes one entry of the (light, printer) moment table and replaces the entry that pair had. Nothing is sent to the light: a write here is a record the screen edits, and a lamp that is unplugged is exactly when somebody is standing in front of it with a phone, so an edit is kept even when the light is not answering. For the same reason a preset name in which is stored as written and is not checked against the light — a write that failed because a lamp was off would be the worse defect. shows and which are judged together: a Colour names a state from the state table, a Word is the text to draw, a Preset names one of the light's own presets, and Nothing names nothing, and a which that does not belong to its shows is refused with the reason rather than coerced. Nothing else reads this table yet: this build fires one moment, the finished word, so the entry is the record the Events screen edits and not yet a change on the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one entry of the (light, printer) moment table and replaces the entry that pair had. Nothing is sent to the light: a write here is a record the screen edits, and a lamp that is unplugged is exactly when somebody is standing in front of it with a phone, so an edit is kept even when the light is not answering. For the same reason a preset name in which is stored as written and is not checked against the light — a write that failed because a lamp was off would be the worse defect. shows and which are judged together: a Colour names a state from the state table, a Word is the text to draw, a Preset names one of the light's own presets, and Nothing names nothing, and a which that does not belong to its shows is refused with the reason rather than coerced. Nothing else reads this table yet: every moment in the table is fired on its transition, on every binding whose printer sits on that light, for as long as its `for` says. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1035,7 +1035,7 @@
       "put": {
         "operationId": "change-layout",
         "summary": "Set the layout one binding composes with",
-        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more; remaining may only be false, because this build draws no time remaining and a key that asks for a picture it will not draw is refused rather than ignored. side-by-side is stored and not yet drawn: the painter still alternates, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more; remaining may only be false, because this build draws no time remaining and a key that asks for a picture it will not draw is refused rather than ignored. side-by-side is drawn: the digits sit on the left and the job's name on the right, cut to the room the digits leave, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LayoutRequest"}}}
@@ -1138,7 +1138,7 @@
       "get": {
         "operationId": "list-windows",
         "summary": "The brightness windows, judged at this instant in the timezone setting's zone",
-        "description": "The list the Brightness screen edits, in the operator's order, with the window in force at the instant of the answer named beside it. A window is judged in the IANA zone the timezone setting names and never in this process's own clock, which inside the Prusa Connect container is almost always UTC: a window judged there fires hours away from the evening it was written for, and the answer therefore always carries judged_in and now so that a person can check. A window whose end precedes its start wraps midnight and is accepted; the one whose two ends are the same is refused, because that is either a whole day or no time at all. Overlapping windows are allowed and the first one wins. This build still runs the brightness on the light from the brightness_schedule setting, so this is the list the screen edits and not yet a change on the light. The host takes view_resource on the module's instance before this is called.",
+        "description": "The list the Brightness screen edits, in the operator's order, with the window in force at the instant of the answer named beside it. A window is judged in the IANA zone the timezone setting names and never in this process's own clock, which inside the Prusa Connect container is almost always UTC: a window judged there fires hours away from the evening it was written for, and the answer therefore always carries judged_in and now so that a person can check. A window whose end precedes its start wraps midnight and is accepted; the one whose two ends are the same is refused, because that is either a whole day or no time at all. Overlapping windows are allowed and the first one wins. This build still runs the brightness on the light from the brightness_schedule setting, so this is the list that decides the light's brightness, judged in the module's own timezone setting. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The windows, judged.",
@@ -1989,7 +1989,7 @@
       },
       "Layout": {
         "type": "object",
-        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, and whether the two take turns or sit side by side. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. remaining is always false and is reported rather than omitted, because the approved mockup draws the control and this build draws no time remaining. rotation_note is present only when the rotation was set to side-by-side, and says that this build still takes turns: the value is stored and not yet drawn.",
+        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, and whether the two take turns or sit side by side. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. remaining is always false and is reported rather than omitted, because the approved mockup draws the control and this build draws no time remaining. rotation_note is present only when the rotation was set to side-by-side, and says what that arrangement draws: the digits on the left at a capped scale, the job's name on the right cut to the room that is left.",
         "properties": {
           "printer": {"type": "string", "description": "The binding's name: the host's device id for the printer it shows."},
           "light": {"type": "string", "description": "The light the binding sits on."},
@@ -2007,7 +2007,7 @@
           "percent_scale_origin": {"type": "string", "enum": ["default", "store"]},
           "name": {"type": "boolean", "description": "Whether the job's own name is drawn."},
           "name_origin": {"type": "string", "enum": ["default", "store"]},
-          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side is stored and not yet drawn."},
+          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side puts the digits on the left and the job's name on the right, cut to the room that is left."},
           "rotation_origin": {"type": "string", "enum": ["default", "store"]},
           "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel, in seconds."},
           "rotate_seconds_origin": {"type": "string", "enum": ["default", "store"]},
@@ -2029,7 +2029,7 @@
           "percent_scale": {"type": "integer", "enum": [3, 4, 5], "description": "The scale the digits are drawn at."},
           "name": {"type": "boolean", "description": "Draw the job's own name."},
           "remaining": {"type": "boolean", "description": "May only be false: this build draws no time remaining, so true is refused rather than ignored."},
-          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side is stored and not yet drawn."},
+          "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side puts the digits on the left and the job's name on the right, cut to the room that is left."},
           "rotate_seconds": {"type": "integer", "minimum": 1, "description": "How long each half holds the panel."}
         }
       },

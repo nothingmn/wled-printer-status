@@ -157,6 +157,13 @@ type strip interface {
 	SetPower(ctx context.Context, on bool) error
 	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
 	RestoreSegment(ctx context.Context, segment wled.Segment) error
+	// RunPreset runs one of the controller's own presets, by the name WLED's interface gives it.
+	//
+	// It is here because a moment may name one (docs/product-requirements.md §2.3): a preset
+	// carries its own segments, brightness and LED map, so the light renders it and this module
+	// only names it. The name is resolved to a preset id by the client, from the controller's own
+	// /presets.json, so no id is ever invented here.
+	RunPreset(ctx context.Context, name string) error
 }
 
 // writer sends the newest frame it has been handed to one controller, and
@@ -222,6 +229,17 @@ type writer struct {
 	// event's own hold — the picture, its pixels, the repeat that keeps live mode alive and the
 	// deadline — because a state's word is the same kind of picture as the finished word.
 	spoken *heldEvent
+
+	// holding is what this light is showing *besides* the steady frame, published for the Overview's
+	// thumbnail: a state's word, a moment's colour, a preset the light is running, or a pause that
+	// switched it off.
+	//
+	// It is an atomic pointer because the writer is the only goroutine that paints and the
+	// thumbnail's route is another: what the light is showing has to be readable without touching
+	// the writer's own state. Nothing else about a picture is read this way — the frame, the
+	// geometry and the span are published by the driver — and this is here because these four are
+	// decided inside the writer and nowhere else.
+	holding atomic.Pointer[holding]
 
 	// saidWord is the last thing this writer said about a word it could not draw, so that a word
 	// too wide for its panel costs one line and not one a second.
@@ -318,6 +336,25 @@ type writer struct {
 	composed *composedPanel
 
 	wake chan struct{}
+}
+
+// holding is what one light is showing instead of its steady frame, as the thumbnail route reads it.
+//
+// Exactly one of the four is ever set, and the zero value means "the steady frame is what is on the
+// light". A pause wins over all of them, because a paused light is off and shows nothing at all.
+type holding struct {
+	// paused says a pause switched this light off. The thumbnail is black, which is what is on the
+	// wall — §3's own words: "The thumbnail shows black because black is what is on the wall."
+	paused bool
+	// word is the state table's word the panel is holding, in its own colour.
+	word   string
+	colour wled.RGB
+	// plain is the whole picture a moment that shows a colour put on the light.
+	plain *render.Frame
+	// preset is one of the light's own presets, running for a moment. A thumbnail cannot reconstruct
+	// it — the light draws it and this firmware cannot read pixels back — so the route says so in a
+	// sentence rather than drawing a picture of a light showing something else.
+	preset string
 }
 
 // composedPanel is the picture the panel is holding as pixels this module drew, and when the next
@@ -528,10 +565,10 @@ func (w *writer) run(ctx context.Context) {
 		// window — because it is not a frame: it holds the light against the frames the driver
 		// keeps deciding. An event that arrives while the controller is down waits for the
 		// window like everything else, and its hold starts when it lands, not when it was fired.
-		w.takeEvent()
+		w.takeEvent(ctx)
 
 		if w.held != nil {
-			if wait := w.held.until.Sub(w.now()); wait > 0 {
+			if wait, holding := w.held.holdLeft(w.now(), w.standing.Load()); holding {
 				if !w.held.painted {
 					if err := w.deliverEvent(ctx, w.held.event); err != nil {
 						if ctx.Err() != nil {
@@ -561,7 +598,7 @@ func (w *writer) run(ctx context.Context) {
 					last, lastOK = nil, w.now()
 
 					w.held.painted = true
-				} else if !w.held.repush.After(w.now()) {
+				} else if w.held.frame != nil && !w.held.repush.After(w.now()) {
 					// The word is a still picture and the controller stops drawing it after
 					// realtimeTimeout of silence, so the same frame goes out again once a second
 					// for the length of the hold. A repeat that fails is one line and the hold
@@ -607,6 +644,18 @@ func (w *writer) run(ctx context.Context) {
 			// The hold is over. An event that pushed pixels has to be proved to have let the
 			// light go, and that proof is a read of the controller taken after the frame below
 			// has been written — see handedBack.
+			//
+			// A preset's moment is the other half of a capture taken when it began: the light goes
+			// back exactly as it was found before the steady picture is written over it, so that
+			// what the operator had is what the moment ends on rather than what this module drew.
+			if w.held.took != nil {
+				w.giveLightBack(ctx, w.held.took)
+			}
+
+			// Whatever the hold was showing, it is not showing it any more: the frame painted below
+			// is what the light comes back to, and the thumbnail follows it.
+			w.holding.Store(nil)
+
 			if w.held.frame != nil {
 				w.handedBack = true
 			}
@@ -1155,7 +1204,29 @@ func (w *writer) paint(ctx context.Context, frame render.Frame) error {
 // off realtime for the rest of the day: a composed frame is held live, and there is no reason to
 // hold a light live to show one colour.
 func (w *writer) drawablePanel(frame render.Frame) bool {
-	return drawsComposed(frame, w.panelOf(), w.layout)
+	return drawsComposed(frame, w.panelOf(), w.composing())
+}
+
+// composing is the arrangement this binding draws a panel with, and it is the one place that decides
+// between the store's table and the `layout` setting.
+//
+// The store's row for this binding wins when there is one — that is what the Layout screen edits, and
+// a picture composed from anything else would be a screen that lies about the wall. A binding with no
+// row composes with the `layout` setting, which is the migration source exactly as the brightness
+// windows are (docs/product-requirements.md §4): an install that has never opened the Layout screen
+// keeps the picture it has been drawing, to the byte.
+//
+// It is asked on every pass rather than kept, for the reason show.go gives about every other table:
+// the document is edited while the process runs, and a value cached at start is a panel whose layout
+// stops matching the screen the moment somebody changes it.
+func (w *writer) composing() layout {
+	if w.store != nil {
+		if one, held := w.store.layout(); held {
+			return one
+		}
+	}
+
+	return w.layout
 }
 
 // drawsComposed is the rule above as a function of its three facts, so that the one other caller
@@ -1167,14 +1238,31 @@ func drawsComposed(frame render.Frame, geometry panel, shape layout) bool {
 }
 
 // shapeOf is what this writer draws on, as GET /frames needs it: the geometry the controller
-// reported, and the run of a segment it borrowed.
+// reported, the run of a segment it borrowed, the arrangement it composes with, and what its light is
+// showing instead of the steady frame.
+//
+// It is read by the driver's goroutine on every tick, so every field it touches is either an atomic
+// pointer or a value the driver already owns. Nothing here writes to the light, and nothing here takes
+// a lock: the Overview asks once per binding per draw, and a thumbnail must never cost a request.
 func (w *writer) shapeOf() bindingShape {
-	return bindingShape{geometry: w.panelOf(), span: w.span.Load()}
+	shape := bindingShape{
+		geometry: w.panelOf(),
+		span:     w.span.Load(),
+		layout:   w.composing(),
+		laidOut:  true,
+	}
+
+	if held := w.holding.Load(); held != nil {
+		shape.paused, shape.word, shape.wordColour = held.paused, held.word, held.colour
+		shape.plain, shape.preset = held.plain, held.preset
+	}
+
+	return shape
 }
 
 // pictureOf is a frame as the operator's layout draws it at this moment.
 func (w *writer) pictureOf(frame render.Frame) panelPicture {
-	return panelPicture{frame: frame, layout: w.layout, at: w.now()}
+	return panelPicture{frame: frame, layout: w.composing(), at: w.now()}
 }
 
 // enterComposed paints a composed picture for the first time, through the event's own painter.
@@ -1389,6 +1477,18 @@ func (w *writer) release() {
 	// nothing, and one that did is done with it whatever else this function returns early from.
 	w.closePixels()
 
+	// A light a preset moment took is put back before the borrowed segment is, and on a context of
+	// its own for the same reason: the one that ended this watch is already cancelled. A writer that
+	// stops mid-moment is a writer whose presets would otherwise outlive it — the light would keep
+	// running an animation this module switched on and no longer knows about.
+	if w.held != nil && w.held.took != nil {
+		giveBack, cancel := context.WithTimeout(context.Background(), wled.DefaultTimeout)
+		w.giveLightBack(giveBack, w.held.took)
+		cancel()
+
+		w.held.took = nil
+	}
+
 	if w.borrowed == nil {
 		return
 	}
@@ -1400,6 +1500,83 @@ func (w *writer) release() {
 	defer cancel()
 
 	w.handBack(ctx)
+}
+
+// takenLight is a whole controller as it was found before a preset moment took it: its power, its
+// brightness and every segment the controller was drawing.
+//
+// It is not `borrowed`, and the difference is what each promise is about. `borrowed` is one segment
+// of somebody else's strip, kept for the life of the writer because the module draws in it and owes
+// it back on the way out. This is the whole of the operator's own light, kept for the length of one
+// moment: a preset carries its own segments, brightness and LED map (docs/design/v2/events/), so
+// running one replaces everything the light was doing, and the moment is not over until all of it is
+// back. A preset moment on a writer that borrows a zone is refused before any of this runs — there is
+// no part of somebody else's strip this module may take whole.
+type takenLight struct {
+	on         bool
+	brightness int
+	segments   []wled.Segment
+}
+
+// takeLight reads the controller once and keeps what it was doing.
+func (w *writer) takeLight(ctx context.Context) (*takenLight, error) {
+	state, err := w.light.State(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the light could not be read before a preset ran, so the preset was not run: %w", err)
+	}
+
+	return &takenLight{
+		on:         state.On,
+		brightness: state.Brightness,
+		segments:   append([]wled.Segment(nil), state.Segments...),
+	}, nil
+}
+
+// giveLightBack puts a whole light back exactly as it was found: every segment, then the brightness,
+// then the power.
+//
+// That order is deliberate. This controller remembers a segment's bounds and colours in its own
+// state, so the segments go back first — while the strip is still on, so that what is written is
+// what is drawn — and the power last, because a restore that switched the light on before the
+// pictures were back would show the moment's preset for one more frame. A give-back that fails is
+// said once and not retried: the steady picture is written over the light in the same pass anyway,
+// and a retry loop against a controller that will not take a body is the storm this module was
+// taught not to make.
+func (w *writer) giveLightBack(ctx context.Context, held *takenLight) {
+	if held == nil {
+		return
+	}
+
+	err := w.gate.do(func() error {
+		for _, segment := range held.segments {
+			if restoreErr := w.light.RestoreSegment(ctx, segment); restoreErr != nil {
+				return restoreErr
+			}
+		}
+
+		if levelErr := w.light.SetBrightness(ctx, held.brightness); levelErr != nil {
+			return levelErr
+		}
+
+		return w.light.SetPower(ctx, held.on)
+	})
+	if err != nil {
+		w.logf("%s: the light a preset moment took was not put back as it was found: %v", name, err)
+
+		return
+	}
+
+	w.logf("%s: put the light back as the preset moment found it: %d segments, brightness %d, %s",
+		name, len(held.segments), held.brightness, powerPhrase(held.on))
+}
+
+// powerPhrase says whether the light was on when it was taken, in a log line's words.
+func powerPhrase(on bool) string {
+	if on {
+		return "on"
+	}
+
+	return "off"
 }
 
 // coloursPhrase names a segment's colours in a log line: one red,green,blue triple per colour,
@@ -1758,7 +1935,11 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 	// What the printer did is said before the frame is decided, because the frame is
 	// only what the light is asked to show about it. The two are different questions
 	// and the log answers the first.
-	d.note(snapshot)
+	//
+	// note answers with the moments that change stands for, and they are fired below rather than
+	// here: a moment that shows a colour shows *this tick's* colour, and the frame does not exist
+	// yet.
+	moments := d.note(snapshot)
 
 	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
 
@@ -1768,6 +1949,16 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 	// the wall.
 	shown, since := d.showing(snapshot, frame, at)
 	frame.Colour = d.colourOf(shown, frame.Colour)
+
+	// The moment table acts after the frame, on the same tick, so that what a moment shows and what
+	// the steady picture shows are the same colour rules. The event takes the light from the writer
+	// when it reaches it; the scene below still goes into the slot, because the steady picture is
+	// what the light returns to when the moment's length runs out.
+	//
+	// The state travels with it because a moment with no length — "until it resumes", "until it is
+	// cleared" — ends when the state it was fired for moves, and the writer's standing scene is the
+	// newest tick rather than this one.
+	d.fire(moments, frame, shown)
 
 	d.pub(snapshot, frame)
 	d.writer.submitScene(scene{frame: frame, state: shown, since: since})
@@ -1828,9 +2019,10 @@ func (d *driver) colourOf(state string, fallback wled.RGB) wled.RGB {
 // note writes one line for each thing about the printer that has changed since the last
 // turn, and nothing at all for a turn that finds it as it was.
 //
-// It also fires the event a change of state word stands for, when the pair is one the event
-// list holds — the log is what changed and the light is what a person walking past sees, and
-// both come from the same comparison, which is why they are decided in one place.
+// It answers with the moments those changes stand for, in the order they are named in the table, so
+// that the caller fires them against the frame it is about to decide. The log is what changed and the
+// light is what a person walking past sees, and both come from the same comparison, which is why they
+// are decided in one place.
 //
 // Four things are worth a line: the state word moving, the host losing and regaining its
 // session with the printer, and the reading going stale or live again. Everything else is
@@ -1841,7 +2033,7 @@ func (d *driver) colourOf(state string, fallback wled.RGB) wled.RGB {
 //
 // Staleness is a line of the first kind except on a job that is over, where it is said
 // once and the dips that follow are not: see the rule at the end of this method.
-func (d *driver) note(snapshot printer.Snapshot) {
+func (d *driver) note(snapshot printer.Snapshot) []string {
 	if !d.told.ever {
 		d.told = transitions{
 			ever:      true,
@@ -1851,8 +2043,10 @@ func (d *driver) note(snapshot printer.Snapshot) {
 			stale:     snapshot.Stale,
 		}
 
-		return
+		return nil
 	}
+
+	moments := make([]string, 0, 2)
 
 	if snapshot.Connected != d.told.connected {
 		d.told.connected = snapshot.Connected
@@ -1870,11 +2064,16 @@ func (d *driver) note(snapshot printer.Snapshot) {
 				d.told.state, snapshot.State.Value)
 
 			// The word moved, so the light is told what happened as well as what is: the log
-			// line above is for a person reading the history, and the event is for a person
+			// line above is for a person reading the history, and the moment is for a person
 			// walking past the panel. The frame the driver hands the writer a moment later is
-			// still the steady picture, and the writer goes back to it when the event's own
+			// still the steady picture, and the writer goes back to it when the moment's own
 			// duration is up.
-			d.fire(d.told.state, snapshot.State.Value)
+			//
+			// The pair is turned into a moment by momentFor, which is where the whole of that
+			// mapping lives — this method notices a change and no more than that.
+			if id, isMoment := momentFor(d.told.state, snapshot.State.Value); isMoment {
+				moments = append(moments, id)
+			}
 		}
 
 		d.told.state, d.told.hadState = snapshot.State.Value, true
@@ -1894,29 +2093,65 @@ func (d *driver) note(snapshot printer.Snapshot) {
 		case snapshot.Stale:
 			d.told.stale = true
 			d.logf("%s: the reading from %s is stale", name, printerPhrase(snapshot))
+
+			// The printer stopped reporting, and the moment table has a row for exactly that:
+			// "the printer stopped reporting while a job was live". A printer whose last word says
+			// the job is over is not quiet about a job — it is quiet about nothing — so that case
+			// fires nothing, which is the same exception the paint keeps.
+			if !snapshot.Terminal() {
+				moments = append(moments, momentPrinterWentQuiet)
+			}
 		case !snapshot.Terminal():
 			d.told.stale = false
 			d.logf("%s: the reading from %s is live again", name, printerPhrase(snapshot))
 		}
 	}
+
+	return moments
 }
 
-// fire offers the light an event for a change of state word, when the change is one the light
-// shows as an event rather than as a colour.
+// fire offers the light what the moment table says a set of transitions shows, in the order the
+// transitions happened, against the frame this tick decided.
 //
-// The decision is pure — eventFor takes the two words and the controller's geometry and returns
-// a picture and a duration — so nothing here reads a clock or a panel: a test calls eventFor
-// directly, and this method exists only so the one place that notices a transition is also the
-// one place that fires what follows from it.
+// The table is asked per moment, on the driver's own goroutine, and the answer is the binding's own
+// row — the (light, printer) pair — with the code's default where the document holds none. A moment
+// that is switched off does nothing at all, and a moment whose `shows` is Nothing does nothing at
+// all: not a repaint, not a log line, nothing. That is what the screen's own "Nothing" means.
 //
-// Only a transition reaches it, which is what makes a restart quiet: the driver's first look
-// fills in what the printer was without reporting a change, so a module that comes back up
-// beside a printer that has already finished shows the steady finished frame and no word.
-func (d *driver) fire(from, to string) {
-	ev, ok := eventFor(from, to, d.writer.panelOf())
-	if !ok {
+// A refusal — a preset named on a borrowed zone, a colour that is not a state, a word the font cannot
+// spell — is one line and no picture, and the steady frame the driver already submitted stands. A
+// moment that failed must not take the light down with it.
+func (d *driver) fire(moments []string, frame render.Frame, state string) {
+	for _, id := range moments {
+		d.fireMoment(id, frame, state)
+	}
+}
+
+// fireMoment is one moment, acted on as the table says.
+func (d *driver) fireMoment(id string, frame render.Frame, state string) {
+	entry := momentDefault(id)
+	if d.store != nil {
+		entry, _ = d.store.moment(id)
+	}
+
+	if !entry.Enabled {
 		return
 	}
+
+	ev, what, err := d.writer.momentOf(entry, frame)
+	if err != nil {
+		d.logf("%s: the %s moment showed nothing: %v", name, id, err)
+
+		return
+	}
+
+	if ev.showsNothing() {
+		return
+	}
+
+	d.logf("%s: the %s moment shows %s", name, id, what)
+
+	ev.state = state
 
 	d.writer.fire(ev)
 }

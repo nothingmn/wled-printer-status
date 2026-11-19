@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,6 +73,16 @@ type fakeStrip struct {
 	// powers is every power write the controller took, in order, so that a test can tell a light
 	// switched off from one left alone.
 	powers []bool
+
+	// levels is every brightness the controller was asked for, in order.
+	levels []int
+
+	// presets is the controller's own preset table as names, and nil means "takes whatever it is
+	// handed" — a light whose table the test does not care about. presetsRun is every preset the
+	// controller was asked to run, in order, and presetErr is what every run fails with.
+	presets    []string
+	presetsRun []string
+	presetErr  error
 }
 
 func newFakeStrip() *fakeStrip {
@@ -82,13 +93,23 @@ func (f *fakeStrip) Info(context.Context) (wled.Info, error) {
 	return wled.Info{LEDCount: 48}, nil
 }
 
-func (f *fakeStrip) SetBrightness(context.Context, int) error {
+func (f *fakeStrip) SetBrightness(_ context.Context, level int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.settled++
+	f.levels = append(f.levels, level)
 
 	return nil
+}
+
+// brightnessWrites is every brightness the controller was asked for, in order. A preset moment's
+// give-back writes the value the light was found at, so this is how a test reads that promise.
+func (f *fakeStrip) brightnessWrites() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]int(nil), f.levels...)
 }
 
 func (f *fakeStrip) SetPower(_ context.Context, on bool) error {
@@ -227,6 +248,38 @@ func (f *fakeStrip) RestoreSegment(_ context.Context, segment wled.Segment) erro
 	f.restores = append(f.restores, segment)
 
 	return nil
+}
+
+// RunPreset records one of the controller's own presets being run, by the name a moment named.
+//
+// A fake with no `presets` set takes any name, which is what a controller holding whatever the test
+// named looks like; the tests about a name the light does not hold set `presets` and get the refusal
+// the real client gives.
+func (f *fakeStrip) RunPreset(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.presetErr != nil {
+		return f.presetErr
+	}
+
+	if f.presets != nil {
+		if !slices.Contains(f.presets, name) {
+			return fmt.Errorf("%w: %q", wled.ErrNoSuchPreset, name)
+		}
+	}
+
+	f.presetsRun = append(f.presetsRun, name)
+
+	return nil
+}
+
+// ranPresets is every preset the controller was asked to run, in order.
+func (f *fakeStrip) ranPresets() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.presetsRun...)
 }
 
 // givenBack is every segment the controller was given back, as a copy.

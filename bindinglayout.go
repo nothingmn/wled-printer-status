@@ -20,12 +20,12 @@
 // control, and `rotation`, which is §2.5's "rotation of `take-turns` or **`side-by-side`**" and the
 // mockup's *"take turns or side by side — both, configurable"*.
 //
-// # `rotation` is stored, and nothing draws it
+// # `rotation` is drawn
 //
-// `side-by-side` needs a build: the painter alternates today, and that is what ships. So the value
-// is validated, kept and reported, and every answer that carries it says in one line that this
-// build still takes turns. Refusing it instead would be a screen that cannot record the operator's
-// decision; drawing it would be a picture this build cannot draw.
+// `side-by-side` is built: the painter puts the digits on the left and the job's name on the
+// right, cut to the room the digits leave, and it says so in one line on every answer because the
+// digits give up a scale there (see layout.go's `beside`). `take-turns` is what ships and what a
+// binding with no row of its own composes with.
 //
 // # Absent is a default, not a zero
 //
@@ -35,6 +35,13 @@
 // answer carries the origin it came from. That is what lets a screen offer "reset" on exactly the
 // values that have something to reset, and it is what guarantees that a layout nobody edited is
 // reported as the default rather than as an empty object.
+//
+// # And it is what the painter reads
+//
+// `bindingLayout.shape` is the one conversion from this table into the value the composer draws
+// with, and show.go is the one reader that asks for it. A binding with no row is not this file's
+// business: the painter then composes with the `layout` setting, which is the migration source —
+// the same shape the brightness windows keep (docs/product-requirements.md §4).
 package main
 
 import (
@@ -181,6 +188,25 @@ func (l storedLayout) resolved() bindingLayout {
 	}
 
 	return got
+}
+
+// shape is this layout as the composer draws it: the one conversion from the stored table into the
+// value layout.go's `panelPicture` reads.
+//
+// It is a method rather than a function of eight arguments for the reason resolved is one: the
+// field names on both sides are close enough to invite a mis-ordered literal, and one conversion is
+// one place to get wrong instead of three.
+func (l bindingLayout) shape() layout {
+	return layout{
+		bar:          l.bar,
+		barBand:      l.barBand,
+		barRows:      l.barRows,
+		percent:      l.percent,
+		percentScale: l.percentScale,
+		name:         l.name,
+		rotation:     l.rotation,
+		rotate:       l.rotate,
+	}
 }
 
 // checkStoredLayout refuses a layout this build cannot act on, naming the field and the value.
@@ -440,13 +466,15 @@ func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored 
 	}
 
 	if resolved.rotation == rotationSideBySide {
-		said.RotationNote = rotationStoredNote
+		said.RotationNote = rotationSideBySideNote
 	}
 
 	return said
 }
 
-// rotationStoredNote is what every answer about a side-by-side rotation says, because the value is
-// kept and the picture is not what the value asks for.
-const rotationStoredNote = "side-by-side is stored and this build still takes turns: the percentage holds the panel and " +
-	"then the name takes it. Drawing them side by side is a change to the painter, and it has not been made."
+// rotationSideBySideNote is what every answer about a side-by-side rotation says, because the
+// picture it draws is not the same scale the take-turns picture uses and a screen that showed the
+// stored scale without saying so would be describing a picture nobody will see.
+const rotationSideBySideNote = "side by side, the digits sit on the left and the job's name on the right, cut to the room " +
+	"that is left: the digits are drawn at scale 4 at most there (3 when the text band is short), so that the name " +
+	"has columns to be read in. A name with less than three glyphs of room is not drawn at all."

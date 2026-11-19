@@ -357,6 +357,34 @@ func momentsOn(config storedConfig, light, printer string) ([]momentRowOn, error
 	return rows, nil
 }
 
+// momentsStored is every stored moment row, checked, for a reader that looks its own rows up by the
+// (light, printer) key after one read of the document.
+//
+// It exists beside momentsOn for the reason rowsOf exists beside the state routes: a route answers
+// about one (light, printer) pair and this answers about the document, and both judge every row so
+// that a document with a bad line in it is refused rather than half-obeyed. A row about a moment this
+// build no longer has is left out here and reported by unknownMoments, exactly as momentsOn does.
+func momentsStored(config storedConfig) ([]storedMoment, error) {
+	kept := make([]storedMoment, 0, len(config.Moments))
+
+	for _, one := range config.Moments {
+		definition, known := findMoment(one.Moment)
+		if !known {
+			continue
+		}
+
+		if err := checkStoredMoment(one); err != nil {
+			return nil, err
+		}
+
+		one.Moment = definition.id
+
+		kept = append(kept, one)
+	}
+
+	return kept, nil
+}
+
 // storedMomentFor is the row a document holds for one (light, printer) and one moment.
 func storedMomentFor(config storedConfig, light, printer, moment string) (storedMoment, bool) {
 	for _, one := range config.Moments {

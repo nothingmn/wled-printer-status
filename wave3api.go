@@ -37,16 +37,19 @@ import (
 
 // The notes these routes carry beside the store note, each saying what the write does not yet do.
 const (
-	// layoutDrawnNote says plainly that the layout table is a record this build does not compose
-	// from: the picture on a panel still comes from the `layout` setting.
-	layoutDrawnNote = "This build composes the panel from the layout setting and not from this table, so this is the " +
-		"record the Layout screen edits and not yet a change on the light."
+	// layoutDrawnNote says what the layout table now does: it is the picture. A binding with no row
+	// of its own composes with the `layout` setting, which is the migration source, so an install
+	// that never opened this screen keeps the picture it has been drawing.
+	layoutDrawnNote = "This build composes the panel from this table: the layout written here is what the light draws. " +
+		"A binding with no layout of its own composes with the layout setting, which is what an install that has " +
+		"never opened this screen keeps drawing."
 
 	// layoutFitNote is §2.5's arithmetic, said in one line on every layout answer because it is the
 	// rule a screen has to be able to explain: a layout that will not fit is refused rather than
 	// cropped, and the refusal happens where the panel's own height is known.
 	layoutFitNote = "Whether a layout fits the panel it is pointed at is judged when the frame is drawn, against the " +
-		"panel's own reported height: a bar that leaves no room for the text is refused there rather than cropped."
+		"panel's own reported height: a bar that leaves no room for the text, or a percentage scale whose digits " +
+		"do not fit the band it leaves, is refused there rather than cropped."
 
 	// pauseNothingChangedNote is what a resume says when there was nothing to resume, so that a
 	// screen can tell "already running" from "no such binding".
@@ -348,7 +351,7 @@ func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if one.Rotation != nil && strings.EqualFold(strings.TrimSpace(*one.Rotation), rotationSideBySide) {
-		body["note"] = persistedNote + " " + layoutDrawnNote + " " + rotationStoredNote
+		body["note"] = persistedNote + " " + layoutDrawnNote + " " + layoutFitNote + " " + rotationSideBySideNote
 	}
 
 	answer(w, http.StatusOK, body)

@@ -114,6 +114,40 @@ const (
 	// *"taking up the TOP OR BOTTOM 1 to X pixels across"*.
 	bandTop    = "top"
 	bandBottom = "bottom"
+
+	// sideMargin is the columns the side-by-side arrangement leaves at the left edge, sideGap
+	// the columns between the digits' box and the name's, and sideRight is what it leaves at
+	// the right — the mockup's own 10, 16 and 4, which are the 30 it takes off the panel's
+	// width before it divides for the name.
+	sideMargin = 10
+	sideGap    = 16
+	sideRight  = 4
+
+	// sideNameScale is the scale the name is drawn at beside the digits: two, the same
+	// nameScaleMax, because the name is the part that has to fit rather than the part read from
+	// across the room.
+	sideNameScale = 2
+
+	// sideDigitsScale is the largest scale the digits take when they share the row with the
+	// name, and sideDigitsScaleShort the largest when the text band is too short for that.
+	//
+	// This is the mockup's own rule — `Math.min(pctScale, freeH>=28?4:3)` — and it is a cap
+	// rather than a fit: side by side, the name's fourteen rows and the digits' box have to sit
+	// on one line, and the digits give up a scale so that the name has room to be read. The
+	// operator approved the picture; the arithmetic is his mockup's.
+	sideDigitsScale      = 4
+	sideDigitsScaleShort = 3
+
+	// sideBandForFull is the text band below which the digits drop to sideDigitsScaleShort.
+	sideBandForFull = 28
+
+	// sideNameMin is the fewest glyphs of a job's name the side-by-side arrangement will draw.
+	//
+	// Three, which is the mockup's `chars>2`, and below it the name is **not drawn at all** —
+	// not cut to two glyphs and not ellipsised. Two letters of a slicer's file name identify
+	// nothing, and this font's only punctuation is a full stop, so there is no mark to make of
+	// it. The digits stand alone on that panel, which is what the mockup draws.
+	sideNameMin = 3
 )
 
 // layout is a panel's arrangement: which parts are drawn and where the bar sits.
@@ -130,9 +164,22 @@ type layout struct {
 	barRows int
 	// percent draws the job's progress in digits, such as 41%.
 	percent bool
+	// percentScale pins the digits to one of scales 3, 4 and 5, and 0 means "as large as the
+	// text band allows, up to percentScaleMax" — which is what the `layout` setting says,
+	// because it has no key for the scale, and what this module drew before the Layout screen
+	// could pin one.
+	//
+	// A pinned scale is a fit question and it is refused rather than shrunk: see bandsOn.
+	percentScale int
 	// name draws the job's own name, uppercased and cut to what fits.
 	name bool
-	// rotate is how long each half holds the panel before the other takes it.
+	// rotation is how the digits and the name share the text band: rotationTakeTurns, where one
+	// holds the panel and then the other, or rotationSideBySide, where the digits sit on the
+	// left and the name on the right. Empty is take-turns, which is what the setting says and
+	// what this module drew before side-by-side was built.
+	rotation string
+	// rotate is how long each half holds the panel before the other takes it, and is unused by
+	// side-by-side, where both are up at once.
 	rotate time.Duration
 }
 
@@ -145,7 +192,11 @@ func defaultLayout() layout {
 		barRows: defaultBarRows,
 		percent: true,
 		name:    true,
-		rotate:  defaultRotateSeconds * time.Second,
+		// Empty is take-turns: the setting has no key for the rotation, so what it parses to is
+		// the zero value and the painter reads it as what ships. The stored table's default names
+		// it outright, because a screen has to be told the value even on an install that never
+		// wrote one.
+		rotate: defaultRotateSeconds * time.Second,
 	}
 }
 
@@ -329,6 +380,21 @@ func (l layout) bandsOn(geometry panel) (panelBands, error) {
 		}
 	}
 
+	// A scale the row pinned is a fit question like the band's, and it is refused here for the
+	// same reason: the digits at scale 5 are 35 rows, and a panel that leaves 34 for the text
+	// would draw them cropped — which is the one thing this file will not do. The mockup says
+	// the same thing in as many words: "set the bar to 30 rows and the digits no longer fit —
+	// the readout turns red and the panel draws nothing rather than silently cropping."
+	//
+	// A scale of 0 is "whatever the band allows", which is what the `layout` setting asks for
+	// because it has no key for the scale; that rule cannot refuse, because it never asks for
+	// more rows than the band has.
+	if l.percent && l.percentScale > 0 && l.percentScale*text.GlyphRows > bands.textRows {
+		return panelBands{}, fmt.Errorf(
+			"layout: percent_scale is %d and this panel leaves %d rows for the text with a %d-row bar, and digits at scale %d are %d rows: a scale that does not fit is refused rather than cropped",
+			l.percentScale, bands.textRows, rows, l.percentScale, l.percentScale*text.GlyphRows)
+	}
+
 	switch {
 	case rows == 0:
 		// Nothing to place: the text has the whole panel.
@@ -402,17 +468,165 @@ func (p panelPicture) draw(geometry panel) ([]wled.RGB, error) {
 		return picture, nil
 	}
 
-	lit, err := text.Raster(word, scale, text.Geometry{Width: width, Height: bands.textRows})
+	lits, err := p.text(geometry, bands, word, scale)
 	if err != nil {
 		return nil, fmt.Errorf("the %q in this layout was not drawn: %w", word, err)
 	}
 
-	for _, index := range lit {
-		row, column := index/width, index%width
-		picture[(bands.textTop+row)*width+column] = p.frame.Colour
+	for _, index := range lits {
+		picture[index] = p.frame.Colour
 	}
 
 	return picture, nil
+}
+
+// text is every pixel the text band lights, as indices into the whole panel.
+//
+// Two arrangements, and the second is the one this build added. **Take turns** is what the module
+// has always drawn: one of the two halves centred in the band the bar leaves, chosen by the clock.
+// **Side by side** is both at once — the digits on the left at the margin, the job's name on the
+// right after them, cut to the columns that are left — and it is the approved Layout mockup's own
+// arrangement, down to its numbers.
+//
+// Side by side falls back to take-turns' single-part picture when there is only one part to draw:
+// a panel showing the percentage and no name has nothing to sit beside, and centring it is what
+// this module drew before. The refusal for a name with no room is not an error for the same
+// reason — the digits are a true picture of the job, and a name cut to two glyphs would not be.
+func (p panelPicture) text(geometry panel, bands panelBands, word string, scale int) ([]int, error) {
+	if p.layout.rotation != rotationSideBySide {
+		return p.centred(geometry, bands, word, scale)
+	}
+
+	digits, hasDigits := p.digits()
+	jobName := p.name(geometry.width, sideNameScale)
+	if !hasDigits || jobName == "" {
+		return p.centred(geometry, bands, word, scale)
+	}
+
+	return p.beside(geometry, bands, digits, jobName)
+}
+
+// centred is the take-turns picture: one word, rasterised in the band the bar leaves and lifted to
+// where that band starts on the panel.
+//
+// The lift is the whole reason this is a function: `internal/text` answers with indices into the
+// geometry it was given, which is the text band and not the panel, and a picture that forgot the
+// offset would draw its text over the bar and leave the band empty.
+func (p panelPicture) centred(geometry panel, bands panelBands, word string, scale int) ([]int, error) {
+	lit, err := text.Raster(word, scale, text.Geometry{Width: geometry.width, Height: bands.textRows})
+	if err != nil {
+		return nil, err
+	}
+
+	lifted := make([]int, 0, len(lit))
+
+	for _, index := range lit {
+		row, column := index/geometry.width, index%geometry.width
+		lifted = append(lifted, (bands.textTop+row)*geometry.width+column)
+	}
+
+	return lifted, nil
+}
+
+// beside lays the digits and the job's name on one line across the text band, and is the
+// side-by-side arrangement as arithmetic.
+//
+// The split is the mockup's: the digits' box starts at sideMargin columns, the name starts
+// sideGap columns after the digits end, and what is left of the panel's width — less sideRight at
+// the far edge — is the name's room, cut to whole glyphs at sideNameScale. Both boxes sit on the
+// bottom of the taller of them, which is what makes the two baselines agree: the mockup's
+// `y+(h-dH)` and `y+(h-nH)`.
+//
+// The digits are capped at sideDigitsScale (sideDigitsScaleShort on a short band), which is the
+// mockup's own `min(pctScale, …)`: side by side the digits give up a scale so that the name has
+// columns to be read in. That cap is arithmetic, not a fit, and the fit is bandsOn's business.
+//
+// A name with fewer than sideNameMin glyphs of room is **not drawn at all**. The mockup draws it
+// only when `chars>2`, and this font has no ellipsis: two letters of a slicer's file name identify
+// nothing, so the digits stand alone rather than the panel carrying a fragment.
+func (p panelPicture) beside(geometry panel, bands panelBands, digits, jobName string) ([]int, error) {
+	digitsScale := min(p.layout.digitsScale(bands.textRows), sideDigitsScale)
+	if bands.textRows < sideBandForFull {
+		digitsScale = min(digitsScale, sideDigitsScaleShort)
+	}
+
+	digitsSize, err := text.Size(digits, digitsScale)
+	if err != nil {
+		return nil, err
+	}
+
+	nameSize, err := text.Size(jobName, sideNameScale)
+	if err != nil {
+		return nil, err
+	}
+
+	// The name's room, in columns: what is left of the panel beside the digits' box and the two
+	// margins. In pixels, so that a cut lands where the font's own advance says it does.
+	nameLeft := sideMargin + digitsSize.Width + sideGap
+	room := geometry.width - nameLeft - sideRight
+
+	height := max(digitsSize.Height, nameSize.Height)
+	if height > bands.textRows {
+		return nil, fmt.Errorf(
+			"layout: the digits at scale %d are %d rows and the name is %d, and this panel leaves %d rows for the text: side by side that does not fit, and it is refused rather than cropped",
+			digitsScale, digitsSize.Height, nameSize.Height, bands.textRows)
+	}
+
+	top := bands.textTop + (bands.textRows-height)/2
+
+	lit, err := stamp(geometry.width, digits, digitsScale, sideMargin, top+(height-digitsSize.Height))
+	if err != nil {
+		return nil, err
+	}
+
+	if glyphsThatFit(room, sideNameScale) < sideNameMin {
+		// No room worth a word: the digits stand alone, exactly as the mockup draws them.
+		return lit, nil
+	}
+
+	cut := fitName(jobName, room, sideNameScale)
+	if cut == "" {
+		return lit, nil
+	}
+
+	name, err := stamp(geometry.width, cut, sideNameScale, nameLeft, top+(height-nameSize.Height))
+	if err != nil {
+		return nil, err
+	}
+
+	return append(lit, name...), nil
+}
+
+// stamp is one word drawn at one place on the panel, as indices into the whole panel's buffer.
+//
+// It rasterises the word in a geometry of exactly the word's own size, so that `internal/text`'s
+// centring has nothing to centre — the placement is this function's, and the one thing that
+// decides where a glyph's pixels are is still the rasteriser. The result is sorted because the
+// indices it is given are, and the panel is painted by walking them.
+func stamp(width int, word string, scale, left, top int) ([]int, error) {
+	size, err := text.Size(word, scale)
+	if err != nil {
+		return nil, err
+	}
+
+	if left < 0 || top < 0 || left+size.Width > width {
+		return nil, fmt.Errorf("layout: %q at a scale of %d does not fit from column %d of a %d-column panel",
+			word, scale, left, width)
+	}
+
+	lit, err := text.Raster(word, scale, text.Geometry{Width: size.Width, Height: size.Height})
+	if err != nil {
+		return nil, err
+	}
+
+	stamped := make([]int, 0, len(lit))
+
+	for _, index := range lit {
+		row, column := index/size.Width, index%size.Width
+		stamped = append(stamped, (top+row)*width+left+column)
+	}
+
+	return stamped, nil
 }
 
 // word is what the text band says at this moment, and at what scale: the percentage on one half of
@@ -436,11 +650,11 @@ func (p panelPicture) word(geometry panel, bands panelBands) (string, int, bool)
 	case !hasDigits:
 		return jobName, nameScale(bands.textRows), true
 	case jobName == "":
-		return digits, percentScale(bands.textRows), true
+		return digits, p.layout.digitsScale(bands.textRows), true
 	}
 
 	if rotationHalf(p.at, p.layout.rotate) == 0 {
-		return digits, percentScale(bands.textRows), true
+		return digits, p.layout.digitsScale(bands.textRows), true
 	}
 
 	return jobName, nameScale(bands.textRows), true
@@ -529,6 +743,19 @@ func (l layout) view() layoutView {
 // the band allows, and never larger than the finished word.
 func percentScale(textRows int) int {
 	return min(max(textRows/text.GlyphRows, 1), percentScaleMax)
+}
+
+// digitsScale is the scale this layout draws the digits at in a text band of that many rows: the
+// scale it pins when it pins one, and otherwise the largest the band allows.
+//
+// The pinned scale is not checked here: bandsOn has already refused a layout whose scale does not
+// fit its panel, which is the one place that knows the geometry.
+func (l layout) digitsScale(textRows int) int {
+	if l.percentScale > 0 {
+		return l.percentScale
+	}
+
+	return percentScale(textRows)
 }
 
 // nameScale is the scale the job's name is drawn at in a text band of that many rows.

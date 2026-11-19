@@ -50,7 +50,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/text"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
@@ -212,12 +211,33 @@ type event struct {
 	// border and quarters, as pattern.go holds them. It is empty on the finished word, which is
 	// the only event the printer itself fires.
 	pattern string
+	// preset is the name of one of the light's own presets, run for the moment's length and then
+	// put back. It is empty on every other kind of event.
+	//
+	// This is the one picture this module does not draw: a preset carries its own segments,
+	// brightness and LED map, so the light renders it and the module only names it
+	// (docs/product-requirements.md §2.3, docs/design/v2/events/). What the module owes is the
+	// capture before it runs and the give-back after — see writer.takeLight and writer.giveLightBack.
+	preset string
+	// plain is a frame drawn as the normal segments write, whole light in one colour, instead of
+	// as pixels: the picture a moment shows when what it says is a colour.
+	//
+	// It is not a second composer. A colour needs no pixels — one JSON body carries it, and this
+	// firmware keeps a body until something writes another — so it goes through the writer's own
+	// paint, which is the path the steady frame takes, borrowed zone and all.
+	plain *render.Frame
 	// colour is what the word's lit pixels are drawn in. Every other pixel of the panel is
 	// finishedWordBackground for the length of the hold. Unused by a pattern, which carries a
 	// colour per pixel.
 	colour wled.RGB
-	// holds is how long the word keeps the light.
+	// holds is how long the word keeps the light, and zero for a moment that holds until the
+	// state it was fired for moves.
 	holds time.Duration
+	// state is the state this event was fired for, which is what a hold with no deadline ends on.
+	// It is stamped by the driver that fired it rather than read from the writer's standing scene:
+	// the scene is whatever tick arrived last, and an event taken one tick later would end on the
+	// transition that caused it. Empty on the preview routes, which are not about a state.
+	state string
 
 	// picture is the composed panel frame this event draws instead of a word: the operator's
 	// layout, the frame it draws, and the moment its rotation is read at. It is nil for the word
@@ -244,6 +264,10 @@ func (ev event) label() string {
 	switch {
 	case ev.picture != nil:
 		return "composed"
+	case ev.preset != "":
+		return ev.preset
+	case ev.plain != nil:
+		return "colour"
 	case ev.pattern != "":
 		return ev.pattern
 	}
@@ -251,17 +275,32 @@ func (ev event) label() string {
 	return ev.word
 }
 
-// noun is what kind of picture this event is, for a sentence a person reads: "word", "pattern" or
-// "picture".
+// noun is what kind of picture this event is, for a sentence a person reads: "word", "pattern",
+// "picture", "preset" or "colour".
 func (ev event) noun() string {
 	switch {
 	case ev.picture != nil:
 		return "picture"
+	case ev.preset != "":
+		return "preset"
+	case ev.plain != nil:
+		return "colour"
 	case ev.pattern != "":
 		return "pattern"
 	}
 
 	return "word"
+}
+
+// wholeLight reports whether showing this event means taking the whole light: pixels, a word, a
+// pattern, a composed picture or a preset all do, and a plain colour does not.
+//
+// It is the rule fire and preview both refuse on, written once. A borrowed zone is a segment of a
+// light somebody else drives, and an animation nobody asked for is the one thing its owner would not
+// have agreed to — but a colour is what this module borrowed the zone to show, so a moment that
+// shows a colour is the module's normal business there.
+func (ev event) wholeLight() bool {
+	return ev.picture != nil || ev.preset != "" || ev.pattern != "" || ev.word != ""
 }
 
 // segmentName is what the establishing body calls segment 0: the word this event spells, or the
@@ -271,9 +310,10 @@ func (ev event) noun() string {
 // may later draw with a text effect, and this firmware keeps a name through a body that does not
 // mention one — the failure §5.13 records, where "FINISHED" outlived its own event. The word keeps
 // its name because /json/state then says which word the panel is holding, which is the one thing
-// this transport cannot say for itself.
+// this transport cannot say for itself. A plain colour and a preset are not words either, and their
+// own delivery paths do not write an establishing body at all.
 func (ev event) segmentName() string {
-	if ev.picture != nil {
+	if ev.picture != nil || ev.plain != nil || ev.preset != "" {
 		return ""
 	}
 
@@ -324,55 +364,44 @@ func finishedWordEvent() event {
 	return event{word: finishedWord, colour: render.ColourFinished, holds: finishedEventHolds}
 }
 
-// eventFor is the whole of the event list, as a pure function: the state the printer left, the
-// state it arrived in, and the controller's geometry in; the picture to show and how long to
-// show it, or nothing.
+// The event list is the moment table's, and it lives in momenttable.go and moments.go: which pairs
+// of state words are a moment (momentFor), what one binding's row for that moment shows
+// (momentEvent), and how the writer holds it (this file).
 //
-// There is one entry. A second is a case below plus whatever its animation needs — print start
-// and a filament change are both wanted and neither is decided: the first needs a word or a
-// pattern, a colour and a hold, and the second needs at least a decision about whether it is
-// the same word for a pause and for a filament change, since they share their yellow. Adding
-// one is a case and three constants; adding one whose picture is not this word is a second body
-// in paintEvent. Neither is this build's decision to make.
+// There used to be one special case here — PRINTING to FINISHED gives the word FINISHED in the
+// finished green for a minute — and it was the finished moment written twice: once as this case and
+// once as momentDefault's row. The case is gone and the row is the statement. What the row says is
+// exactly what the case said, which is what makes the change invisible on the light: an install that
+// never opens the Events screen fires the same word, in the same colour, for the same minute.
 //
-// The rules, and each of them exists because of a way this could go wrong:
+// The rules the case carried are the rules the moment table keeps, and each is still pinned by a
+// test:
 //
-//   - A controller that reported no matrix gets nothing. The word is drawn in pixels on a
-//     two-dimensional panel, and a strip has no second dimension to draw it in: the panel's
-//     index arithmetic would fold the letters into one run of LEDs. A strip's finished state is
-//     the solid green it already shows, which is what the operator asked for on that light.
-//   - A panel too small to hold the word at finishedWordScale gets nothing either. The other
-//     answers — a smaller word, a broken one, a clipped one — are all decisions this build has
-//     not been given, so it says nothing rather than pick. Silence is the same answer the strip
-//     gets, and for the same reason: the steady finished frame is a true picture of what
-//     happened, and a light is not the place to argue about a panel's size. The preview route
-//     says the size out loud, because a person who asked for the word deserves the sentence.
-//   - Only PRINTING to FINISHED is an event. A restart is not a transition — the first
-//     snapshot a process reads is a baseline and the driver never reports a change from it —
-//     and a state that stood still for twenty ticks is not twenty events. Both of those are the
-//     caller's to get right and both are pinned in the tests.
-//   - A pause that ends in a finish is not an entry. Nobody has said whether a job that was
-//     paused and then completed should celebrate, and a table that guessed would be inventing
-//     a requirement.
-func eventFor(from, to string, geometry panel) (event, bool) {
-	if !geometry.matrix() {
-		return event{}, false
+//   - A controller that reported no matrix cannot carry a word, so a Word moment there is its colour
+//     instead — §2.3's locked fallback, and what the case did by refusing outright.
+//   - A panel too small for the word at finishedWordScale gets the colour for the same reason: a
+//     smaller, broken or clipped word is a decision nobody made. The preview route still says the
+//     size out loud, because a person who asked for the word deserves the sentence.
+//   - Only a transition is a moment. A restart is not one — the driver's first look is a baseline —
+//     and a state that stood still is not twenty moments.
+//   - A pause that ends in a finish is not a moment: nobody has said whether a job that was paused
+//     and then completed should celebrate, and momentFor has no pair for it rather than a guess.
+
+// showsNothing reports whether this event asks for no picture at all, which is what a moment whose
+// `shows` is Nothing becomes.
+func (ev event) showsNothing() bool {
+	return ev.picture == nil && ev.preset == "" && ev.plain == nil &&
+		ev.pattern == "" && ev.word == ""
+}
+
+// holdPhrase is a hold as a log line says it: a length, and "as long as its state lasts" for a moment
+// that has none.
+func holdPhrase(holds time.Duration) string {
+	if holds <= 0 {
+		return " as long as its state lasts"
 	}
 
-	if from != printer.StatePrinting || to != printer.StateFinished {
-		return event{}, false
-	}
-
-	ev := finishedWordEvent()
-
-	// The word has to fit the panel it is going on, and that is arithmetic this package can do
-	// before anything is sent; a word that does not fit would otherwise cost a failed write, a
-	// widening retry and a hold that shows the steady frame anyway.
-	if _, err := text.Place(ev.word, finishedWordScale, geometryOf(geometry)); err != nil {
-		return event{}, false
-	}
-
-	return ev, true
+	return " for " + holds.String()
 }
 
 // geometryOf is a panel as the rasteriser reads one, so that the one place that decides where a
@@ -392,6 +421,16 @@ type heldEvent struct {
 	until   time.Time
 	painted bool
 
+	// state is the state the driver was showing when this event was taken, which is what a hold with
+	// no deadline ends on: a moment fired for a pause holds until the state word moves, and that is
+	// the one thing that makes "until it resumes" a rule rather than a guess.
+	state string
+
+	// took is the whole light as it was found, for the one kind of event that does not draw its own
+	// picture: a preset. It is given back when the hold ends, when a newer event takes the hold, when
+	// a pause switches the light off and when the writer stops — see giveLightBack.
+	took *takenLight
+
 	// frame is the picture the panel was given when the hold started, and repush is when the
 	// next repeat of it is due. A still picture has to outlive the controller's realtime
 	// timeout, so it is pushed again every pixelRepeat for as long as the hold lasts — see
@@ -406,21 +445,51 @@ type heldEvent struct {
 	pushFails int
 }
 
+// standingState is the state a scene says it is showing, and empty for no scene at all.
+func standingState(standing *scene) string {
+	if standing == nil {
+		return ""
+	}
+
+	return standing.state
+}
+
+// holdLeft is how long this hold has left, and false when it is over.
+//
+// A hold with a deadline is over when the clock passes it. A hold with none — a moment whose `for`
+// is `forever` — is over when the state it was fired for has moved, which is what the screen's
+// "until it resumes", "until it is cleared" and "until it answers" mean; it reports the next repeat
+// as what is left so that the loop wakes to keep a pushed picture alive without spinning.
+func (h *heldEvent) holdLeft(now time.Time, standing *scene) (time.Duration, bool) {
+	if h.until.IsZero() {
+		if standing != nil && standing.state != h.state {
+			return 0, false
+		}
+
+		return pixelRepeat, true
+	}
+
+	left := h.until.Sub(now)
+
+	return left, left > 0
+}
+
 // fire offers one event to the writer and never waits for it, the way submit offers a frame.
 //
 // Two things are decided here rather than in paintEvent, and both are rules rather than
 // conveniences:
 //
-//   - **A borrowed segment is never given an event.** The module was pointed at one zone of
-//     somebody else's controller to show a progress colour in, not to perform in. An animation
-//     is unrequested — the operator asked for it on his own panel, and a zone of his desk light
-//     is not that panel — and on a controller other people and processes also write to, the
-//     safest place for a picture nobody asked for is nowhere. So the event stops here,
-//     before it is stored, and says so once.
+//   - **A borrowed segment is never given a picture nobody asked for.** The module was pointed at
+//     one zone of somebody else's controller to show a progress colour in, not to perform in. An
+//     animation is unrequested — the operator asked for it on his own panel, and a zone of his desk
+//     light is not that panel — and on a controller other people and processes also write to, the
+//     safest place for a picture nobody asked for is nowhere. So the event stops here, before it is
+//     stored, and says so once. A **plain colour** passes: colouring the zone is what this module
+//     borrowed it for, so a moment that shows a colour is not an animation there.
 //   - **Nothing is queued.** One slot, latest wins, exactly like a frame: two events in quick
 //     succession are one event, and the newer one is the true account of what the printer did.
 func (w *writer) fire(ev event) {
-	if w.segment != nil {
+	if w.segment != nil && ev.wholeLight() {
 		w.logf("%s: the %q event was not drawn: segment %d on %s is borrowed, and an animation is not something this module puts on a light somebody else is using",
 			name, ev.label(), *w.segment, w.where)
 
@@ -498,14 +567,34 @@ func (w *writer) preview(ev event) error {
 //
 // The deadline is measured from when the writer takes the event and not from when it was fired:
 // the interval between the two is one tick at most, and a hold that started while the previous
-// paint was still in flight would be a hold nobody could name a length for.
-func (w *writer) takeEvent() {
+// paint was still in flight would be a hold nobody could name a length for. A hold with no length —
+// a moment whose `for` is `forever` — is stamped with no deadline at all, and ends when the state it
+// was fired for moves (see holdLeft).
+//
+// A light a preset moment took is given back before a newer event takes the hold, because the
+// capture lives on the hold: overwriting it would leave the operator's light running a moment's
+// preset with nothing left that knows what was there before.
+func (w *writer) takeEvent(ctx context.Context) {
 	fired := w.fired.Swap(nil)
 	if fired == nil {
 		return
 	}
 
-	w.held = &heldEvent{event: *fired, until: w.now().Add(fired.holds)}
+	if w.held != nil && w.held.took != nil {
+		w.giveLightBack(ctx, w.held.took)
+	}
+
+	until := time.Time{}
+	if fired.holds > 0 {
+		until = w.now().Add(fired.holds)
+	}
+
+	state := fired.state
+	if state == "" {
+		state = standingState(w.standing.Load())
+	}
+
+	w.held = &heldEvent{event: *fired, until: until, state: state}
 
 	// An event takes the light from a state table's word. The word is re-established when the event's
 	// hold ends — `speak` finds the state still carrying it — and leaving it recorded as up would have
@@ -522,6 +611,22 @@ func (w *writer) takeEvent() {
 // every pixelRepeat until it ends: the picture does not move, and only its repetition is what
 // keeps the panel drawing it.
 func (w *writer) deliverEvent(ctx context.Context, ev event) error {
+	switch {
+	case ev.preset != "":
+		return w.startPreset(ctx, ev)
+	case ev.plain != nil:
+		if err := w.report(func() error { return w.paint(ctx, *ev.plain) }); err != nil {
+			return err
+		}
+
+		// A moment that shows a colour is on the light until its hold ends, so the thumbnail says the
+		// same colour rather than the steady frame the light is not showing.
+		plain := *ev.plain
+		w.holding.Store(&holding{plain: &plain})
+
+		return nil
+	}
+
 	frame, err := w.paintReported(ctx, ev)
 	if err != nil {
 		return err
@@ -531,6 +636,47 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 		w.held.frame = frame
 		w.held.repush = w.now().Add(pixelRepeat)
 	}
+
+	return nil
+}
+
+// startPreset runs one of the light's own presets for a moment, and takes the light first so that it
+// can be put back.
+//
+// The capture comes before the run and is kept on the hold, because that is where the give-back
+// finds it: the hold's end, a newer event taking the hold, a pause and the writer stopping all call
+// giveLightBack with it. A run that fails leaves nothing taken — the operator's light was not
+// changed — and is reported as a failed write, so the doubling window applies to it like any other.
+func (w *writer) startPreset(ctx context.Context, ev event) error {
+	var taken *takenLight
+
+	err := w.report(func() error {
+		found, readErr := w.takeLight(ctx)
+		if readErr != nil {
+			return readErr
+		}
+
+		if runErr := w.light.RunPreset(ctx, ev.preset); runErr != nil {
+			return runErr
+		}
+
+		taken = found
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("the preset %q was not run: %w", ev.preset, err)
+	}
+
+	if w.held != nil {
+		w.held.took = taken
+	}
+
+	// A preset is running on the light, and no reconstruction of it exists: the thumbnail says so
+	// rather than drawing the steady frame, which is not what is on the wall.
+	w.holding.Store(&holding{preset: ev.preset})
+
+	w.logf("%s: the light is running its own preset %q for the moment%s", name, ev.preset, holdPhrase(ev.holds))
 
 	return nil
 }
