@@ -528,3 +528,42 @@ func storeSettings(t *testing.T, written *Settings) {
 
 	t.Cleanup(func() { held.Store(nil) })
 }
+
+// TestTheLightsRouteIsOnTheProcesssOwnMux is the mount, not the handler.
+//
+// Every other assertion about the lights list is made against a mux the test built, and a route
+// that exists, is described in openapi.json and answers beautifully in a test of its own is still a
+// 404 for the operator if nobody mounted it in routes(). This asks the process's own handler, with
+// no store granted, which is the answer a module that was given no data directory gives: an empty
+// list, persisted false, and the sentence about discovery rather than a failure.
+func TestTheLightsRouteIsOnTheProcesssOwnMux(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/lights", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /lights answered %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body struct {
+		Lights    []any  `json:"lights"`
+		Count     int    `json:"count"`
+		Persisted bool   `json:"persisted"`
+		Note      string `json:"note"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the answer is not JSON: %v (%s)", err, recorder.Body.String())
+	}
+
+	if body.Lights == nil {
+		t.Fatalf("the answer carries %#v where the list goes, want a list", body.Lights)
+	}
+
+	if body.Count != len(body.Lights) {
+		t.Fatalf("count reads %d and the list holds %d", body.Count, len(body.Lights))
+	}
+
+	if !strings.Contains(body.Note, "not switched on yet") {
+		t.Fatalf("the note reads %q, want the sentence about discovery not being switched on", body.Note)
+	}
+}

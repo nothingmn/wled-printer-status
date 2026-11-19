@@ -466,7 +466,8 @@ const (
 // what it said when it last answered is the row, and `probed_at` is the age of that reading.
 func (api lightsAPI) listLights(w http.ResponseWriter, r *http.Request) {
 	if api.tables == nil {
-		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false, Note: noStoreNote})
+		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false,
+			Note: noStoreNote + " " + lightsPersistedNote})
 
 		return
 	}
@@ -474,8 +475,11 @@ func (api lightsAPI) listLights(w http.ResponseWriter, r *http.Request) {
 	config, err := api.tables.load()
 	if err != nil {
 		// A list this module cannot read is a module with no store, which is not an error for the
-		// screen: it says so, and the add form's own refusal says why nothing can be kept.
-		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false, Note: noStoreNote})
+		// screen: it says so, and the add form's own refusal says why nothing can be kept. The
+		// sentence about discovery is still here, because it is true whether or not a document
+		// could be read, and a screen with no sentence about it reads as a screen that cannot say.
+		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false,
+			Note: noStoreNote + " " + lightsPersistedNote})
 
 		return
 	}
