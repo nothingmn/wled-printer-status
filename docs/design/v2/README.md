@@ -19,4 +19,4 @@ carried: a tabbed control panel, a light-first drill-in, a full tabbed walk, and
 | [`diagnostics/`](diagnostics/) | 2.7 Diagnostics | `010-diagnostics` |
 | [`settings/`](settings/) | 2.8 Settings | `011-settings` |
 
-The requirements themselves are [`../product-requirements.md`](../product-requirements.md).
+The requirements themselves are [`../../product-requirements.md`](../../product-requirements.md).
