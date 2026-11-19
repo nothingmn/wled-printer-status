@@ -10,7 +10,7 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
-## Unreleased
+## 0.3.0 — 2026-11-19
 
 Lights are a thing in this module. The screen called Devices is called **Lights**, and a light can be
 added by typing its address, which is read before it is kept. The store is at schema version 7: a
