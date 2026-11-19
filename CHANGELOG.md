@@ -152,6 +152,12 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 
 ### Fixed
 
+- A state's word now hands the light back to its steady picture in the same pass its hold runs out. Before
+  this, a light carrying a word set on a state that was already showing could go **black** the moment the
+  hold expired — the panel's own establishing body, with the word's name still on the segment — and stay
+  black until the module's once-a-minute repaint came round: measured on the operator's 256 × 64 panel
+  three times, on the stroke once and 13 s and 15 s late twice. The picture now lands 0.07 s and 0.29 s
+  after the stroke, with the segment's name cleared in the same body.
 - A word set on a state that is already being shown is now shown for its full length, counted from the
   write instead of from the moment the state began. Before this, `PUT /states/FINISHED` with
   `{"word":"SWEEP","holds":"60s"}` answered `200` and changed nothing on a light: the printer had finished
