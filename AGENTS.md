@@ -238,8 +238,11 @@ never asked to show half a frame, and half the traffic of writing them one after
 **5.11 The log carries events, not ticks — one line per transition, silence otherwise.** `/status` is the
 present tense and the log is the history, so a line exists to answer *"what changed while nobody was
 looking"*. The driver writes one when the printer's state word moves (`the printer <name> went from X to
-Y`), one when the host loses or regains its session with it, and one when the reading goes stale or live
-again; the writer keeps its failure lines — the first failure, each widening retry, one on recovery.
+Y`), one when the host loses or regains its session with it, and one when the reading goes stale, or comes
+back while the printer could still be running — a printer whose last word is `FINISHED` or `STOPPED`
+writes the entry into staleness once and nothing for the dips that follow, because a job that is over
+has nothing new to say and a cooling bed moves a value every minute or two; the writer keeps its failure
+lines — the first failure, each widening retry, one on recovery.
 Everything else is deliberately silent: a progress tick, a frame that changed, a successful send, and the
 heartbeat repaint, which fires once a minute on a still picture and must cost no line at all — otherwise
 an idle night becomes a thousand lines that hide the one transition a person needed. A printer still

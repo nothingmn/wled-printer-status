@@ -871,6 +871,29 @@ $ docker logs prusa_connect 2>&1 | grep -a "the reading from the printer Hermes 
 01:35:16.133Z  the reading from the printer Hermes MK4 is stale
 ```
 
+**Read again forty-six minutes later, at `02:26:04Z`, from the same recording.** The tree had moved at
+`02:23:57.591Z` — the change clock the age is measured from — so the reading had come back at that
+moment and aged past the 30 s horizon again since. The log had still written nothing for it:
+
+```console
+$ curl -s …/status                                  # 02:26:04Z
+"state":"FINISHED", "age_seconds":126.543, "stale":true,
+"frame":{"colour":{"r":0,"g":170,"b":0},"lit":0,"total":16384,"reason":"not-a-live-job"},
+"last_send":{"at":"2026-11-19T02:25:45.969Z","ok":true}
+$ curl -s http://10.0.0.136/json/state              # 02:26:04Z
+bri 128  on true  mainseg 0
+seg0 start 0 stop 256 startY 0 stopY 64 col [0,170,0] fx 0 frz true
+$ docker logs prusa_connect 2>&1 | grep -a "the reading from the printer Hermes MK4" | wc -l
+27          # 26 of them from the build this one replaced, the last line at 01:35:16.133Z
+$ docker logs prusa_connect 2>&1 | grep -ac "live again"
+13          # the latest at 01:32:26.992Z, before this build was installed
+```
+
+So the green held on the panel for the whole of that window, and a silence that had come and gone at
+least once cost no line — what the two-minute samples above could only begin to show. The panel's own
+JSON is the controller's account of what it holds, not a person's look at the light, and it does not
+change the verdict on the word.
+
 **What this run does not prove.** The live case — no print was started to put a *printing* job's
 reading into staleness, so that half of the rule is proved by
 `TestALiveJobIsStillDowngradedBySilence` and the tests beside it and not by this device. The word on
