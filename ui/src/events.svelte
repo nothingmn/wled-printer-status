@@ -11,22 +11,28 @@
 	//     printer, carrying that printer's segment and its own four settings. Settings belong to
 	//     the (light, printer) pair, which is also what makes multi-room sane: the same printer on
 	//     two lights carries two independent sets.
-	//   - **`shows` decides what `which` is.** Preset names the light's own preset by name, Word
-	//     is a word for a panel, Colour names one of the twelve states, and Nothing names nothing.
-	//     The field changes with the choice, and the route refuses a `which` that does not belong
-	//     to its `shows` — so the refusal is shown where the field is rather than swallowed.
-	//   - **No preset gallery, no preset editor, no effect, speed or palette control anywhere.**
-	//     Presets are made and tuned in WLED's own interface; this page only names one. No route
-	//     lists a light's presets either (see the notes under the table), so `which` for a Preset
-	//     is the name as WLED spells it, typed, and the module stores it as written.
+	//   - **`shows` decides what `which` is.** Preset names one of the light's own presets, Word is a
+	//     word for a panel, Colour names one of the twelve states, and Nothing names nothing. The field
+	//     changes with the choice, and the route refuses a `which` that does not belong to its `shows`
+	//     — so the refusal is shown where the field is rather than swallowed.
+	//   - **A preset is picked from the light's own list**, read from `GET /devices/{name}/presets` when
+	//     the page opens: slot and name, nothing else. The list is the only way to name a preset that
+	//     the light can actually be asked about, and a name typed into a box is a name nobody can
+	//     check. A light that cannot be read answers `presets_known: false` with the reason, and the
+	//     field falls back to a text box that still works — because a light that is unplugged must not
+	//     stop somebody editing. The fallback keeps the typed value, says why, and stores it as written.
+	//     A slot with no name is not offered: a moment names a preset by its name, and an unnamed slot
+	//     has none.
+	//   - **No preset gallery, no preset editor, no effect, speed or palette control anywhere.** Presets
+	//     are made and tuned in WLED's own interface; this page only names one.
 	//   - **Editing never needs the light.** PUT and DELETE write this module's own store and send
 	//     nothing to the light — which is exactly right, because the moment somebody stands at a
 	//     light editing moments is often the moment the light is the thing that is off.
 	//
-	// Two things this page cannot offer, both reported rather than faked: the mockup's per-row
-	// `test` button (no route runs one moment on one light, and the preview routes paint a whole
-	// light, which an editor must not do), and a picker for preset names (the routes serve the
-	// light's segments, never its presets).
+	// Two things this page cannot offer, both reported rather than faked: the mockup's per-row `test`
+	// button (no route runs one moment on one light, and the preview routes paint a whole light, which
+	// an editor must not do), and a preset's body (the route carries slot and name only, and the body
+	// belongs to WLED's own interface).
 	import { onMount } from 'svelte';
 
 	import { Badge, Button } from '@prusa/connect-ui/primitives';
@@ -38,6 +44,7 @@
 		type MomentEntry,
 		type MomentRequest,
 		type MomentsBody,
+		type PresetsBody,
 		type Shows,
 		type StateRow,
 	} from './api';
@@ -67,6 +74,9 @@
 	let board = $state<MomentsBody | null>(null);
 	/** The state table's own names, so a Colour can only name a colour the module draws. */
 	let states = $state<StateRow[]>([]);
+	/** The chosen light's own preset table, and why it could not be read when it could not. */
+	let presets = $state<PresetsBody | null>(null);
+	let presetsWhy = $state('');
 	/** One shape per light, learned from the frame the module has drawn: only a frame knows it. */
 	let shapes = $state<Record<string, 'panel' | 'strip'>>({});
 	/** Each row's draft, keyed `moment|printer`, which is the same key the route writes by. */
@@ -116,6 +126,26 @@
 
 	/** This light's shape, once a frame has told us, and empty before that. */
 	const shapeOf = (light: string): 'panel' | 'strip' | '' => shapes[light] ?? '';
+
+	/**
+	 * Whether `which` for a Preset can be picked rather than typed.
+	 *
+	 * It can when the light answered: `presets_known` is the route saying this list is the light's own.
+	 * It cannot when the light is unplugged or the route is not on this build, and then the field is a
+	 * text box — a light that cannot be asked must not stop somebody editing.
+	 */
+	const canPick = $derived(presets !== null && presets.presets_known);
+
+	/**
+	 * The presets a moment can name: the named ones.
+	 *
+	 * A moment's `which` is matched on the preset's name, so a slot the light never named can be run
+	 * but cannot be named here. It is left out rather than offered as a number that would never match.
+	 */
+	const namedPresets = $derived((presets?.presets ?? []).filter((one) => !one.unnamed && one.name.trim() !== ''));
+
+	/** How many of the light's slots carry no name, which is worth a line when there are any. */
+	const unnamedCount = $derived((presets?.presets ?? []).filter((one) => one.unnamed || one.name.trim() === '').length);
 
 	/** One segment in the light's own words: its name, its number and the run it covers. */
 	const segmentOf = (segment: number): string => {
@@ -182,6 +212,8 @@
 	const openLight = async (light: string): Promise<void> => {
 		chosen = light;
 		board = null;
+		presets = null;
+		presetsWhy = '';
 		drafts = {};
 		faults = {};
 		notice = '';
@@ -196,6 +228,17 @@
 				),
 			);
 			failure = '';
+
+			// The light's own presets, so a Preset's `which` is picked rather than typed. A light that
+			// cannot be read — or a build that does not serve the route — leaves the list empty and the
+			// reason beside it, and the field stays a text box. The table itself is not a failure of
+			// this page: editing a moment never needs the light.
+			try {
+				presets = await api.listPresets(light);
+			} catch (problem) {
+				presets = null;
+				presetsWhy = describe(problem);
+			}
 		} catch (problem) {
 			failure = `${t('events.load_failed')}: ${describe(problem)}`;
 		} finally {
@@ -419,21 +462,63 @@
 
 			<td class="px-3 py-2 align-top">
 				{#if draft.shows === 'Preset'}
-					<input
-						type="text"
-						class="w-40 rounded border px-2 py-1 text-sm"
-						value={draft.which}
-						placeholder={t('events.preset_placeholder')}
-						disabled={busy}
-						aria-label={t('events.which_for', { moment: who })}
-						onchange={(event) => {
-							drafts[rowKey(one.moment, entry.printer)] = {
-								...draft,
-								which: (event.currentTarget as HTMLInputElement).value,
-							};
-							void commit(one.moment, entry);
-						}}
-					/>
+					<div class="flex flex-col gap-1">
+						{#if canPick}
+							<!-- Picked from the light's own table, so the name is one the light can be asked for. -->
+							<select
+								class="rounded border px-2 py-1 text-sm"
+								value={draft.which}
+								disabled={busy}
+								aria-label={t('events.which_for', { moment: who })}
+								onchange={(event) => {
+									drafts[rowKey(one.moment, entry.printer)] = {
+										...draft,
+										which: (event.currentTarget as HTMLSelectElement).value,
+									};
+									void commit(one.moment, entry);
+								}}
+							>
+								<option value="">{t('events.pick_preset')}</option>
+								{#each namedPresets as preset (preset.slot)}
+									<option value={preset.name}>{preset.name}</option>
+								{/each}
+								{#if draft.which.trim() !== '' && !namedPresets.some((one) => one.name === draft.which.trim())}
+									<option value={draft.which}>{t('events.preset_not_on_light', { name: draft.which })}</option>
+								{/if}
+							</select>
+							<span class="text-[10px] opacity-60">
+								{t('events.presets_read', { count: namedPresets.length })}
+							</span>
+							{#if unnamedCount > 0}
+								<span class="text-[10px] opacity-60">{t('events.presets_unnamed_hidden', { count: unnamedCount })}</span>
+							{/if}
+							{#if namedPresets.length === 0 && draft.which.trim() === ''}
+								<span class="text-[10px]" role="alert">{t('events.presets_none_yet')}</span>
+							{/if}
+						{:else}
+							<!-- The list could not be read. The box still works, and the reason is beside it. -->
+							<input
+								type="text"
+								class="w-40 rounded border px-2 py-1 text-sm"
+								value={draft.which}
+								placeholder={t('events.preset_placeholder')}
+								disabled={busy}
+								aria-label={t('events.which_for', { moment: who })}
+								onchange={(event) => {
+									drafts[rowKey(one.moment, entry.printer)] = {
+										...draft,
+										which: (event.currentTarget as HTMLInputElement).value,
+									};
+									void commit(one.moment, entry);
+								}}
+							/>
+							<span class="text-[10px] opacity-60">
+								{t('events.presets_typed', {
+									why: presetsWhy !== '' ? presetsWhy : (presets?.presets_unread ?? presets?.note ?? ''),
+								})}
+							</span>
+						{/if}
+					</div>
 				{:else if draft.shows === 'Word'}
 					<div class="flex flex-col gap-1">
 						<input

@@ -152,8 +152,10 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - The Events screen is the moment table, one light at a time: the light is chosen at the top, the moment is
   the row, and a light carrying more than one printer gains an indented sub-row per printer with that
   printer's segment and its own `enabled`, `shows`, `which` and `for` — a light carrying one printer is
-  exactly the flat table. `shows` decides what `which` is: a preset's name as WLED spells it, typed in this
-  release because the screen does not yet read `GET /devices/{name}/presets`, and stored as written; a word
+  exactly the flat table. `shows` decides what `which` is: a preset picked from the light's own
+  `GET /devices/{name}/presets` list, or — when the light cannot be read — typed, with the route's own reason
+  beside the field and the name stored as written, because a light that is unplugged must not stop somebody
+  editing; a word
   for a panel; one of the twelve state
   names; or nothing. The field changes with the choice, and a `which` that does not belong to its `shows`
   is refused with the reason beside the field rather than coerced. A change is written into the module's
@@ -171,6 +173,32 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   because that is what the light shows — or `later` when no light is showing that state. A character the
   font cannot draw, and a word too wide for the panel at that scale, are named beside the field, because
   the module refuses such a word and draws the state's colour instead.
+- The Layout screen has two renderings, because a panel and a strip are not the same hardware. A **panel** is
+  the composer: the bar on or off, the band it sits in, how many rows it takes of the panel's own height, the
+  percentage at scale 5, 4 or 3, the job's name, and whether the two take turns or sit side by side, every N
+  seconds — and the arithmetic is shown rather than hidden, with the boxes drawn to scale and a verdict: 64
+  rows with a 12-row bar leaves 52, and digits at scale five are 35 rows. A layout that will not fit is
+  **refused, not cropped**, so a change that would draw an empty panel is not written and the sentence says
+  which numbers disagree; a light whose frame has never been drawn has no known height, and then the write is
+  allowed and the fit is judged where it is drawn, exactly as the route argues. Every value carries whether it
+  is yours or the default, a binding nobody has laid out answers the built-in default rather than an empty
+  box, and `DELETE` on the binding — one reset for the whole row, because that is the route — puts every value
+  back. A **strip** is deliberately almost empty: it fills from the left, 0 % lights nothing and 100 % lights
+  the whole run, a brightness exists only for a whole strip and is edited in Bindings, and the four panel
+  controls are not offered — with the page saying that is the dimension rather than a missing feature, and
+  that a layout stored for a strip is kept and changes nothing. **`side-by-side` is built and drawn**, and the
+  page says quietly that only a job in progress composes, so a layout's look needs a print.
+- The Devices screen is one card per light and nothing about printers beyond which segment one sits on. A card
+  carries the hardware facts — the name the light calls itself and its firmware from its last snapshot, the
+  shape and pixel count from the frame the module is drawing, and its segment count; the light's own segments
+  with all four bounds, read-only; its own presets, read-only, with an unnamed slot shown as unnamed and a
+  light that could not be read saying why; the four proved tests as presses that say before they fire that
+  they paint the real light for a minute; a disabled `identify` with the reason — this build has no route that
+  blinks a light; snapshots with a take-now button, what each file cannot give back, and a restore behind a
+  warning that names the destruction, states that it has **never been run against a real light**, and shows
+  the sections written and the sections withheld; and a paragraph where `Replace this light…` would be, saying
+  there is no replace route and what the swap would have to check. A light that is not answering has every
+  test and its restore switched off, with the reason on the card.
 - `GET /devices/{name}/presets` answers the presets the light itself holds, by slot and by name: the list a
   moment's `which` is picked from and the read-only list a light's card shows, read from the controller's
   own `/presets.json` when the route is called. `presets_known` says whether the light answered — a light

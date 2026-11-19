@@ -14,7 +14,9 @@ import type { Component } from 'svelte';
 
 import Bindings from './bindings.svelte';
 import Colours from './colours.svelte';
+import Devices from './devices.svelte';
 import Events from './events.svelte';
+import Layout from './layout.svelte';
 import Overview from './overview.svelte';
 
 /** One screen: its name on the rail, and the component that draws it. */
@@ -35,4 +37,6 @@ export const SCREENS: Screen[] = [
 	{ id: 'bindings', key: 'screen.bindings', component: Bindings },
 	{ id: 'events', key: 'screen.events', component: Events },
 	{ id: 'colours', key: 'screen.colours', component: Colours },
+	{ id: 'layout', key: 'screen.layout', component: Layout },
+	{ id: 'devices', key: 'screen.devices', component: Devices },
 ];

@@ -445,6 +445,262 @@ export interface StateAnswer {
   note?: string;
 }
 
+/**
+ * One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the
+ * percentage and the job's name are drawn and at what scale, and how the two share the panel.
+ *
+ * Every value carries the origin it came from — `store` when this binding has a row in the module's
+ * configuration store, `default` when it has none — because that is what lets a screen offer a reset
+ * on exactly the binding that has something to reset, and what makes a binding nobody laid out read
+ * as the built-in default rather than as nothing at all.
+ */
+export interface Layout {
+  /** The binding's id on these routes, which is the path a layout is written by. */
+  id: string;
+  printer: string;
+  light: string;
+  segment: number;
+  whole: boolean;
+  /** Whether the progress bar is drawn. */
+  bar: boolean;
+  bar_origin: Origin;
+  /** Which end of the panel the bar sits at. */
+  bar_band: 'top' | 'bottom';
+  bar_band_origin: Origin;
+  /** How many rows of the panel the bar takes, 1 to 48. */
+  bar_rows: number;
+  bar_rows_origin: Origin;
+  /** Whether the job's progress is drawn in digits. */
+  percent: boolean;
+  percent_origin: Origin;
+  /** The scale the digits are drawn at: the three §2.5 offers. */
+  percent_scale: 3 | 4 | 5;
+  percent_scale_origin: Origin;
+  /** Whether the job's own name is drawn. */
+  name: boolean;
+  name_origin: Origin;
+  /** How the percentage and the name share the panel. */
+  rotation: 'take-turns' | 'side-by-side';
+  rotation_origin: Origin;
+  /** How long each half holds the panel, in seconds. */
+  rotate_seconds: number;
+  rotate_seconds_origin: Origin;
+  /** Always false: this build draws no time remaining, and the route refuses a body that asks. */
+  remaining: false;
+  /** `store` when anything about this layout came from the store. */
+  origin: Origin;
+  /** True when any value came from the store, which is what decides whether to offer a reset. */
+  overridden: boolean;
+  /** Present only when the rotation is side-by-side: what that arrangement draws. */
+  rotation_note?: string;
+}
+
+/** GET /lights/{light}/layouts: every binding on one light, each with the layout it composes with. */
+export interface LayoutsBody {
+  light: string;
+  layouts: Layout[];
+  count: number;
+  persisted: boolean;
+  /** Bindings the store holds a layout for that this module does not drive. */
+  unknown_layouts?: string[];
+  note?: string;
+}
+
+/** What PUT and DELETE on one binding's layout answer: the layout now in force. */
+export interface LayoutAnswer {
+  light: string;
+  layout: Layout;
+  /** PUT: true when the layout is the one written. */
+  applied?: boolean;
+  /** DELETE: false when there was nothing stored, which is not an error. */
+  removed?: boolean;
+  persisted: boolean;
+  note?: string;
+}
+
+/**
+ * One layout as a caller writes it. The write replaces the binding's row whole, so a key the body
+ * leaves out goes back to its default — which is why every write from a screen sends all eight.
+ */
+export interface LayoutRequest {
+  bar: boolean;
+  bar_band: 'top' | 'bottom';
+  bar_rows: number;
+  percent: boolean;
+  percent_scale: 3 | 4 | 5;
+  name: boolean;
+  /** May only be false: this build draws no time remaining, and true is refused rather than ignored. */
+  remaining: false;
+  rotation: 'take-turns' | 'side-by-side';
+  rotate_seconds: number;
+}
+
+/**
+ * One of a light's own presets: the slot it sits at and the name WLED's own interface shows for it,
+ * and nothing else. The body of a preset — its segments, effect, palette, brightness and LED map —
+ * never travels here: it belongs to WLED's own interface, which is where a preset is made.
+ */
+export interface Preset {
+  /** The slot the preset is stored in, and the number a state write addresses. Slot 0 is never listed. */
+  slot: number;
+  /** The name, with surrounding spaces trimmed, because that trim is what a moment's `which` matches. */
+  name: string;
+  /** True when the slot carries no name; it is still a preset the light holds and can run. */
+  unnamed: boolean;
+}
+
+/**
+ * GET /devices/{name}/presets: the preset table the light itself reports, and whether it answered.
+ *
+ * A light that could not be read is not refused: `presets_known` is false, the list is empty and
+ * `presets_unread` says why — the difference between a light holding no presets and one nobody
+ * could ask, which a picker has to keep apart.
+ */
+export interface PresetsBody {
+  device: string;
+  address: string;
+  presets_known: boolean;
+  presets: Preset[];
+  count: number;
+  presets_unread?: string;
+  note: string;
+}
+
+/** The light a snapshot was taken from: how this module names it, and how it names itself. */
+export interface SnapshotDevice {
+  /** The light's name on these routes: its address without the scheme. */
+  name: string;
+  address: string;
+  /** The name the light calls itself, from its own /json/info. */
+  controller: string;
+  firmware: string;
+  kind: 'panel' | 'strip';
+  width: number;
+  height: number;
+  pixels: number;
+}
+
+/** Something a snapshot cannot give back, and the reason. */
+export interface SnapshotOmission {
+  member: string;
+  why: string;
+}
+
+/** One snapshot of one light: its configuration, its presets and its state, kept as a file. */
+export interface Snapshot {
+  /** The snapshot's name on these routes, and its file's name: the light and the moment. */
+  id: string;
+  taken_at: string;
+  device: SnapshotDevice;
+  /** The file's size on disk. */
+  bytes: number;
+  /** How many preset slots it defines, not counting slot 0. */
+  presets: number;
+  /** What this snapshot cannot give back: always `nw.ins`, and the wifi password. */
+  omits: SnapshotOmission[];
+  /** Always false: a literal hundred-per-cent clone is impossible over the API. */
+  complete_clone: boolean;
+  note?: string;
+}
+
+/** GET /devices/{name}/snapshot: the snapshots this module holds of one light, newest first. */
+export interface SnapshotsBody {
+  device: string;
+  address: string;
+  snapshots: Snapshot[];
+  count: number;
+  /** False when this module was granted no data directory, in which case none can be taken. */
+  persisted: boolean;
+  /** Files in the snapshot folder that cannot be decoded, reported rather than left out. */
+  unreadable?: { id: string; why: string }[];
+  note?: string;
+}
+
+/** What a restore writes and what it refuses to, worked out from one snapshot before anything is sent. */
+export interface RestorePlan {
+  /** The sections written, in the order they go out. */
+  sections: string[];
+  /** The sections of the dump that are not written, each with its reason. */
+  withheld: { section: string; why: string }[];
+  /** The network section is sent whole except for its credential. */
+  nw: { sent: boolean; members_removed: string[]; why: string };
+  /** True when the snapshot's preset table is written with the configuration. */
+  presets: boolean;
+}
+
+/** GET /devices/{name}/snapshot/{id}: one snapshot, and what restoring it would do. */
+export interface SnapshotDetailBody {
+  device: string;
+  snapshot: Snapshot;
+  counts: { config_bytes: number; presets_bytes: number; state_bytes: number };
+  /** False when this build cannot build a restore body from this file, in which case see `unrestorable`. */
+  restorable: boolean;
+  unrestorable?: string;
+  restore: RestorePlan;
+}
+
+/** What a restore measured while it waited for the light to answer again. */
+export interface Reboot {
+  requested: boolean;
+  /** True when at least one poll failed, so the light was seen to go away and come back. */
+  observed: boolean;
+  polls: number;
+  failed_polls: number;
+  first_refusal_seconds?: number;
+  answered_after_seconds: number;
+  outage_seconds?: number;
+  waited_seconds: number;
+  measured_reference: string[];
+  measured_source: string;
+  note?: string;
+}
+
+/** POST /devices/{name}/restore: what was written, and what the light did. */
+export interface RestoreAnswer {
+  device: string;
+  restored: Snapshot;
+  /** The copy of the light as it stood before the write, named so a bad restore can be undone. */
+  safety_snapshot: Snapshot;
+  restore: RestorePlan;
+  reboot: Reboot;
+  complete_clone: boolean;
+  omits: SnapshotOmission[];
+  note?: string;
+}
+
+/** One light's answer to a preview: whether it took the picture, and what it did with it. */
+export interface PreviewLight {
+  controller: string;
+  light: string;
+  /** Absent when this light took the picture; otherwise the registered code it refused with. */
+  refused?: string;
+  why?: string;
+  name?: string;
+  halves?: string[];
+  answers?: string;
+}
+
+/** POST /preview-pattern: one diagnostic picture, and what each light did with it. */
+export interface PatternAnswer {
+  pattern: 'solid' | 'border' | 'quarters';
+  holds_seconds: number;
+  lights: PreviewLight[];
+  count: number;
+  controller?: string;
+  answers?: string;
+}
+
+/** POST /preview-finished: the finished word fired early, and what each light did with it. */
+export interface FinishedAnswer {
+  event: string;
+  colour: FrameColour;
+  scale: number;
+  holds_seconds: number;
+  lights: PreviewLight[];
+  count: number;
+  controller?: string;
+}
+
 const operation = (
   id: string,
   method: Operation['method'],
@@ -492,6 +748,29 @@ const routes = (namespace: string) => {
     resumeEverything: operation('resume-everything', 'DELETE', `${base}/pause`, 'json'),
     pauseBinding: operation('pause-binding', 'PUT', `${base}/bindings/{id}/pause`, 'json', 'application/json'),
     resumeBinding: operation('resume-binding', 'DELETE', `${base}/bindings/{id}/pause`, 'json'),
+
+    // The layout a binding composes with: one row per binding, because a 256x64 panel and a 48-LED
+    // strip do not compose the same way and two bindings on one light can be laid out differently.
+    // The list is keyed on the light and the write on the binding, which is what the screens need.
+    listLayouts: operation('list-layouts', 'GET', `${base}/lights/{light}/layouts`, 'json'),
+    changeLayout: operation('change-layout', 'PUT', `${base}/bindings/{id}/layout`, 'json', 'application/json'),
+    resetLayout: operation('delete-layout', 'DELETE', `${base}/bindings/{id}/layout`, 'json'),
+
+    // A light's own preset table: names only, read-only, one route that a picker and a card share.
+    listPresets: operation('list-presets', 'GET', `${base}/devices/{name}/presets`, 'json'),
+
+    // Snapshots and the one restore. The list has to answer while the light is dead — that is what a
+    // snapshot is for — and the read of one carries the table a restore would send, so the page that
+    // offers the button is the page that shows it.
+    listSnapshots: operation('list-snapshots', 'GET', `${base}/devices/{name}/snapshot`, 'json'),
+    takeSnapshot: operation('take-snapshot', 'POST', `${base}/devices/{name}/snapshot`, 'json'),
+    readSnapshot: operation('read-snapshot', 'GET', `${base}/devices/{name}/snapshot/{id}`, 'json'),
+    restoreSnapshot: operation('restore-snapshot', 'POST', `${base}/devices/{name}/restore`, 'json', 'application/json'),
+
+    // The proved tests. Each paints a real light, so nothing calls them without a press: they are
+    // the only instrument this build has, because the firmware cannot be asked what its pixels are.
+    previewPattern: operation('preview-pattern', 'POST', `${base}/preview-pattern`, 'json'),
+    previewFinished: operation('preview-finished', 'POST', `${base}/preview-finished`, 'json'),
   };
 };
 
@@ -627,6 +906,68 @@ export const moduleApi = (host: ModuleHost) => {
         { path: { id } },
         host.signal,
       ),
+
+    /** Every binding on one light, each with the layout it composes with and where each value came from. */
+    listLayouts: (light: string) =>
+      transport.call<LayoutsBody>(held.listLayouts, { path: { light } }, host.signal),
+
+    /**
+     * Writes one binding's layout. The body replaces the binding's row whole, so a caller sends every
+     * key: a key left out goes back to the built-in default rather than to what the row held.
+     */
+    changeLayout: (id: string, body: LayoutRequest) =>
+      transport.call<LayoutAnswer>(held.changeLayout, { path: { id }, body }, host.signal),
+
+    /** Puts one binding's layout back to the built-in default, which is what a row of nothing means. */
+    resetLayout: (id: string) =>
+      transport.call<LayoutAnswer>(held.resetLayout, { path: { id } }, host.signal),
+
+    /** The light's own preset table, by slot and name — names only, and never a preset's body. */
+    listPresets: (name: string) =>
+      transport.call<PresetsBody>(held.listPresets, { path: { name } }, host.signal),
+
+    /** Every snapshot this module holds of one light, newest first. Answers while the light is dead. */
+    listSnapshots: (name: string) =>
+      transport.call<SnapshotsBody>(held.listSnapshots, { path: { name } }, host.signal),
+
+    /** Reads the light and keeps a copy of it now. A light that does not answer is refused, not stored half-read. */
+    takeSnapshot: (name: string) =>
+      transport.call<{ device: string; snapshot: Snapshot; note?: string }>(
+        held.takeSnapshot,
+        { path: { name } },
+        host.signal,
+      ),
+
+    /** One snapshot, with the table a restore would send and the list it would not. */
+    readSnapshot: (name: string, id: string) =>
+      transport.call<SnapshotDetailBody>(held.readSnapshot, { path: { name, id } }, host.signal),
+
+    /**
+     * Writes a snapshot's configuration back onto its light and waits for it to answer. `confirm` is
+     * required by the route and checked before the snapshot is even read: a restore rewrites the
+     * light's whole configuration and restarts it.
+     */
+    restoreSnapshot: (name: string, id: string) =>
+      transport.call<RestoreAnswer>(
+        held.restoreSnapshot,
+        { path: { name }, body: { snapshot: id, confirm: true } },
+        host.signal,
+      ),
+
+    /**
+     * Paints one diagnostic picture on one light, for a hold, and answers what that light did with it.
+     * The light is named because a preview without one fires at every light the instance drives.
+     */
+    previewPattern: (light: string, pattern: 'solid' | 'border' | 'quarters', hold: number) =>
+      transport.call<PatternAnswer>(
+        held.previewPattern,
+        { query: { light, pattern, hold } },
+        host.signal,
+      ),
+
+    /** Fires the finished moment early on one light, for its own hold. */
+    previewFinished: (light: string, hold: number) =>
+      transport.call<FinishedAnswer>(held.previewFinished, { query: { light, hold } }, host.signal),
   };
 };
 
