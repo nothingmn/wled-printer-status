@@ -1274,6 +1274,9 @@ type transitions struct {
 	state    string
 	hadState bool
 
+	// stale is whether the log has already said the reading is stale. On a job that is
+	// over it is deliberately not cleared when the reading comes back — see the staleness
+	// rule at the end of note.
 	stale bool
 }
 
@@ -1361,6 +1364,9 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 // present tense, which /status answers better than a log can. A printer that says
 // PRINTING for an hour is one line at the start of the hour and none during it, however
 // often the module looks.
+//
+// Staleness is a line of the first kind except on a job that is over, where it is said
+// once and the dips that follow are not: see the rule at the end of this method.
 func (d *driver) note(snapshot printer.Snapshot) {
 	if !d.told.ever {
 		d.told = transitions{
@@ -1400,12 +1406,22 @@ func (d *driver) note(snapshot printer.Snapshot) {
 		d.told.state, d.told.hadState = snapshot.State.Value, true
 	}
 
+	// A job that is over says the same thing however quiet the printer goes. On a
+	// finished machine the reading dips into staleness and back every minute or two —
+	// a cooling bed is a value that moved, so the change clock restarts — and each dip
+	// is a true fact about a printer with nothing new to say, not news. So the entry
+	// into staleness is said once, the recovery is not said at all while the last word
+	// is terminal, and told.stale is left where the entry put it so the next dip is
+	// silent too. The first word that says the printer is doing something again — a
+	// print, a pause, an idle machine somebody may walk up to — puts the pair back:
+	// from there a silence is doubt again, and it is logged as one.
 	if snapshot.Stale != d.told.stale {
-		d.told.stale = snapshot.Stale
-
-		if snapshot.Stale {
+		switch {
+		case snapshot.Stale:
+			d.told.stale = true
 			d.logf("%s: the reading from %s is stale", name, printerPhrase(snapshot))
-		} else {
+		case !snapshot.Terminal():
+			d.told.stale = false
 			d.logf("%s: the reading from %s is live again", name, printerPhrase(snapshot))
 		}
 	}

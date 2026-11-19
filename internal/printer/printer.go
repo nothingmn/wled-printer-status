@@ -413,6 +413,29 @@ func (s Snapshot) liveJob() bool {
 	return s.Job.Live && s.Job.Running.Known && s.Job.Running.Value
 }
 
+// Terminal reports whether the printer's last word about a job says that job is
+// over: it finished, or it was stopped.
+//
+// A terminal word is a fact no later reading can take back, which is why it
+// matters to a caller holding Stale. "Printing, 94 %" can be made false by a
+// printer going quiet; "finished" cannot. A machine that has said FINISHED and
+// then says nothing has nothing new to say, and a display is right to keep
+// showing it. Every other word — the four with a job on the bed, and the words
+// that leave the printer's activity open such as IDLE, READY, ERROR, UNKNOWN or
+// one this build has no reading of — can still be overtaken by a reading this
+// module has not received, so silence about those is doubt and not quiet.
+//
+// The word that stands is the job's own when the machine reports one apart from
+// its state, exactly as Running reads it.
+func (s Snapshot) Terminal() bool {
+	state := standingWord(s.Job.State, s.State)
+	if !state.Known {
+		return false
+	}
+
+	return state.Value == StateFinished || state.Value == StateStopped
+}
+
 // jobOf reads the job out of the tree and decides whether it is present tense.
 func jobOf(tree map[string]json.RawMessage, connected, stale bool, state Reading[string]) Job {
 	job := Job{
@@ -441,11 +464,7 @@ func jobOf(tree map[string]json.RawMessage, connected, stale bool, state Reading
 // job. A word this build has never seen leaves the reading unknown rather than
 // false, because a firmware that added a state did not thereby remove the job.
 func runningJob(jobState, printerState Reading[string]) Reading[bool] {
-	state := jobState
-	if !state.Known {
-		state = printerState
-	}
-
+	state := standingWord(jobState, printerState)
 	if !state.Known {
 		return Reading[bool]{}
 	}
@@ -458,6 +477,18 @@ func runningJob(jobState, printerState Reading[string]) Reading[bool] {
 	}
 
 	return Reading[bool]{}
+}
+
+// standingWord is the one word that describes the printer: the job's own when the
+// machine reports one apart from its state, and otherwise the machine's. It is
+// the same choice Running and Terminal both make, so "a job is on the bed" and
+// "the job is over" cannot be read off two different words.
+func standingWord(jobState, printerState Reading[string]) Reading[string] {
+	if jobState.Known {
+		return jobState
+	}
+
+	return printerState
 }
 
 // copyRecord takes the record's own copy of the slices a caller handed in, so a

@@ -794,6 +794,75 @@ func TestTheStatusRouteAnswersWhatTheModuleThinks(t *testing.T) {
 	}
 }
 
+// TestTheStatusRouteKeepsTheTruthWhileTheFinishedPanelHolds is the honesty half of the
+// rule the operator's panel now follows: the picture stops reacting to a finished
+// printer's silence, and the route still reports the reading as stale, with its real
+// age, so nobody reads the green as a claim that the module knows something current.
+func TestTheStatusRouteKeepsTheTruthWhileTheFinishedPanelHolds(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 1, 27, 56, 0, time.UTC)
+
+	snapshot := snapshotOf(printer.StateFinished, true, true, at.Add(-65*time.Second))
+	snapshot.ObservedAt = at
+	snapshot.Age = 65 * time.Second
+
+	frame := render.Decide(snapshot, at, render.Config{LEDs: 16384})
+	if frame.Colour != render.ColourFinished {
+		t.Fatalf("the frame for a finished printer that has gone quiet is %+v, want the finished green", frame)
+	}
+
+	publish(snapshot, frame)
+
+	t.Cleanup(func() {
+		current.Store(nil)
+		sent.Store(nil)
+	})
+
+	recorder := httptest.NewRecorder()
+	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /status answered %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Reading struct {
+			AgeSeconds float64 `json:"age_seconds"`
+			Stale      bool    `json:"stale"`
+		} `json:"reading"`
+		Frame struct {
+			Colour struct {
+				R uint8 `json:"r"`
+				G uint8 `json:"g"`
+				B uint8 `json:"b"`
+			} `json:"colour"`
+			Lit    int    `json:"lit"`
+			Reason string `json:"reason"`
+		} `json:"frame"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the answer is not JSON: %v", err)
+	}
+
+	if !body.Reading.Stale {
+		t.Fatal("the route calls a 65-second-old reading live, which is the lie this module exists to avoid")
+	}
+
+	if body.Reading.AgeSeconds != 65 {
+		t.Fatalf("the route says the reading is %v seconds old, want 65", body.Reading.AgeSeconds)
+	}
+
+	if body.Frame.Colour.R != render.ColourFinished.R ||
+		body.Frame.Colour.G != render.ColourFinished.G ||
+		body.Frame.Colour.B != render.ColourFinished.B {
+		t.Fatalf("the frame's colour is %+v, want the finished green %+v", body.Frame.Colour, render.ColourFinished)
+	}
+
+	if body.Frame.Lit != 0 {
+		t.Fatalf("the frame lights %d LEDs, want 0: a finished job has no progress to fill", body.Frame.Lit)
+	}
+}
+
 // TestTheStatusRouteRefusesBeforeItHasLooked holds the route to its own code
 // rather than to a frame of zeros, which a person would read as a strip that is
 // black.
@@ -2096,6 +2165,83 @@ func TestTheReadingGoingStaleWritesOneLineEach(t *testing.T) {
 	written.want(t,
 		"wled-printer-status: the reading from the printer Morpheus is stale",
 		"wled-printer-status: the reading from the printer Morpheus is live again")
+}
+
+// TestATerminalJobsStalenessIsOneLineHoweverLongItLasts is the flap the operator watched
+// on the night of 2026-11-19, seen from the log: a finished printer whose reading dipped
+// into staleness and back every minute or two wrote two lines for every dip, for as long
+// as the cooling bed took to stop moving. A job that is over has nothing new to say, so
+// the first dip is the line and the ten after it are not.
+func TestATerminalJobsStalenessIsOneLineHoweverLongItLasts(t *testing.T) {
+	reader, source, written := newLogWatch(t)
+
+	at := time.Date(2026, time.November, 19, 1, 6, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	source.show(snapshotOf(printer.StateFinished, true, false, at))
+	reader.step(ctx, at)
+
+	written.want(t)
+
+	// The first dip, then ten more of the shape the instance's own log recorded: stale
+	// for a minute or two, live again for a few seconds as a value moved.
+	for i := 0; i < 11; i++ {
+		dipped := at.Add(time.Duration(2*i+1) * time.Minute)
+
+		source.show(snapshotOf(printer.StateFinished, true, true, dipped))
+		reader.step(ctx, dipped)
+
+		source.show(snapshotOf(printer.StateFinished, true, false, dipped.Add(tickEvery)))
+		reader.step(ctx, dipped.Add(tickEvery))
+	}
+
+	written.want(t, "wled-printer-status: the reading from the printer Morpheus is stale")
+}
+
+// TestAJobThatGoesBackToPrintingReportsStalenessAgain: the quiet rule belongs to a job
+// that is over and to nothing else. The moment the printer says it is doing something
+// again, a silence is doubt once more — the recovery is said, because that is when the
+// reading came back, and the next dip is said as it always was.
+func TestAJobThatGoesBackToPrintingReportsStalenessAgain(t *testing.T) {
+	reader, source, written := newLogWatch(t)
+
+	at := time.Date(2026, time.November, 19, 1, 6, 0, 0, time.UTC)
+	ctx := context.Background()
+
+	source.show(snapshotOf(printer.StateFinished, true, false, at))
+	reader.step(ctx, at)
+
+	written.want(t)
+
+	source.show(snapshotOf(printer.StateFinished, true, true, at))
+	reader.step(ctx, at.Add(tickEvery))
+
+	written.want(t, "wled-printer-status: the reading from the printer Morpheus is stale")
+
+	// The bed cools and the reading comes back on a job that is still over: nothing to say.
+	source.show(snapshotOf(printer.StateFinished, true, false, at))
+	reader.step(ctx, at.Add(2*tickEvery))
+
+	written.want(t, "wled-printer-status: the reading from the printer Morpheus is stale")
+
+	// A new print starts. The word moves and the reading is live again, and from here the
+	// pair reports as it always did.
+	source.show(snapshotOf(printer.StatePrinting, true, false, at))
+	reader.step(ctx, at.Add(3*tickEvery))
+
+	written.want(t,
+		"wled-printer-status: the reading from the printer Morpheus is stale",
+		"wled-printer-status: the printer Morpheus went from FINISHED to PRINTING",
+		"wled-printer-status: the reading from the printer Morpheus is live again")
+
+	source.show(snapshotOf(printer.StatePrinting, true, true, at))
+	reader.step(ctx, at.Add(4*tickEvery))
+
+	written.want(t,
+		"wled-printer-status: the reading from the printer Morpheus is stale",
+		"wled-printer-status: the printer Morpheus went from FINISHED to PRINTING",
+		"wled-printer-status: the reading from the printer Morpheus is live again",
+		"wled-printer-status: the reading from the printer Morpheus is stale")
 }
 
 // TestAHeartbeatRepaintWritesNoLine is the line a minute that must not exist. A still

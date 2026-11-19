@@ -102,6 +102,14 @@ holds the whole light, and keeps holding it.
 
 ### Changed
 
+- **A finished light stays finished when the printer goes quiet.** Until now a printer that stopped
+  reporting was painted as a light that had lost contact — dim red — whatever it had last said, so a
+  finished print whose bed was still cooling moved a value every minute or two, went stale again 30 s
+  later, and the light flapped between the finished green and the stale red all night. Silence now only
+  downgrades a job that can still be in flight: `FINISHED` keeps its green and `STOPPED` its grey through
+  a silence, and a print that is running, paused or waiting on a person still turns the light dim red.
+  `GET /status` keeps telling the truth either way — `"stale": true` and the real `age_seconds` — and the
+  log says a finished printer went stale once, rather than once per dip.
 - **The `FINISHED` word reaches the panel.** It is sent as pixels over DDP — to the controller's port 4048
   — instead of as a per-LED array in a JSON state body, which this firmware accepted and drew by nothing.
   The word is pushed again once a second for the minute it holds, and the light goes back to the steady

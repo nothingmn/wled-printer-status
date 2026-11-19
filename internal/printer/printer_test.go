@@ -456,6 +456,90 @@ func TestTheJobStateWinsOverTheMachineState(t *testing.T) {
 	}
 }
 
+// TestTheWordsThisBuildCallsTerminal is the table behind Snapshot.Terminal, and it is
+// the other half of Job.Running: the two words in which a job is over, and nothing
+// else. Everything else can still be overtaken by a reading this module has not
+// received, so a caller must treat silence about it as doubt.
+func TestTheWordsThisBuildCallsTerminal(t *testing.T) {
+	cases := []struct {
+		state string
+		want  bool
+	}{
+		{StateFinished, true},
+		{StateStopped, true},
+		{StatePrinting, false},
+		{StatePaused, false},
+		{StateBusy, false},
+		{StateAttention, false},
+		{StateIdle, false},
+		{StateReady, false},
+		{StateError, false},
+		{StateUnknown, false},
+		{"DRYING", false},
+	}
+
+	for _, current := range cases {
+		state, err := Apply(State{}, Record{ID: "d1", Connected: true},
+			[]Update{set(PathState, quote(t, current.state))}, appliedAt)
+		if err != nil {
+			t.Fatalf("%s failed the batch: %v", current.state, err)
+		}
+
+		if got := state.Snapshot(appliedAt).Terminal(); got != current.want {
+			t.Errorf("%s reads as terminal %v, want %v", current.state, got, current.want)
+		}
+	}
+}
+
+// TestTerminalFollowsTheWordThatStands holds Terminal to the same precedence Running
+// keeps: a machine that reports what the print is doing apart from its own state has
+// said something more specific, and "the job is over" must not be read off a different
+// word from "a job is on the bed".
+func TestTerminalFollowsTheWordThatStands(t *testing.T) {
+	finishedJob, err := Apply(State{}, Record{ID: "d1", Connected: true}, []Update{
+		set(PathState, `"PRINTING"`),
+		set(PathJobState, `"FINISHED"`),
+	}, appliedAt)
+	if err != nil {
+		t.Fatalf("the batch failed: %v", err)
+	}
+
+	snapshot := finishedJob.Snapshot(appliedAt)
+
+	if !snapshot.Terminal() {
+		t.Fatal("a machine reporting PRINTING whose job reports FINISHED does not read as terminal")
+	}
+
+	if snapshot.Job.Running.Value {
+		t.Fatal("the same snapshot reads as a job on the bed; the two readings disagree about the word that stands")
+	}
+
+	resumed, err := Apply(State{}, Record{ID: "d1", Connected: true}, []Update{
+		set(PathState, `"FINISHED"`),
+		set(PathJobState, `"PRINTING"`),
+	}, appliedAt)
+	if err != nil {
+		t.Fatalf("the batch failed: %v", err)
+	}
+
+	if resumed.Snapshot(appliedAt).Terminal() {
+		t.Fatal("a machine reporting FINISHED whose job reports PRINTING reads as terminal")
+	}
+}
+
+// TestAPrinterThatSaidNothingIsNotTerminal: no word is not a finished job. A printer
+// this build has never heard from is unknown, and silence about it is doubt.
+func TestAPrinterThatSaidNothingIsNotTerminal(t *testing.T) {
+	state, err := Apply(State{}, Record{ID: "d1", Connected: true}, nil, appliedAt)
+	if err != nil {
+		t.Fatalf("the empty batch failed: %v", err)
+	}
+
+	if state.Snapshot(appliedAt).Terminal() {
+		t.Fatal("a printer that has reported no state reads as terminal")
+	}
+}
+
 // quote renders a state word as the JSON string the tree carries.
 func quote(t *testing.T, text string) string {
 	t.Helper()

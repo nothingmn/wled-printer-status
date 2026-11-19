@@ -281,7 +281,11 @@ error shown in any colour but a red hue.
 ### R-11 · Never green when it is not known to be good · `derived`
 
 **Requirement.** The strip does not show green for a state whose colour the operator has not
-chosen, and never for a printer that is disconnected, stale, or unknown.
+chosen, and never for a printer that is disconnected, stale, or unknown — with one exception, and
+it is a narrowing rather than a hole: a job that has finished or been stopped is beyond a later
+reading's reach, so `FINISHED` keeps its green (and `STOPPED` its grey) through a silence, while the
+route goes on reporting the reading as stale with its real age. Silence still downgrades every word
+a reading could overturn, `PAUSED` included.
 
 **Where this comes from.** Green is the one colour the operator assigned a meaning to —
 "good". Any state he has not spoken for is not known to be good, so green would assert
@@ -796,11 +800,13 @@ statement and a disagreement between them is a defect in one of the two.
 | `ERROR` | The printer is in error | **Red, in hues** | Operator's own words: "Red = bad" and "error codes would map to hues of red". No table of codes and hues exists yet, so every error shows one red (`200,0,0`) |
 | `UNKNOWN` | The printer has reported no state | **Dim blue** | Proposed and approved. A printer that has said nothing must not look like a verdict, so neither green, red nor yellow |
 | **Disconnected** | The host holds no session; the state tree is the last one it reported | **Dim red, breathing, and never the last-known progress bar** | M-6, proposed and approved. It is the error red at a third brightness, deliberately: the reading is a memory, not an observation |
-| **Stale** | Connected, but nothing has changed for 30 s | **Dim red, breathing, and never the last-known progress bar** | M-7, proposed and approved, and the same dim red as disconnected on purpose — either way there is nothing current to show |
+| **Stale** | Connected, but nothing has changed for 30 s | **Dim red, breathing, and never the last-known progress bar** — unless the last word is `FINISHED` or `STOPPED`, which keeps its own colour | M-7, proposed and approved, and the same dim red as disconnected on purpose — either way there is nothing current to show. The exception is the operator's own rule taken seriously: a job that is over is a fact, so a quiet printer beside it has nothing new to say, and the reading is still reported stale with its age while the picture holds |
 
 **What this settles, and what it does not.** The colour of every state is decided, and the two rules
 that matter most are decided with it: a disconnected or stale printer never keeps its progress bar,
-and a finished job holds its green until the next job rather than expiring on a timer. **The breathing
+and a finished job holds its green until the next job rather than expiring on a timer — including
+through a silence, because a cooling bed that moves a value every minute or two is not news about a
+job that is over. **The breathing
 on `PAUSED`, disconnected and stale is approved but not built** — there is no animation layer yet, so
 those three currently show a steady colour. `STOPPED`'s grey-versus-off choice, `ERROR`'s code-to-hue
 table, and the fill's rounding remain the open questions they were (Q-17), and are marked so where

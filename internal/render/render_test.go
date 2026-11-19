@@ -589,3 +589,186 @@ func TestUnfilledRemainderIsOff(t *testing.T) {
 		t.Errorf("unfilled = %v, want off; if this was changed on purpose, change the test too", frame.Unfilled())
 	}
 }
+
+// foldAt folds a tree into a snapshot whose newest fact changed at changed and which is
+// read at read, so a test can walk a printer through a silence and out of it without
+// touching a clock.
+func foldAt(t *testing.T, tree map[string]string, changed, read time.Time) printer.Snapshot {
+	t.Helper()
+
+	record := printer.Record{ID: "printer-1", Name: "test printer", Connected: true, State: map[string]json.RawMessage{}}
+
+	for path, value := range tree {
+		record.State[path] = json.RawMessage(value)
+	}
+
+	state, err := printer.Apply(printer.State{}, record, nil, changed)
+	if err != nil {
+		t.Fatalf("folding the printer record: %v", err)
+	}
+
+	return state.Snapshot(read)
+}
+
+// TestATerminalWordHoldsItsColourThroughASilence is the defect the operator watched on
+// the night of 2026-11-19: a finished print whose panel flapped between the finished
+// green and the stale dark red every minute or two, because the bed cooled, the cooling
+// restarted the change clock, and each dip past StaleAfter was painted as a light that
+// had lost contact. A finish is terminal — nothing the printer could report next would
+// change it — so the last known state stands and the picture does not react. Both
+// terminal words are held, each in its own colour, on both sides of the horizon and well
+// past it.
+func TestATerminalWordHoldsItsColourThroughASilence(t *testing.T) {
+	cases := []struct {
+		state  string
+		colour wled.RGB
+	}{
+		{printer.StateFinished, ColourFinished},
+		{printer.StateStopped, ColourStopped},
+	}
+
+	ages := []time.Duration{
+		0,
+		printer.StaleAfter - time.Second, // the last moment it is still live
+		printer.StaleAfter,               // the moment it tips over
+		printer.StaleAfter + time.Second, // one second past
+		91 * time.Second,                 // the flap the operator saw, twice over
+		10 * time.Minute,                 // a long silence
+		6 * time.Hour,                    // an overnight one
+	}
+
+	for _, current := range cases {
+		t.Run(current.state, func(t *testing.T) {
+			fresh := Decide(snapshotAt(t, true, printingTree(current.state, percent(100)), 0), moment, Config{LEDs: strip})
+
+			if fresh.Colour != current.colour || fresh.Lit != 0 || fresh.Reason != ReasonNoLiveJob {
+				t.Fatalf("the live frame is %+v, want the %s colour, nothing lit and %q",
+					fresh, current.state, ReasonNoLiveJob)
+			}
+
+			for _, age := range ages {
+				snapshot := snapshotAt(t, true, printingTree(current.state, percent(100)), age)
+				frame := Decide(snapshot, moment.Add(age), Config{LEDs: strip})
+
+				if frame != fresh {
+					t.Errorf("judged %v after the last change the frame is %+v, want the frame it showed when the word was fresh, %+v",
+						age, frame, fresh)
+				}
+
+				// The module still tells the truth about the age of what it knows, even
+				// where the picture stops reacting to it.
+				if age > printer.StaleAfter && !snapshot.Stale {
+					t.Errorf("a reading %v old is not stale; the fixture is wrong", age)
+				}
+
+				if age > printer.StaleAfter && snapshot.Age != age {
+					t.Errorf("the snapshot says the reading is %v old, want %v", snapshot.Age, age)
+				}
+			}
+		})
+	}
+}
+
+// TestALiveJobIsStillDowngradedBySilence is the other half of the rule, and what makes
+// the change above a narrowing rather than a removal: the four states with a job on the
+// bed go quiet in the same way a finished printer does, and the strip still goes dim red
+// for them, with nothing lit, at the horizon and long past it.
+//
+// PAUSED is deliberately on this side. A pause is a job on the bed that can resume or
+// end, so a reading that stops moving no longer says the print is still stopped where it
+// stood; the frozen bar must not be presented as current, which is exactly what R-17
+// forbids. Only a word that records the job as over is beyond a later reading's reach.
+func TestALiveJobIsStillDowngradedBySilence(t *testing.T) {
+	for _, state := range []string{
+		printer.StatePrinting, printer.StateBusy, printer.StatePaused, printer.StateAttention,
+	} {
+		for _, age := range []time.Duration{printer.StaleAfter + time.Second, 10 * time.Minute} {
+			t.Run(state+"/"+age.String(), func(t *testing.T) {
+				snapshot := snapshotAt(t, true, printingTree(state, percent(50)), age)
+
+				if snapshot.Terminal() {
+					t.Fatalf("a printer that says %s reads as terminal; the fixture is wrong", state)
+				}
+
+				frame := Decide(snapshot, moment.Add(age), Config{LEDs: strip})
+
+				if frame.Colour != ColourStale {
+					t.Errorf("colour = %v, want the stale dim red %v for a %s that has gone quiet",
+						frame.Colour, ColourStale, state)
+				}
+
+				if frame.Lit != 0 {
+					t.Errorf("lit = %d, want 0: a silent printer shows no progress", frame.Lit)
+				}
+
+				if frame.Reason != ReasonStale {
+					t.Errorf("reason = %q, want %q", frame.Reason, ReasonStale)
+				}
+			})
+		}
+	}
+}
+
+// TestAFinishedPrinterDoesNotFlashWhenItsReadingComesBack walks the flap itself, tick by
+// tick, in the order the driver saw it: a finished frame, a dip past the horizon, a
+// cooling bed moving a value and the reading coming back, another dip, another recovery.
+// Not one of those ticks may ask the light for anything but the finished frame, and the
+// reading stays stale throughout the dips — the light holds and the route keeps telling
+// the truth about the age.
+func TestAFinishedPrinterDoesNotFlashWhenItsReadingComesBack(t *testing.T) {
+	tree := printingTree(printer.StateFinished, percent(100))
+
+	// The cooling bed moves a value at each of these moments, which is what restarts the
+	// change clock and brought the reading back every minute or two.
+	changed := []time.Duration{0, 95 * time.Second, 200 * time.Second}
+	judged := []time.Duration{
+		0,
+		31 * time.Second,                 // first dip
+		95 * time.Second,                 // the bed moved, read at once
+		95*time.Second + 40*time.Second,  // second dip
+		200 * time.Second,                // the bed moved again
+		200*time.Second + 90*time.Second, // third dip
+	}
+
+	want := ColourFinished
+	staleSeen := 0
+
+	for _, at := range judged {
+		latest := changed[0]
+
+		for _, moment := range changed {
+			if moment <= at {
+				latest = moment
+			}
+		}
+
+		snapshot := foldAt(t, tree, moment.Add(latest), moment.Add(at))
+
+		if snapshot.Stale {
+			staleSeen++
+		}
+
+		frame := Decide(snapshot, moment.Add(at), Config{LEDs: strip})
+
+		if frame.Colour != want || frame.Lit != 0 || frame.Reason != ReasonNoLiveJob {
+			t.Fatalf("at %v after the start the frame is %+v, want the finished green held with nothing lit",
+				at, frame)
+		}
+	}
+
+	if staleSeen == 0 {
+		t.Fatal("no tick in this fixture is stale; it does not reproduce the flap it is about")
+	}
+
+	// And the dips are what the route reports as stale, with a real age, while the frame
+	// above was decided green.
+	dipped := foldAt(t, tree, moment, moment.Add(90*time.Second))
+
+	if !dipped.Stale || dipped.Age != 90*time.Second {
+		t.Fatalf("the dip reads stale=%v age=%v, want stale at 90s", dipped.Stale, dipped.Age)
+	}
+
+	if _, ok := dipped.LiveProgress(); ok {
+		t.Fatal("the dip offers a live progress; the reading is meant to be honest about its age")
+	}
+}

@@ -111,10 +111,12 @@ and the strip's LED count, and returns a `Frame` — one colour, how many LEDs c
 the job, and a short reason naming the rule that fired. It is a pure function: no socket, no clock, no
 state kept between calls. It gives each of the ten reported states the operator's colour, and it gives a
 disconnected or stale printer a dim red strip with nothing filled, whatever percentage the server still
-remembers. Two sub-decisions are **provisional** and marked as such in the source: the fill rounds down
-rather than to the nearest LED, and the LEDs past the fill are off. `main.go` calls it once a second, and
-`drive.go` writes the frame it returns to the controller — so this is the rule the light is showing, not
-a rule waiting for a caller.
+remembers — except for a printer whose last word is `FINISHED` or `STOPPED`, which keeps that word's colour
+through a silence and reports itself stale on the route instead, because a job that is over cannot be
+overtaken by a reading the module never received. Two sub-decisions are **provisional** and marked as such
+in the source: the fill rounds down rather than to the nearest LED, and the LEDs past the fill are off.
+`main.go` calls it once a second, and `drive.go` writes the frame it returns to the controller — so this is
+the rule the light is showing, not a rule waiting for a caller.
 
 A frame goes to the controller as **one request carrying two segments**: the lit part in the state's
 colour, the rest in the off colour. That is not a style choice. A controller draws one segment per run

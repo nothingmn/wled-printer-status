@@ -166,8 +166,15 @@ func (f Frame) Unfilled() wled.RGB {
 // has gone quiet must not be mistaken for one that is printing, and the progress
 // it last reported must not be shown as a bar still filling.
 //
-//  1. Not connected, or stale at at → ColourDisconnected or ColourStale, nothing
-//     filled, and the reason says which.
+// The rule about silence, in one sentence: **staleness may only downgrade the picture
+// while the printer's last word is one a later reading could overturn — a job on the
+// bed, or a state that leaves its activity open — because a job that finished or was
+// stopped is a fact silence cannot retract, and the picture keeps the colour it has.**
+//
+//  1. Not connected → ColourDisconnected, nothing filled. Stale at at, and not
+//     terminal → ColourStale, nothing filled. A terminal word — FINISHED or STOPPED —
+//     is not downgraded by silence: the state's own colour stands and rule 5 gives it
+//     no fill.
 //  2. Otherwise the state's settled colour.
 //  3. The fill is the snapshot's guarded live progress. If that reading refuses,
 //     nothing is filled and the reason says so; no percentage is invented and none
@@ -196,13 +203,19 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 
 	// Rule 1 first. Everything below is a claim about the printer now, and these
 	// two conditions are the ones under which no such claim may be made.
+	//
+	// Silence only downgrades a word a later reading could overturn. A job that has
+	// finished or been stopped is not such a word: nothing the printer could say next
+	// would change that it finished, so a quiet printer means it has nothing new to say
+	// and the finished green stays where it is. A live job going quiet is the opposite
+	// case, and that is the whole point of ColourStale.
 	if !snapshot.Connected {
 		frame.Colour, frame.Reason = ColourDisconnected, ReasonDisconnected
 
 		return frame
 	}
 
-	if staleAt(snapshot, at) {
+	if staleAt(snapshot, at) && !snapshot.Terminal() {
 		frame.Colour, frame.Reason = ColourStale, ReasonStale
 
 		return frame
