@@ -13,6 +13,12 @@ const (
 	originSettings = "the bindings setting of this instance"
 	originLegacy   = "controller_address, printer, brightness and segment: the four settings that came before bindings"
 	originRoutes   = "a change made through this module's own routes, which the settings do not carry"
+
+	// originStore is the set this module read out of its own configuration store. It is a
+	// separate answer from the settings on purpose: the settings were the migration source, the
+	// store is what runs, and an operator who edits the settings pane afterwards has to be able
+	// to read that his edit is not what the light is showing.
+	originStore = "this module's own configuration store, which the settings seeded once and do not change again"
 )
 
 // runner owns the one watch this process runs, and the set of bindings it was built from.

@@ -45,7 +45,15 @@ import (
 
 	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
 	"github.com/prusa3d/prusa-connect/sdk/fault"
+
+	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
+
+// segmentReadTimeout bounds the one read GET /controllers/{name} makes of a light. The client's
+// own timeout is two seconds, so this is the outer bound for a socket that hangs without
+// answering at all: the host gives a route ten seconds before the caller gets nothing, and a
+// controller that has been unplugged must cost a moment rather than the whole of it.
+const segmentReadTimeout = 3 * time.Second
 
 // bindingAPI is the editor's routes, and the two things they reach: the watch this process is
 // running and the host's printer list.
@@ -66,10 +74,26 @@ type bindingAPI struct {
 	// was written. Zero means the process's own session, which is what the module runs on.
 	parent func() context.Context
 
+	// newLight builds the client for one controller's address. It is a field for one route:
+	// GET /controllers/{name} asks the light what segments it holds, and a test that ran that
+	// through the process's own client would be a test that dials a controller. Nil means
+	// wled.New, which is what the process uses.
+	newLight func(address string) (strip, error)
+
 	// bound is how long one read of the printer list may take. Zero means resolveTimeout,
 	// which is the bound configure already uses: a list that never came back must not leave a
 	// route hanging.
 	bound time.Duration
+}
+
+// lightFor is the client for one controller: the test's when one was supplied, and the process's
+// own otherwise.
+func (api bindingAPI) lightFor(address string) (strip, error) {
+	if api.newLight != nil {
+		return api.newLight(address)
+	}
+
+	return wled.New(address)
 }
 
 // watchContext is the context a change starts its watch on: the session's, which outlives every
@@ -553,9 +577,55 @@ type controllerAnswer struct {
 
 	// Whole is the binding that drives the whole controller, and absent when none does.
 	// Segments are the borrowed ones, in the operator's order.
+	//
+	// They are the segments this module has taken, and never the segments the controller holds:
+	// the light's own list is what GET /controllers/{name} asks the controller for, and it is
+	// the list a segment picker is built from.
 	Whole    *string  `json:"whole,omitempty"`
 	Segments []int    `json:"segments"`
 	Printers []string `json:"printers"`
+}
+
+// segmentAnswer is one of a light's own segments, as the light reports it.
+//
+// ID is the number every write addresses and the number a binding names. Name is the segment's
+// own name, `n` on the wire — the one WLED's text effect used to draw, and the name a person
+// gave the zone in WLED's own interface. It is empty on a segment that was never named.
+//
+// The four bounds are the controller's own numbers, in its own spelling, because a caller reads
+// them beside the same four keys in /json/state and writes them back in a segment write. On a 2D
+// controller start/stop are columns and startY/stopY are rows, and all four are always carried:
+// a bound missing its rows would be a bound that reads as the whole panel's width on row zero,
+// which is the collapse docs/handoff.md §6 records from a segment write that left them out.
+type segmentAnswer struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Start  int    `json:"start"`
+	Stop   int    `json:"stop"`
+	StartY int    `json:"startY"`
+	StopY  int    `json:"stopY"`
+}
+
+// controllerReadAnswer is GET /controllers/{name}: the entry the list carries, and the segments
+// the light itself reports.
+//
+// The two are separate members and separate facts. The controller entry is this module's own
+// record — the bindings on that address, and which segments they have taken. Segments is the
+// controller's answer, which is what a person picks from: a controller knows how many segments it
+// holds and what they are called, and nothing this module stores can say that.
+//
+// SegmentsKnown is true only when the controller answered. A light that does not answer leaves
+// it false with the reason in SegmentsUnread and an empty list, rather than a refusal of the
+// route: the bindings on that address are still true, and an empty list presented as the light's
+// answer would read like a light with no segments at all.
+type controllerReadAnswer struct {
+	Controller controllerAnswer `json:"controller"`
+
+	SegmentsKnown bool            `json:"segments_known"`
+	Segments      []segmentAnswer `json:"segments"`
+
+	// SegmentsUnread says why the list is empty, and is absent when the controller answered.
+	SegmentsUnread string `json:"segments_unread,omitempty"`
 }
 
 // controllersAnswer is every controller, and what this module can and cannot see about it.
@@ -626,7 +696,14 @@ func (api bindingAPI) listControllers(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, controllersAnswer{Controllers: found, Count: len(found), SegmentsKnown: false})
 }
 
-// readController is GET /controllers/{name}: one controller, by the name the list gives it.
+// readController is GET /controllers/{name}: one controller, by the name the list gives it, and
+// the segments the light itself holds.
+//
+// The segments are the reason this route exists. Every segment picker is empty without them — a
+// binding names a segment, and the number a person picks has to be a segment the controller
+// really holds, with the name he gave it in WLED's own interface to recognise it by. The answer
+// is one read of the controller's /json/state, whose seg array is what it says it holds; that
+// document is already parsed by internal/wled for the borrow, and this is the same read.
 func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
@@ -639,7 +716,7 @@ func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 
 	for _, one := range found {
 		if one.Name == name {
-			answer(w, http.StatusOK, map[string]any{"controller": one, "segments_known": false})
+			answer(w, http.StatusOK, api.readSegments(r.Context(), one))
 
 			return
 		}
@@ -655,6 +732,64 @@ func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 	refuse(w, r, ControllerNotFound.New(fmt.Sprintf(
 		"This module drives no controller of that name. It drives %s.", strings.Join(names, ", "))).
 		With(fault.StringParam("controller", name)))
+}
+
+// readSegments is one controller's entry with the segments its light reports.
+//
+// A light that does not answer is not a refusal: it is a controller this module drives whose
+// segments could not be read, and the answer says so in words with an empty list. That is the
+// difference between "this light has no segments" and "nobody asked it" — a picker that offered
+// nothing because the light was asleep, with no reason on the page, is the failure this shape
+// exists to prevent.
+func (api bindingAPI) readSegments(ctx context.Context, one controllerAnswer) controllerReadAnswer {
+	said := controllerReadAnswer{Controller: one, Segments: []segmentAnswer{}}
+
+	state, err := api.stateOf(ctx, one.Address)
+	if err != nil {
+		said.SegmentsUnread = err.Error()
+
+		return said
+	}
+
+	said.SegmentsKnown = true
+	said.Segments = segmentsOf(state)
+
+	return said
+}
+
+// stateOf asks one controller what it is doing now, which is where its segments are.
+//
+// The read is bounded twice: the client has its own two-second timeout, and the context here is
+// the outer bound for a socket that hangs without answering at all. The host gives a route ten
+// seconds before the caller gets nothing, so this one must not be able to spend them.
+func (api bindingAPI) stateOf(ctx context.Context, address string) (wled.State, error) {
+	light, err := api.lightFor(address)
+	if err != nil {
+		return wled.State{}, err
+	}
+
+	reading, cancel := context.WithTimeout(ctx, segmentReadTimeout)
+	defer cancel()
+
+	return light.State(reading)
+}
+
+// segmentsOf is the light's own segments, in its own order, as this surface carries them.
+func segmentsOf(state wled.State) []segmentAnswer {
+	out := make([]segmentAnswer, 0, len(state.Segments))
+
+	for _, segment := range state.Segments {
+		out = append(out, segmentAnswer{
+			ID:     segment.ID,
+			Name:   segment.Name,
+			Start:  segment.Start,
+			Stop:   segment.Stop,
+			StartY: segment.StartY,
+			StopY:  segment.StopY,
+		})
+	}
+
+	return out
 }
 
 // errNoBinding is a change asked of a binding this module is not driving. It is a value rather

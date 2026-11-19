@@ -7,6 +7,24 @@ Write the entry in the same change as the code. One bullet per behaviour a
 person outside this repository can observe: a route, a setting, a screen, a
 refusal. Name the route and the setting key, never a function or a file.
 
+## Unreleased
+
+Waiting on `version:` in `module.yaml`, which is not raised until this is released.
+
+### Added
+
+- `GET /controllers/{name}` answers the segments the light itself holds — its `id`, its `name` and its
+  four bounds — which is the list every segment picker is built from. `segments_known` says whether the
+  controller answered; a light that is unplugged answers `200` with an empty list and `segments_unread`
+  saying why, instead of failing the route or offering an empty list as though the light had no segments.
+- The module keeps its own configuration in one versioned JSON document in a writable directory it now
+  asks for at install. The host's settings are read once, as a migration source, and the document is what
+  runs afterwards. That is what makes a change made through the module's routes survive a restart and an
+  upgrade — and, as before, not a `module purge` or a fresh install, which wipes the directory.
+- A configuration document written by an older release is upgraded to the current schema version and
+  written back stamped, rather than being refused or read as though it were current. One written by a
+  newer release is refused, naming both versions.
+
 ## 0.1.0 - 2026-11-18
 
 The first release, published as a beta: the marketplace lists it on its beta channel, and it will change.

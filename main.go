@@ -469,10 +469,11 @@ func methods() wirerpc.Methods {
 				}, openAPI)
 		},
 		// The settings the host merged from module.yaml's defaults and this
-		// instance's config block, sent once before the first request. This is where the
-		// watch starts: the controller's address and the printer to watch are both
-		// settings, so there is nothing to start before they arrive.
-		wirerpc.MethodConfigure: wirerpc.Configure(configure),
+		// instance's config block, sent once before the first request, with the grants
+		// the operator approved beside them. This is where the watch starts, and the
+		// grants are read for one thing: the writable directory this module keeps its
+		// own configuration in. See store.go.
+		wirerpc.MethodConfigure: wirerpc.ConfigureGranted(configure),
 		// The host is stopping this module. The watch is stopped and waited for here, and
 		// not merely abandoned: the writer gives a borrowed segment back on its way out,
 		// and a process that answered this call and exited would leave the operator's
@@ -508,7 +509,11 @@ func methods() wirerpc.Methods {
 // address that is not a URL, a brightness no controller takes, a printer name that
 // matches nothing — because the alternative is a process that runs and never says
 // why it is dark.
-func configure(ctx context.Context, sent Settings) error {
+//
+// The grants matter for one of them: a writable directory is where this module keeps its own
+// configuration (store.go), and a module that was granted none runs from its settings exactly as
+// it did before that store existed.
+func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error {
 	if sent.Message == "" {
 		sent.Message = defaultMessage
 	}
@@ -542,16 +547,17 @@ func configure(ctx context.Context, sent Settings) error {
 	live.setLayout(shape)
 
 	listing, cancel := context.WithTimeout(ctx, resolveTimeout)
-	wanted, err := wantedBindings(listing, fleet, sent)
+	wanted, origin, err := configurationFor(listing, fleet, sent, grants.Data, logf)
 	cancel()
 
 	if err != nil {
 		return err
 	}
 
-	// The set this build can express from its settings: one binding per line of `bindings`,
-	// or the one printer the four older keys name. Nothing here decides what a binding is — the
-	// core underneath runs a set (bindings.go, watch.go) and hands it its own rules.
+	// Which set this start runs: one binding per line of `bindings`, the one printer the four
+	// older keys name, or — when the host granted this module a directory — what its own store
+	// holds, which the settings seeded once. Nothing here decides what a binding is — the core
+	// underneath runs a set (bindings.go, watch.go) and hands it its own rules.
 	//
 	// A refusal here leaves the light as it was and the operator holding the reason, which is
 	// the answer for a configuration mistake. The settings are stored only once the watch is
@@ -561,16 +567,101 @@ func configure(ctx context.Context, sent Settings) error {
 		return err
 	}
 
-	// Which of the two shapes produced this set, for the answer GET /bindings gives.
-	if len(sent.Bindings) > 0 {
-		live.setOrigin(originSettings)
-	} else {
-		live.setOrigin(originLegacy)
-	}
+	// Where the set in force came from, for the answer GET /bindings gives. A set read from this
+	// module's own store is the one an operator has to be able to tell apart from the settings,
+	// because editing the settings pane no longer changes it.
+	live.setOrigin(origin)
 
 	held.Store(&sent)
 
 	return nil
+}
+
+// originOf is where a set built from the settings came from, in the words GET /bindings answers
+// with: the list, or the four settings that came before it.
+func originOf(sent Settings) string {
+	if len(sent.Bindings) > 0 {
+		return originSettings
+	}
+
+	return originLegacy
+}
+
+// configurationFor is the set this start runs, and where it came from.
+//
+// The host granted this module a writable directory (needs.data in module.yaml), and that
+// directory is its own store: one versioned JSON document holding the configuration a person
+// edits. The host's settings are the migration source — the first start with no document writes
+// one from them, and every start after that reads the document instead — which is
+// docs/product-requirements.md §4's rule and not this function's convenience.
+//
+// A module granted no directory runs from its settings exactly as it did before the store
+// existed. That is not a fallback that pretends to be the store: nothing is written, nothing is
+// read, and the line the start writes says which of the two happened.
+func configurationFor(ctx context.Context, fleet devices, sent Settings, dataDir string, log func(string, ...any)) (bindings, string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		set, err := wantedBindings(ctx, fleet, sent)
+		if err != nil {
+			return nil, "", err
+		}
+
+		return set, originOf(sent), nil
+	}
+
+	found, err := loadStore(dataDir)
+
+	switch {
+	case errors.Is(err, errNoStore):
+		// No document: this is the first start of an install, and the settings are the thing it
+		// is migrated from. The document is written before the watch is built, because a store
+		// that was not written would make the next start the same migration again — and a set
+		// the operator changed in the settings pane between the two starts would be read here
+		// but lost at the third.
+		set, buildErr := wantedBindings(ctx, fleet, sent)
+		if buildErr != nil {
+			return nil, "", buildErr
+		}
+
+		entries, renderErr := storeEntries(set)
+		if renderErr != nil {
+			return nil, "", renderErr
+		}
+
+		path, writeErr := saveStore(dataDir, storedConfig{Version: storeVersion, Bindings: entries})
+		if writeErr != nil {
+			return nil, "", writeErr
+		}
+
+		log("%s: this module's own configuration store was written for the first time at %s, from the settings, at schema version %d; the settings are a migration source and are not applied again",
+			name, path, storeVersion)
+
+		return set, originStore, nil
+
+	case err != nil:
+		return nil, "", err
+	}
+
+	if found.Upgraded {
+		// The document was stepped up to this build's version. Writing it back now is what keeps
+		// the upgrade from being redone — and re-decided — on every start.
+		path, writeErr := saveStore(dataDir, found.Config)
+		if writeErr != nil {
+			return nil, "", writeErr
+		}
+
+		log("%s: the configuration store at %s was upgraded from schema version %d to %d",
+			name, path, found.Version, storeVersion)
+	}
+
+	set, err := bindingsFrom(ctx, fleet, found.Config.Bindings)
+	if err != nil {
+		return nil, "", fmt.Errorf("the configuration store %s: %w", storePath(dataDir), err)
+	}
+
+	log("%s: the set this start runs is the one in this module's own store at %s, schema version %d (%d bindings); the settings are a migration source and are not applied again",
+		name, storePath(dataDir), storeVersion, len(set))
+
+	return set, originStore, nil
 }
 
 // stopWatching stops the watch this process is running and waits for it to finish giving

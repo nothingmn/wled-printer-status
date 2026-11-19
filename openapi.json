@@ -277,20 +277,26 @@
       ],
       "get": {
         "operationId": "read-controller",
-        "summary": "One controller, by the name the list gives it",
-        "description": "The same entry GET /controllers carries, for one address. The host takes view_resource on the module's instance before this is called.",
+        "summary": "One controller, and the segments its light holds",
+        "description": "The same entry GET /controllers carries, for one address, and beside it the segments the controller itself reports — the list every segment picker is built from. One read of the controller's own /json/state answers it: id is the number a binding names and every write addresses, name is the name the segment was given in WLED's own interface, and the four bounds are the controller's own numbers in its own spelling, all four always present because a 2D controller's segment is a rectangle of columns and rows. A light that does not answer is not refused: segments_known is false, segments is an empty list and segments_unread says what went wrong, so that a page can tell a light with no segments from one nobody could ask. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
-            "description": "The controller.",
+            "description": "The controller, and the segments its light reports.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "controller": {"$ref": "#/components/schemas/Controller"},
-                    "segments_known": {"type": "boolean", "description": "Always false: nothing here asks a controller which segments it holds."}
+                    "segments_known": {"type": "boolean", "description": "True when the controller answered and segments is its own list. False when it could not be read, in which case segments is empty and segments_unread says why."},
+                    "segments": {
+                      "type": "array",
+                      "description": "The light's own segments, in its own order. Empty when the light holds none, and empty with segments_known false when it could not be read.",
+                      "items": {"$ref": "#/components/schemas/Segment"}
+                    },
+                    "segments_unread": {"type": "string", "description": "Why the segments could not be read, absent when the controller answered."}
                   },
-                  "required": ["controller", "segments_known"]
+                  "required": ["controller", "segments_known", "segments"]
                 }
               }
             }
@@ -723,10 +729,23 @@
           "address": {"type": "string", "description": "The controller as an operator wrote it."},
           "key": {"type": "string", "description": "The same controller with its scheme and host lowercased, which is what the rules compare so that two spellings of one address are one controller."},
           "whole": {"type": "string", "description": "The printer whose binding drives the whole controller, absent when none does."},
-          "segments": {"type": "array", "items": {"type": "integer"}, "description": "The segments the bindings on this controller borrow, in the operator's order. Never the segments the controller holds: nothing here asks it."},
+          "segments": {"type": "array", "items": {"type": "integer"}, "description": "The segments the bindings on this controller borrow, in the operator's order. Never the segments the controller holds: that list is the segments member of GET /controllers/{name}, which asks the controller for it."},
           "printers": {"type": "array", "items": {"type": "string"}, "description": "The device ids of every printer shown on this controller, in the operator's order."}
         },
         "required": ["name", "address", "key", "segments", "printers"]
+      },
+      "Segment": {
+        "type": "object",
+        "description": "One segment of a light, as the controller reports it. The four bounds keep the controller's own spelling because a caller reads them beside the same four keys in the controller's /json/state and writes them back in a segment write.",
+        "properties": {
+          "id": {"type": "integer", "description": "The segment's number: what a binding names and what every write addresses."},
+          "name": {"type": "string", "description": "The segment's own name, as it was given in WLED's own interface. Empty on a segment that was never named."},
+          "start": {"type": "integer", "description": "The first column it covers, inclusive."},
+          "stop": {"type": "integer", "description": "The column after its last one, exclusive, as WLED defines it."},
+          "startY": {"type": "integer", "description": "The first row it covers, inclusive, on a 2D controller. Zero on a strip, which has no rows."},
+          "stopY": {"type": "integer", "description": "The row after its last one, exclusive, on a 2D controller. Zero on a strip, which has no rows, and always carried: a 2D segment whose rows were left out reads as row zero."}
+        },
+        "required": ["id", "name", "start", "stop", "startY", "stopY"]
       },
       "Printer": {
         "type": "object",

@@ -296,6 +296,16 @@ egress:
 # the watchdog stops and restarts a module that goes over its budget. The light would
 # stop answering because a manifest was tidier than the measurement.
 needs:
+  # The module's own configuration lives in a writable directory the host chooses, and the
+  # operator approves it here. One small JSON document, versioned from its first commit, holds
+  # the configuration a person edits (store.go). It sits beside the installed module on Connect's
+  # writable config volume, so it survives a restart and an upgrade — and a `module purge` or a
+  # fresh install loses it, which is what the per-light `download a backup` is for.
+  #
+  # It is asked for rather than written somewhere else because there is nowhere else: the host's
+  # settings belong to the host and a module has no call that writes them back. A module granted
+  # no directory still runs, from its settings, exactly as it did before this store existed.
+  data: true
   memory_mib: 32
 
 # The actions this module may take as itself are a request rather than a grant.

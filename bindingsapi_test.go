@@ -32,6 +32,15 @@ type apiUnderTest struct {
 func newAPIUnderTest(t *testing.T, light *fakeStrip, printers []deviceapi.Device, start bindings) *apiUnderTest {
 	t.Helper()
 
+	return newAPIWith(t, light, printers, start, func(string) (strip, error) { return light, nil })
+}
+
+// newAPIWith is newAPIUnderTest with the client GET /controllers/{name} builds left to the caller,
+// which is how a test reads segments through a real wled client against a server that answers a
+// real /json/state body rather than as a wled.State handed over already parsed.
+func newAPIWith(t *testing.T, light *fakeStrip, printers []deviceapi.Device, start bindings, newLight func(string) (strip, error)) *apiUnderTest {
+	t.Helper()
+
 	ctx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
 
@@ -64,10 +73,11 @@ func newAPIUnderTest(t *testing.T, light *fakeStrip, printers []deviceapi.Device
 
 	mux := http.NewServeMux()
 	bindingAPI{
-		live:   watch,
-		fleet:  func() devices { return fleet },
-		parent: func() context.Context { return ctx },
-		bound:  time.Second,
+		live:     watch,
+		fleet:    func() devices { return fleet },
+		parent:   func() context.Context { return ctx },
+		newLight: newLight,
+		bound:    time.Second,
 	}.mount(mux)
 
 	return &apiUnderTest{mux: mux, watch: watch, light: light, madeSources: made}
@@ -97,6 +107,17 @@ func code(t *testing.T, answer map[string]any) string {
 	found, _ := answer["code"].(string)
 
 	return found
+}
+
+// raw is one request's answer as the bytes it arrived in, which is where a test sees that a
+// member is present rather than only that it decoded to a zero.
+func (a *apiUnderTest) raw(t *testing.T, method, path string) (int, string) {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	a.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+
+	return recorder.Code, recorder.Body.String()
 }
 
 // testPrinters is the fleet every test below reads: two machines to show and one to leave
@@ -582,4 +603,262 @@ func wledStateForSegments(ids ...int) wled.State {
 	}
 
 	return state
+}
+
+// panelState is a real /json/state body from a 256×64 panel: two segments side by side, each
+// named, each carrying all four of its bounds. It is the document the controller actually
+// publishes — the keys are the ones AGENTS.md §8 lists for this firmware — because the point of
+// this route is to read the light's own answer and not a shape this repository invented.
+const panelState = `{
+  "on": true,
+  "bri": 128,
+  "transition": 7,
+  "seg": [
+    {"id": 0, "start": 0, "stop": 128, "startY": 0, "stopY": 64, "on": true,
+     "col": [[0, 170, 0], [0, 0, 0], [0, 0, 0]], "fx": 0, "n": "left"},
+    {"id": 1, "start": 128, "stop": 256, "startY": 0, "stopY": 64, "on": true,
+     "col": [[0, 0, 0]], "fx": 0, "n": "right"}
+  ]
+}`
+
+// stripState is a real /json/state body from a 48-LED strip: one segment, a run of pixels, and no
+// rows at all, because a strip has no second dimension to have them in.
+const stripState = `{
+  "on": true,
+  "bri": 200,
+  "transition": 7,
+  "seg": [
+    {"id": 0, "start": 0, "stop": 48, "on": true, "col": [[0, 0, 255]], "fx": 0, "n": "desk"}
+  ]
+}`
+
+// segmentBody is one segment of an answer, for the comparisons below.
+type segmentBody struct {
+	id     int
+	name   string
+	start  int
+	stop   int
+	startY int
+	stopY  int
+}
+
+// newSegmentsUnderTest builds the routes with the controller answered by a real wled client
+// pointed at a server that serves body, so the segments a caller reads were parsed by
+// internal/wled from the document rather than handed over as a wled.State.
+func newSegmentsUnderTest(t *testing.T, body string) *apiUnderTest {
+	t.Helper()
+
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/state" {
+			http.NotFound(w, r)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+
+	t.Cleanup(controller.Close)
+
+	light := newFakeStrip()
+
+	api := newAPIWith(t, light, testPrinters, bindings{
+		{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
+	}, func(string) (strip, error) { return wled.New(controller.URL) })
+
+	return api
+}
+
+// TestTheControllerRouteAnswersTheLightsOwnSegments is item one of the backend list: the segments
+// a light holds, with the id, the name and the bounds of each, because every segment picker is
+// empty without them.
+//
+// The bodies are the controllers' own /json/state documents, read through the real client, so what
+// is asserted is what a light says rather than a shape this module hoped for.
+func TestTheControllerRouteAnswersTheLightsOwnSegments(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		segments []segmentBody
+	}{
+		{
+			name: "a panel, whose segments are rectangles",
+			body: panelState,
+			segments: []segmentBody{
+				{id: 0, name: "left", start: 0, stop: 128, startY: 0, stopY: 64},
+				{id: 1, name: "right", start: 128, stop: 256, startY: 0, stopY: 64},
+			},
+		},
+		{
+			name: "a strip, which has no rows",
+			body: stripState,
+			segments: []segmentBody{
+				{id: 0, name: "desk", start: 0, stop: 48, startY: 0, stopY: 0},
+			},
+		},
+	}
+
+	for _, one := range cases {
+		t.Run(one.name, func(t *testing.T) {
+			api := newSegmentsUnderTest(t, one.body)
+
+			status, raw := api.raw(t, http.MethodGet, "/controllers/10.0.0.136")
+			if status != http.StatusOK {
+				t.Fatalf("GET /controllers/10.0.0.136 answered %d, want %d: %s", status, http.StatusOK, raw)
+			}
+
+			var body struct {
+				Controller struct {
+					Name     string `json:"name"`
+					Segments []int  `json:"segments"`
+				} `json:"controller"`
+				SegmentsKnown bool `json:"segments_known"`
+				Segments      []struct {
+					ID     *int    `json:"id"`
+					Name   *string `json:"name"`
+					Start  *int    `json:"start"`
+					Stop   *int    `json:"stop"`
+					StartY *int    `json:"startY"`
+					StopY  *int    `json:"stopY"`
+				} `json:"segments"`
+			}
+
+			if err := json.Unmarshal([]byte(raw), &body); err != nil {
+				t.Fatalf("the answer is not JSON: %v (%s)", err, raw)
+			}
+
+			if !body.SegmentsKnown {
+				t.Fatalf("the answer says the segments are not known, and the controller answered: %s", raw)
+			}
+
+			// The controller entry is still the record of what this module has taken, which is a
+			// different fact from what the light holds.
+			if body.Controller.Name != "10.0.0.136" {
+				t.Fatalf("the controller reads as %q, want 10.0.0.136", body.Controller.Name)
+			}
+
+			if len(body.Controller.Segments) != 1 || body.Controller.Segments[0] != 2 {
+				t.Fatalf("the borrowed segments are %v, want [2]", body.Controller.Segments)
+			}
+
+			if len(body.Segments) != len(one.segments) {
+				t.Fatalf("the answer carries %d segments, want %d: %s", len(body.Segments), len(one.segments), raw)
+			}
+
+			for i, want := range one.segments {
+				got := body.Segments[i]
+
+				// Every bound is present, including the two a 1D light leaves at zero: a
+				// segment whose rows were left out reads as row zero on a panel, which is the
+				// collapse this shape exists to prevent.
+				if got.ID == nil || got.Name == nil || got.Start == nil || got.Stop == nil ||
+					got.StartY == nil || got.StopY == nil {
+					t.Fatalf("segment %d is half-specified: %s", i, raw)
+				}
+
+				if *got.ID != want.id || *got.Name != want.name ||
+					*got.Start != want.start || *got.Stop != want.stop ||
+					*got.StartY != want.startY || *got.StopY != want.stopY {
+					t.Fatalf("segment %d reads {%d %q %d %d %d %d}, want {%d %q %d %d %d %d}",
+						i, *got.ID, *got.Name, *got.Start, *got.Stop, *got.StartY, *got.StopY,
+						want.id, want.name, want.start, want.stop, want.startY, want.stopY)
+				}
+			}
+		})
+	}
+}
+
+// TestAControllerThatHoldsNoSegmentsIsAnAnswerAndNotAnAbsence is the difference between "this
+// light has none" and "nobody asked it": a controller that answered with an empty list has been
+// read, and the answer says so.
+func TestAControllerThatHoldsNoSegmentsIsAnAnswerAndNotAnAbsence(t *testing.T) {
+	api := newSegmentsUnderTest(t, `{"on": false, "bri": 0, "seg": []}`)
+
+	status, raw := api.raw(t, http.MethodGet, "/controllers/10.0.0.136")
+	if status != http.StatusOK {
+		t.Fatalf("GET /controllers/10.0.0.136 answered %d, want %d: %s", status, http.StatusOK, raw)
+	}
+
+	var body struct {
+		SegmentsKnown  bool             `json:"segments_known"`
+		Segments       []map[string]any `json:"segments"`
+		SegmentsUnread string           `json:"segments_unread"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("the answer is not JSON: %v (%s)", err, raw)
+	}
+
+	if !body.SegmentsKnown {
+		t.Fatalf("a controller that answered with no segments is reported as unread: %s", raw)
+	}
+
+	if len(body.Segments) != 0 {
+		t.Fatalf("the answer carries %d segments, want none: %s", len(body.Segments), raw)
+	}
+
+	// An empty list, not a null: a picker iterating it should find nothing rather than crash.
+	if !strings.Contains(raw, `"segments":[]`) {
+		t.Fatalf("the answer does not carry an empty list: %s", raw)
+	}
+
+	if body.SegmentsUnread != "" {
+		t.Fatalf("the answer gives a reason %q for segments it read", body.SegmentsUnread)
+	}
+}
+
+// TestAControllerThatDoesNotAnswerStillAnswersWithItsBindings is the honest degradation: a light
+// that is unplugged is not a 500 and not a panic, and it is not an empty segment list presented as
+// the light's answer either. The bindings on that address are still true, so the route still
+// carries them and says why the segments are missing.
+func TestAControllerThatDoesNotAnswerStillAnswersWithItsBindings(t *testing.T) {
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+
+	// Closed before the route is called, so the read fails the way an unplugged controller's
+	// does: a refused connection, not a slow one.
+	controller.Close()
+
+	light := newFakeStrip()
+
+	api := newAPIWith(t, light, testPrinters, bindings{
+		{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: 2},
+	}, func(string) (strip, error) { return wled.New(controller.URL) })
+
+	status, raw := api.raw(t, http.MethodGet, "/controllers/10.0.0.136")
+	if status != http.StatusOK {
+		t.Fatalf("a controller that does not answer refused the route with %d: %s", status, raw)
+	}
+
+	var body struct {
+		Controller struct {
+			Name     string `json:"name"`
+			Segments []int  `json:"segments"`
+		} `json:"controller"`
+		SegmentsKnown  bool             `json:"segments_known"`
+		Segments       []map[string]any `json:"segments"`
+		SegmentsUnread string           `json:"segments_unread"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("the answer is not JSON: %v (%s)", err, raw)
+	}
+
+	if body.SegmentsKnown {
+		t.Fatalf("the answer says the segments are known, and nothing answered: %s", raw)
+	}
+
+	if len(body.Segments) != 0 || !strings.Contains(raw, `"segments":[]`) {
+		t.Fatalf("the answer carries segments it did not read: %s", raw)
+	}
+
+	if body.SegmentsUnread == "" {
+		t.Fatalf("the answer gives no reason for segments it could not read: %s", raw)
+	}
+
+	if body.Controller.Name != "10.0.0.136" || len(body.Controller.Segments) != 1 {
+		t.Fatalf("the controller's own record was lost when the light did not answer: %s", raw)
+	}
 }
