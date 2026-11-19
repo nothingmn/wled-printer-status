@@ -390,8 +390,6 @@ func TestAStripIsGivenTheFinishedMomentsColourAndNoWord(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go pen.run(ctx)
-
 	at := time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC)
 
 	source.show(snapshotOf(printer.StatePrinting, true, false, at))
@@ -401,6 +399,14 @@ func TestAStripIsGivenTheFinishedMomentsColourAndNoWord(t *testing.T) {
 	reader.step(ctx, at.Add(tickEvery))
 
 	// What was offered to the writer is a colour and not a word: nothing to establish, nothing to push.
+	//
+	// The writer's goroutine is started below this read, and not before it. The slot this reads holds
+	// the event only until the writer takes it — takeEvent swaps it to nil — so a writer already
+	// running can empty it between the driver's turn and this line, which reads exactly like an event
+	// that was never fired. That is the flake this test carried: it failed about one full -race run in
+	// four, at HEAD as well as here, and passed every time in isolation. Nothing about the picture
+	// changed: the driver stores the scene and the event whether or not the writer is running, and
+	// the writer takes both when it starts.
 	fired := pen.fired.Load()
 	if fired == nil {
 		t.Fatal("a strip was offered no event, and the finished moment's colour is what it shows")
@@ -413,6 +419,8 @@ func TestAStripIsGivenTheFinishedMomentsColourAndNoWord(t *testing.T) {
 	if fired.plain.Colour != render.ColourFinished {
 		t.Fatalf("the strip was offered %+v, want the finished green", fired.plain)
 	}
+
+	go pen.run(ctx)
 
 	waitFor(t, "the finished frame to reach the strip", func() bool {
 		shown := strip.shown()
