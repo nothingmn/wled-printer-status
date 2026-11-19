@@ -55,6 +55,7 @@ Everything odd about this repository follows from that one sentence:
 | `main.go` | **The process.** It does the handshake, answers the lifecycle set, reads the settings, serves `GET /wled-printer-status`, `GET /status` and `POST /preview-finished`, and builds the three things below from those settings: a `printer.Source`, a `writer` and a `driver`. The `observe` grant in the manifest is what lets it read the printer as itself. |
 | `drive.go` | **The join.** A `driver` turns each snapshot into a `render.Frame` and hands it to a latest-wins `writer`, which owns the one-minute heartbeat, the doubling failure backoff, the one-line-per-transition log, and both paint shapes — a flat run for a strip, tiling rectangles for a panel. One `writer` per binding; the writers on one controller share its door. Package `main`. |
 | `bindings.go` | **The topology.** A `binding` is (printer, controller, segment) — the unit the operator's decision of 2026-11-18 made, replacing one-controller-per-printer. `bindings.check` refuses a set that names one printer twice, one segment twice, or a whole controller beside any other binding on it; `bindings.controllers` groups a checked set by controller, which is what a watch is built from. Package `main`. |
+| `schedule.go` | **The brightness through the day.** `brightness_schedule` is a list of windows and `timezone` is the zone they are judged in; this file reads both, refuses a window or a zone it cannot act on by naming the line and the field, and answers "which brightness at this instant". It exists because of one trap worth a file: the process's clock is the container's, which is UTC, and the operator is seven hours behind it. Package `main`. |
 | `watch.go` | **The watch.** One `printer.Source`, one `writer` and one `driver` per binding; one `wled.Client` and one write `gate` per controller, so the bindings on one box take turns at its single small web server. `start` builds everything before any goroutine starts, so a set it cannot run leaves the light as it was. Package `main`. |
 | `event.go` | **The event layer.** `eventFor` is one pure function from (the state the printer left, the state it arrived in, the controller's geometry) to a picture and a duration, and the table it holds has one entry. `writer.fire`/`takeEvent`/`paintEvent` are the writer's half: the hold, the return to the steady frame, and the three things a word on a panel costs — one body that establishes the panel over JSON, one frame of pixels pushed over DDP, and a read that says the controller took it. `writer.preview` is the same event, fired now, for the route. Package `main`, beside the frame path because it is the same writer. |
 | `pixels.go` | **The pixel transport.** The DDP sender for one controller — one socket, opened on the first event — the address arithmetic that turns the operator's `controller_address` into `host:4048`, the frame that lays the word out as the whole panel, and the repeat that keeps a still picture alive past WLED's 2500 ms realtime timeout. It is also where the four measurements that killed per-LED JSON control are written down. Package `main`, because one writer owns both transports. |
@@ -99,7 +100,7 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **177 tests**: 74 in the root package, 20 in
+`gofmt -l .` printing any path is a failure. Today there are **201 tests**: 98 in the root package, 20 in
 `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp`, 6 in
 `internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
@@ -297,6 +298,42 @@ depends on a write without a name removing one. The event's establishing body ca
 segment's name for exactly this reason — it is also how `/json/state` still says `FINISHED` while the
 word is up in pixels — and the pixels after it name nothing.
 
+**5.14 A brightness schedule is judged in the zone the operator names, and a borrowed segment never follows one.**
+Two rules, one setting, and both were paid for in advance rather than learned: the failure each prevents is a
+light that is wrong while looking healthy.
+
+- **The zone is required, and it is never the process's clock.** `brightness_schedule` carries windows of the
+  day and `timezone` carries the IANA zone they are read in. The process runs in the container, whose clock is
+  UTC; the operator lives at UTC−7 and shifts for daylight saving. Judged against the container's clock, the
+  evening window `20:00-07:00` dims the panel at lunchtime and leaves it bright all evening, and nothing in
+  the log, the routes or `/json/state` says which clock was read. So a schedule with an empty `timezone`
+  **refuses the start**, naming both settings, and an unloadable one is refused with the value quoted. There
+  is no fallback to UTC, because a fallback would make that the module's quiet default. The zone database is
+  compiled in (`time/tzdata`) so the name is judged against the release's own data and not the image's.
+  `TestAScheduleIsJudgedInItsZoneAndNotInTheContainersClock` is the test that holds this: one instant judged
+  in `America/Denver` and in `UTC` answers two brightnesses seven hours apart, in both directions, and a
+  third assertion pins daylight saving. Mutating `level` to read the moment in the process's own zone fails
+  it with the wrong answers, which is what makes it a test rather than a decoration.
+- **The edges are `[from, to)`, the first window that contains the moment wins, and a gap is the fixed
+  `brightness`.** A window's `from` minute is inside it and its `to` minute is not; a window may wrap
+  midnight; `from == to` is refused rather than read as a whole day or as nothing; a `days` list names the
+  calendar day the moment falls on **in the zone**, so a wrapping window with `["fri"]` does not cover
+  Saturday's small hours. With no window covering the moment the fixed `brightness` stands — that is what
+  keeps a schedule from being a way to leave a light dark between two windows, and it is why an install with
+  no schedule at all behaves exactly as it did before the setting existed.
+- **One write per change, never one per tick.** The writer re-reads the schedule at the top of its own loop,
+  which turns with the driver's tick, so an edge lands within a second or two of being crossed and not at the
+  next print event. The value the controller has already taken is remembered, and a value that has not
+  changed is not written — the same rule `samePicture` keeps for frames. The first value is written by
+  `settle`, and a write that failed is not recorded as taken, so the ordinary doubling backoff retries it
+  rather than the module believing a brightness the controller never got.
+- **A borrowed segment is never given a brightness, schedule or no schedule.** `SetBrightness` is
+  controller-wide and moves every segment on the box. `watch.start` hands the schedule to whole-controller
+  writers only, and `retune` refuses to write for a borrowed one even if something handed it a schedule:
+  two guards, because the cost of the mistake is somebody's desk light dimming at eight in the evening for a
+  reason nobody on that desk can see. `TestABorrowedSegmentIsNeverGivenABrightnessByTheSchedule` crosses a
+  window's edge under a borrowing writer and asserts zero brightness and power writes.
+
 ## 6. The supervision you live inside
 
 The server that launches this process imposes limits. They are not advisory; they are how the process
@@ -364,6 +401,12 @@ Nothing in this module has ever run against a live Prusa Connect host. Specifica
   fragment on the left — the failure the change exists to end, from the other direction. Fixed, pinned in
   the test, and the install record has the read-back either side of it. It is here because a body that
   writes one segment has to think about every other segment the panel will draw after it.
+- **A window's edge has never moved a live panel's brightness.** The schedule's arithmetic is proved with an
+  injected clock and a named zone, and a live instance has started carrying a schedule and settled at the
+  value that schedule names — but the install that carried this change ran a window written to reproduce the
+  brightness already in force, deliberately, while an unverified word sits on the panel. What nobody has
+  watched is the write at 20:00. The log line names the window and the zone when it happens, and
+  `GET /json/state`'s `bri` is what the controller did with it.
 - **The release workflow has never executed.** It is written from the builder's documented interface,
   not from a green run.
 

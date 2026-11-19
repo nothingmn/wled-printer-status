@@ -24,7 +24,9 @@ license: MIT
 #
 # The summary is one sentence on purpose, and every part of it is true: a colour, a
 # filled bar, and one segment per printer, which is what the binding list below makes
-# possible. Nothing about an animation or a schedule, because neither exists here yet.
+# possible. Nothing about an animation, because none exists here yet. The brightness
+# schedule is deliberately not in it either: it changes how bright the light is, not what
+# the light says, and a one-line catalogue entry is about the thing a person installs.
 title: WLED Printer Status
 summary: Shows each Prusa printer's live state as a colour and its progress as a filled bar, on its own segment of a WLED light or matrix panel.
 # Who answers for this module: the GitHub handle that owns the repository.
@@ -81,6 +83,67 @@ options:
     type: int
     default: "128"
     summary: The brightness written to the controller once at start, 0-255, when the whole strip is driven. This module never changes it afterwards, and writes none at all when a segment is named.
+  # The brightness the light runs at, in two halves: the fixed value above, and a value that follows
+  # the time of day. Both are the operator's own words — "1. Just allow the user to set a fixed
+  # brightness for the printer, never change it" and "2. Based on the time of day" — and the second
+  # half is this key.
+  #
+  # Its type is `list`, which the settings pane draws as a block of JSON in a text area, because a
+  # list is the largest value shape the manifest has. One window per line:
+  #
+  #   [{"from": "20:00", "to": "07:00", "brightness": 40},
+  #    {"from": "09:00", "to": "17:00", "brightness": 200, "days": ["sat", "sun"]}]
+  #
+  # Each line carries:
+  #
+  #   from        when the window opens, as a time of day HH:MM. A window is in force from its
+  #               `from` minute.
+  #   to          when it closes, HH:MM, and the minute it names is already outside it: a window
+  #               written 20:00-07:00 is over at 07:00, not at 07:01. A `to` earlier than `from`
+  #               is a window that wraps midnight, which is the evening window almost everybody
+  #               writes first, and `to` equal to `from` is refused rather than guessed at.
+  #   brightness  what the light runs at inside the window, 0-255. Required: zero is a real answer
+  #               — a light off overnight — so an absent one is refused rather than read as zero.
+  #   days        optional, the days it covers: mon, tue, wed, thu, fri, sat, sun. Absent or empty
+  #               covers every day. A day names the calendar day the moment falls on in `timezone`,
+  #               so a window that wraps midnight with `days: ["fri"]` covers Friday evening to
+  #               midnight and not the small hours of Saturday; name both to have both.
+  #
+  # The windows are read in the order they are written and the first one that contains the moment
+  # decides. Where none does, the fixed `brightness` above stands, so a schedule with a gap in it
+  # behaves exactly like the setting this module has always had, and a light is never left dark
+  # between two windows. Absent or empty, nothing changes at all.
+  #
+  # **A window is judged in `timezone`, never in this process's own clock, and a schedule written
+  # without a zone refuses the start.** The module runs inside the Prusa Connect container, whose
+  # clock is almost always UTC, while an operator in Denver is seven hours behind it and shifts
+  # again for daylight saving: read there, "evening, 20:00-07:00" dims the light at lunchtime and
+  # leaves it bright all evening, and nothing on the instance would say which clock had been read.
+  # A zone that will not load is refused the same way, with the name quoted.
+  #
+  # A line this module cannot act on refuses the start and names the line and the field:
+  # `brightness_schedule[1]: from is "25:00", and a time of day is written HH:MM between 00:00 and
+  # 23:59`.
+  - key: brightness_schedule
+    type: list
+    default: "[]"
+    summary: The brightness to run at through the day, one window per line as a JSON list of objects with from, to and brightness, and optionally days. Empty leaves the fixed brightness standing, and a moment no window covers falls back to it.
+  # The zone a `brightness_schedule` is judged in, as an IANA name such as America/Denver.
+  #
+  # Required whenever a schedule is written, and refused when it is missing rather than defaulted
+  # to the container's own clock: a schedule seven hours out is a light that is wrong every evening
+  # and looks healthy, which is the one failure a settings pane cannot show. A name that will not
+  # load is refused too, with the value quoted, even while no schedule is written yet — a zone
+  # accepted today is a start refused tomorrow, on the save that adds the first window.
+  #
+  # The zone database is compiled into this module's binary, so a name is judged against the IANA
+  # data the release shipped with rather than against whatever the container's image happens to
+  # carry.
+  #
+  #   timezone: America/Denver
+  - key: timezone
+    type: string
+    summary: The zone a brightness_schedule is judged in, as an IANA name such as America/Denver. Required when a schedule is written, and never defaulted to the clock of the process's own container.
   # The one segment to drive on a controller that carries several. -1 is the whole strip,
   # which is what this module drove before the setting existed, and it is negative rather
   # than 0 because segment 0 is a segment an operator may legitimately name.
@@ -134,7 +197,10 @@ options:
   #   brightness  written once at start, 0-255, and only on a whole-controller line: a
   #               brightness is controller-wide, so a line that borrows a segment and carries
   #               one is refused rather than quietly dimming the whole controller. Absent on a
-  #               whole-controller line means 128, which is the default above.
+  #               whole-controller line means 128, which is the default above. With a
+  #               brightness_schedule written it is also the value that stands wherever no
+  #               window covers the moment. A borrowed line never follows the schedule: it
+  #               writes no brightness at all, at start or at a window's edge.
   #
   # Two printers on two controllers, or three segments of one, is therefore:
   #
@@ -206,7 +272,7 @@ permissions:
 
 # The browser half: one tab on this module's own page under Settings, Extensions.
 #
-# It is a convenience and not a requirement. The nine settings above are the
+# It is a convenience and not a requirement. The settings above are the
 # module's whole configuration, the host applies them, and every one of them can
 # be written without this bundle; a person who never opens the tab loses nothing.
 # What the tab adds is the one setting a text area cannot express: `bindings` is a

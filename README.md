@@ -68,9 +68,11 @@ question of whether this panel's wiring is row-major the way the frame assumes. 
 release, so nobody has yet installed it the way a stranger would.
 
 So: a working module on one printer, one panel and one borrowed zone of a desk light, and not a finished
-product. One event is here and the mechanism for the rest is; what is still open is the rest of the
-animations — a print starting and a filament change are both wanted and neither is designed — the panel's
-richer display, a brightness schedule and the composer. The open ones are written down in
+product. One event is here and the mechanism for the rest is; the brightness follows the time of day in a
+zone the operator names, and a schedule has never yet moved a live panel's brightness at a window's edge
+— the install that carried it ran a window that reproduces the value already in force. What is still open
+is the rest of the animations — a print starting and a filament change are both wanted and neither is
+designed — the panel's richer display, and the composer. The open ones are written down in
 [`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## What it is meant to do
@@ -374,6 +376,75 @@ flicker of the module's own frame, not a binding that was disturbed.
 appears when the first binding names it and is gone when the last one leaves, so those are the binding
 routes, and a second way to write the same thing would be a second thing to be wrong.
 
+### Brightness that follows the time of day
+
+The fixed `brightness` is one of the two things an operator asked for; the other is a brightness that
+follows the clock. It is two settings: `brightness_schedule`, a list of windows
+pasted into the settings pane's JSON box, and `timezone`, the zone those windows are read in.
+
+```json
+[{"from": "20:00", "to": "07:00", "brightness": 40},
+ {"from": "09:00", "to": "17:00", "brightness": 200, "days": ["sat", "sun"]}]
+```
+
+```yaml
+      config:
+        timezone: America/Denver
+        brightness: 128
+        brightness_schedule:
+          - from: "20:00"
+            to: "07:00"
+            brightness: 40
+```
+
+Each window carries `from` and `to` as `HH:MM`, a `brightness` 0–255, and optionally `days` (`mon`
+through `sun`; absent or empty covers every day). The rules, in the order a person reads them:
+
+- **`from` is inside the window and `to` is outside it.** `20:00`–`07:00` is in force at 20:00 and over
+  at 07:00, not at 07:01.
+- **A window may wrap midnight.** That is the evening window every operator writes first.
+- **The first window that contains the moment decides**, in the order you wrote them.
+- **Where no window covers the moment, the fixed `brightness` stands.** A gap between two windows is
+  therefore the setting this module has always had, and a light is never left dark between windows.
+- **A window with equal ends is refused** rather than read as a whole day or as nothing: which one was
+  meant is not something the module can guess.
+- **`days` names the calendar day the moment falls on, in `timezone`.** A window that wraps midnight with
+  `days: ["fri"]` covers Friday evening to midnight and not the small hours of Saturday — name both to
+  have both.
+- **A borrowed segment never follows the schedule.** It writes no brightness at all, here or at any
+  window's edge, because a brightness is controller-wide and would move every segment on that
+  controller.
+
+**The zone is not optional, and it is not the container's clock.** This process runs inside the Prusa
+Connect container, whose clock is UTC; an operator in Denver is seven hours behind it and shifts again
+for daylight saving. A schedule read against the container's clock dims the light at lunchtime and
+leaves it bright all evening, and nothing on the instance would say which clock was read. So a schedule
+written with an empty or unloadable `timezone` **refuses the start** with a sentence naming both settings
+— never a silent fallback to UTC:
+
+```
+brightness_schedule is written and timezone is empty: name the zone its windows are judged in, as an
+IANA name such as America/Denver. This process runs inside the Prusa Connect container, whose own clock
+is almost always UTC, so a schedule with no zone of its own would fire seven hours away from the
+operator's evening and nothing in the log would say so
+```
+
+The zone database is compiled into the binary, so a name is judged against the IANA data the release
+shipped with rather than against whatever the container's image carries.
+
+The brightness written is one per change and no more: the module writes the value in force when it
+starts, then a window's value when that window's edge is crossed — within a second or two of the edge,
+because the writer turns with the driver's own tick rather than on a print event — and nothing while the
+value stands. A value that failed to reach the controller is asked for again on the ordinary doubling
+retry, and the log carries one line per change naming the window and the zone:
+
+```
+wled-printer-status: the light's brightness is 40, the 20:00-07:00 window of America/Denver, where it is 20:00 MST
+```
+
+An install with no `brightness_schedule` behaves exactly as it did before this setting existed: the
+fixed brightness is written once at start and never moved.
+
 ### The four older settings
 
 `controller_address` is empty and unused when `bindings` is written, and it is no longer required for that
@@ -382,7 +453,8 @@ list and says so on the instance, rather than running and never mentioning why t
 `printer` names the printer to watch, by the server's device id or by the name an operator gave it; left
 empty it takes the only printer the instance holds, and refuses to choose between several rather than
 put somebody's strip on the wrong machine. `brightness` is what the module writes to the controller once at
-start and does not move again.
+start and does not move again — unless a `brightness_schedule` is written, where it is the value that
+stands wherever no window covers the moment (see above).
 
 `segment` names one segment of a controller that carries several, and the module then drives that segment
 and leaves the rest of the controller alone. It reads the segment once at start — its run, its colour, its

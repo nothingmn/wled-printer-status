@@ -37,6 +37,10 @@
 //	                    entry names this setting
 //	printer             which printer to watch then, by device id or by name; empty takes the only one
 //	brightness          the brightness written once at start, 0-255, when the whole strip is driven
+//	brightness_schedule one window per line: a span of the day and the brightness to run at inside it.
+//	                    Written, it moves the brightness at a window's edge
+//	timezone            the IANA zone a brightness_schedule is judged in, such as America/Denver. Required
+//	                    whenever a schedule is written, and never defaulted to the process's own clock
 //	segment             the one segment to drive on a multi-segment strip; -1 drives the whole strip
 //
 // # What it does with a reading
@@ -80,6 +84,14 @@ import (
 	"github.com/prusa3d/prusa-connect/sdk/routesapi"
 	"github.com/prusa3d/prusa-connect/sdk/wire"
 	"github.com/prusa3d/prusa-connect/sdk/wirerpc"
+
+	// The zone database is compiled into the binary rather than read from the machine it runs
+	// on, and that is not a size optimisation. The process runs inside the Prusa Connect
+	// container, where /usr/share/zoneinfo may be absent or a release behind, and
+	// time.LoadLocation would then refuse a perfectly good name like America/Denver — a module
+	// that will not start over a zone the operator typed correctly, for a reason nothing on the
+	// instance can explain. It is four hundred kilobytes against a 32 MiB budget.
+	_ "time/tzdata"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
@@ -153,11 +165,34 @@ type Settings struct {
 	// instance holds and refuses to guess when there is more than one.
 	Printer string `json:"printer"`
 
-	// Brightness is what this module writes to the strip once at start, 0-255, when no
-	// `bindings` list is written. Nothing else here writes a brightness: the operator sets it
-	// and it stays where they put it. With a segment named it is not written at all, because a
-	// brightness is controller-wide and would move every segment on the controller.
+	// Brightness is what this module writes to the strip, 0-255, when no `bindings` list is
+	// written. Nothing else here writes a brightness: the operator sets it and it stays where
+	// they put it, except when a `brightness_schedule` is written, where this is the value that
+	// stands wherever no window covers the moment. With a segment named it is not written at
+	// all, because a brightness is controller-wide and would move every segment on the
+	// controller.
 	Brightness int `json:"brightness"`
+
+	// BrightnessSchedule is the time-of-day half of the operator's brightness decision: one
+	// window per line, each a span of the day and the brightness to run at inside it.
+	//
+	// It is raw JSON for the same reason Bindings is — a strict decode of a whole slice cannot
+	// say which line a misspelt key was in — and a `list` is again the only shape a manifest can
+	// offer for it. Empty means the fixed `brightness` above applies and this module behaves
+	// exactly as it did before the setting existed.
+	//
+	// A window is judged in the zone `timezone` names, never in this process's own clock: the
+	// process runs in a container whose clock is almost always UTC, and a schedule read there
+	// fires seven hours away from the operator's evening without anything saying so.
+	BrightnessSchedule []json.RawMessage `json:"brightness_schedule"`
+
+	// Timezone is the IANA zone the schedule's windows are read in, such as America/Denver.
+	//
+	// It is required when a schedule is written and may be left empty when none is. It is never
+	// defaulted to UTC or to the process's local zone: a schedule judged in the wrong clock is a
+	// display that is wrong every evening and looks healthy, and a fallback would make that the
+	// module's quiet default. A zone that is written but will not load refuses the start.
+	Timezone string `json:"timezone"`
 
 	// Segment is the one segment of a multi-segment controller this module drives when no
 	// `bindings` list is written: the operator's own numbering, as the controller reports it.
@@ -192,11 +227,22 @@ type Settings struct {
 // configuration mistake is better named on the instance than discovered as a light
 // that never changes.
 //
-// Everything below the first branch is about the four settings the list replaced, so it
-// applies only while no list is written: refusing a stale brightness of 300 in a key nothing
-// reads would refuse a start over a field that has no effect. Each line of a list is judged
-// where it is parsed, which is where a refusal can name the line.
+// The brightness schedule and its zone are judged first and for both shapes, because
+// they are not about a binding: the schedule is one per instance, judged in one zone,
+// and it applies whatever the bindings say. A schedule with no zone, or a zone that
+// will not load, refuses the start here — before anything is built and before the light
+// is touched — because the alternative is a light judged in the container's clock,
+// seven hours out, with nothing on the instance to say so.
+//
+// Everything below the bindings branch is about the four settings the list replaced, so
+// it applies only while no list is written: refusing a stale brightness of 300 in a key
+// nothing reads would refuse a start over a field that has no effect. Each line of a
+// list is judged where it is parsed, which is where a refusal can name the line.
 func (s Settings) validate() error {
+	if err := s.checkSchedule(); err != nil {
+		return err
+	}
+
 	if len(s.Bindings) > 0 {
 		_, err := parseBindingEntries(s.Bindings)
 
@@ -224,6 +270,23 @@ func (s Settings) validate() error {
 	}
 
 	return nil
+}
+
+// checkSchedule judges the two settings that describe the time-of-day brightness and keeps
+// nothing. configure reads them again for the schedule itself, which is a handful of lines
+// parsed once at start rather than a value worth threading out of a refusal.
+func (s Settings) checkSchedule() error {
+	_, err := s.wantedSchedule()
+
+	return err
+}
+
+// wantedSchedule is the schedule these two settings describe, or nil when they describe none.
+//
+// One function for both callers, so that the settings a start is judged by and the schedule the
+// writers are built from cannot be two different readings of the same two fields.
+func (s Settings) wantedSchedule() (*brightnessSchedule, error) {
+	return parseBrightnessSchedule(s.BrightnessSchedule, s.Timezone)
 }
 
 // The state a running instance holds.
@@ -411,6 +474,20 @@ func configure(ctx context.Context, sent Settings) error {
 	if err := sent.validate(); err != nil {
 		return err
 	}
+
+	// The brightness the light runs at, in the one form the writers read: the windows the
+	// operator wrote and the zone they are judged in. Nil when no schedule is written, which is
+	// the state every install before this setting was in.
+	//
+	// It is recorded before the watch is built, because build reads it: a route change later in
+	// this process rebuilds the writers, and they have to land on the same brightness the
+	// settings asked for rather than on the fixed value alone.
+	schedule, err := sent.wantedSchedule()
+	if err != nil {
+		return err
+	}
+
+	live.setSchedule(schedule)
 
 	listing, cancel := context.WithTimeout(ctx, resolveTimeout)
 	wanted, err := wantedBindings(listing, fleet, sent)

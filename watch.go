@@ -79,6 +79,11 @@ type watchConfig struct {
 
 	// tick overrides the driver's interval. Zero keeps the process's own.
 	tick time.Duration
+
+	// schedule is the time-of-day brightness the settings describe, and nil when the operator
+	// wrote none. It reaches a whole-controller writer only: a binding that borrows a segment
+	// is never handed one, because a brightness is controller-wide. See writer.retune.
+	schedule *brightnessSchedule
 }
 
 // start runs one watch: a source, a writer and a driver per binding, one client and one gate per
@@ -141,9 +146,12 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			if b.Segment >= 0 {
 				// A writer that drives one borrowed segment. It is built without the
 				// brightness, because in this mode this module writes none: see writer.begin.
+				// The schedule is not handed over either, for the same reason — a brightness
+				// is controller-wide, and a window's edge must not move somebody else's light.
 				pen = newSegmentWriter(light, b.Segment, b.Address, c.logf)
 			} else {
 				pen = newWriter(light, b.Brightness, c.logf)
+				pen.schedule = c.schedule
 			}
 
 			// Every writer knows its controller's address, whether it drives the whole light or
@@ -183,8 +191,18 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			continue
 		}
 
-		c.logf("%s: watching printer %s and driving %s at brightness %d",
-			name, r.binding.DeviceID, r.binding.Address, r.binding.Brightness)
+		if c.schedule == nil {
+			c.logf("%s: watching printer %s and driving %s at brightness %d",
+				name, r.binding.DeviceID, r.binding.Address, r.binding.Brightness)
+
+			continue
+		}
+
+		// One line naming the zone, because a schedule judged in the wrong clock is a light
+		// that is wrong every evening and says nothing about it. The fixed brightness is named
+		// too: it is what an instance with a schedule still runs at between windows.
+		c.logf("%s: watching printer %s and driving %s at the brightness of brightness_schedule judged in %s, with %d standing wherever no window covers the moment",
+			name, r.binding.DeviceID, r.binding.Address, c.schedule.zoneName, r.binding.Brightness)
 	}
 
 	// One light, one preview. A watch with several bindings offers none: the route names no

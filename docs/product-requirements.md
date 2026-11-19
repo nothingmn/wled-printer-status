@@ -462,6 +462,11 @@ is unchanged across state changes, animations and days.
 
 **Refuted by.** Any write to brightness other than one the operator asked for.
 
+**With a schedule written** this requirement is the fallback half of R-23 rather than the whole
+answer: `brightness` is then the value that stands wherever no window covers the moment, and the
+module writes a window's value only at a window's edge. An install with no `brightness_schedule`
+behaves exactly as it always has, which is what makes this row still true of it.
+
 ### R-23 · Brightness may follow the time of day · `operator`
 
 **Requirement.** As an alternative to a fixed brightness, the light's brightness follows the
@@ -470,13 +475,34 @@ time of day.
 **Operator's words.**
 > "2. Based on the time of day"
 
-**Proved by.** With this mode selected, brightness at two recorded times of day differs in the
-way the schedule says. What the schedule actually is — the times, the values, whether it ramps
-and in which time zone — is **open** (Q-6), and until it is decided this requirement cannot be
-proved.
+**What is built.** The setting `brightness_schedule` takes a list of windows — each a `from` and a
+`to` as `HH:MM`, a `brightness` 0-255, and optionally a `days` list — and the setting `timezone`
+names the IANA zone those windows are judged in. A window's `from` minute is inside it and its `to`
+minute is not; a window may wrap midnight (`22:00`–`07:00`); the first window that contains the
+moment decides; and where none does, the fixed `brightness` stands. Empty or absent, nothing
+changes from the fixed behaviour of R-22. A borrowed segment never follows the schedule, because a
+brightness is controller-wide (R-24, and the borrow's own rule).
 
-**Refuted by.** A time-of-day mode whose brightness does not change with the clock, or changes
-at times the operator did not choose.
+**Which clock.** The module runs inside the Prusa Connect container, whose clock is UTC, and the
+operator lives at UTC−7 in a zone that observes daylight saving. So the zone is a **setting that is
+required whenever a schedule is written**, and a schedule without an unloadable-or-absent zone
+refuses the start with a sentence naming both settings — never a fallback to UTC. Q-6 asked which
+clock; this is the answer, and the answer it is not is "whatever the container happens to think".
+
+**Proved by.** The schedule's evaluation is proved by tests with an injected clock and a named
+zone, including one instant judged in `America/Denver` and in `UTC` that answers two different
+brightnesses seven hours apart — 14:00 Denver is not the evening, and 21:00 UTC would dim the panel
+for it. A live instance carrying a schedule has been left settling at the value the schedule names
+for the current moment, and its log names the zone. What has **not** been observed on a device is a
+window's edge moving a live panel's brightness, because the install that carried this change ran a
+window that reproduces the brightness already in force.
+
+**Still open.** The hours and the values are the operator's to write; nothing here chose them. Q-6
+remains open in that sense alone — whether the schedule ramps between windows rather than stepping
+at their edges is also undecided, and today it steps.
+
+**Refuted by.** A time-of-day mode whose brightness does not change with the clock, changes at
+times the operator did not choose, or is judged in a zone the operator did not name.
 
 ### R-24 · The module never leaves the strip dark by its own writes · `derived`
 
@@ -832,6 +858,10 @@ it rather than finding a question silently gone. **Fourteen remain open; three a
 6. **Q-6 · The time-of-day schedule.** Which hours, which brightness at each, whether it ramps
    between them, and which time zone it follows (the module's container clock or the printer's).
    Blocks: R-23 entirely — it cannot be proved without a schedule.
+   **Partly answered.** The mechanisms exist: `brightness_schedule` takes the windows and
+   `timezone` names the zone, and the zone is the operator's own rather than the container's — a
+   schedule without one refuses the start. What is still his to decide is the hours, the values at
+   each, and whether a transition ramps or steps; today it steps at the window's edge.
 7. **Q-7 · The resolution threshold for the richer panel display.** What pixel count or geometry
    makes a panel dense enough for text and a bar. He named one panel — "the resolution
    which we have on Morpheus" — and not a number. Blocks: R-26, and therefore when R-27 to R-31

@@ -26,6 +26,19 @@ holds the whole light, and keeps holding it.
 - The setting `printer` picks the printer to watch, by device id or by name. Left empty it takes the only
   printer the instance holds, and refuses to choose between several.
 - The setting `brightness` sets what the module writes to the controller once at start, 0-255.
+- The setting `brightness_schedule` follows the time of day: one window per line, each with `from` and `to`
+  as `HH:MM`, a `brightness` 0-255 and optionally `days`. A window's `from` minute is inside it and its `to`
+  minute is not; a window may wrap midnight (`22:00`-`07:00`); the first window that contains the moment
+  decides; and wherever none does, the fixed `brightness` stands. Empty or absent, nothing changes from the
+  brightness this module has always written, and it is written once per change rather than once a tick — on
+  the next turn of the writer's own loop, so a window's edge lands within a second or two. A borrowed
+  segment never follows it: it writes no brightness at all.
+- The setting `timezone` names the zone a `brightness_schedule` is judged in, as an IANA name such as
+  `America/Denver`. It is **required** whenever a schedule is written, and a schedule with an empty or
+  unloadable zone refuses the start with a sentence naming both settings — this module runs inside a
+  container whose clock is UTC, so a schedule read there would fire seven hours away from the operator's
+  evening and nothing would say so. There is no fallback to UTC. The zone database is compiled into the
+  binary.
 - The setting `segment` names one segment of a controller that carries several. The module drives that
   segment and leaves the others alone: it reads the segment's run, colour, effect and name once at start,
   draws inside that run, and writes them all back when it stops. In this mode it writes no brightness and

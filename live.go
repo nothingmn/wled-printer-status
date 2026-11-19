@@ -63,6 +63,13 @@ type runner struct {
 	// grace bounds how long a change waits for a writer to give its segment back. Zero means
 	// shutdownGrace, which is the bound a stop already uses.
 	grace time.Duration
+
+	// schedule is the time-of-day brightness the settings describe, and nil when they describe
+	// none. It is not part of a set of bindings — the schedule is one per instance, judged in
+	// one zone — but it does have to travel with one, because a set built by a route change
+	// starts writers that must land on the same brightness the settings asked for. See
+	// setSchedule.
+	schedule *brightnessSchedule
 }
 
 // set is the set in force, as a copy: the caller gets the bindings and not the lock.
@@ -80,6 +87,20 @@ func (r *runner) setOrigin(where string) {
 	defer r.mu.Unlock()
 
 	r.origin = where
+}
+
+// setSchedule records the time-of-day brightness this instance runs at, for the writers the
+// next build starts.
+//
+// It is guarded by the same lock a change takes, because a route change builds writers from
+// whatever this holds: a schedule written while a change is in flight would otherwise reach
+// half the writers of one build. configure calls it before apply, so the watch it starts is
+// built from the schedule the settings it just judged describe.
+func (r *runner) setSchedule(schedule *brightnessSchedule) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.schedule = schedule
 }
 
 // origin is where the set in force came from, in the words the routes answer with.
@@ -239,6 +260,7 @@ func (r *runner) build(parent context.Context, set bindings) (context.CancelFunc
 		newLight:  r.newLight,
 		logf:      r.logf,
 		tick:      r.tick,
+		schedule:  r.schedule,
 	}
 
 	if len(set) > 1 {

@@ -187,6 +187,19 @@ type writer struct {
 	// panel on the same network, and "segment 1" alone does not say whose.
 	where string
 
+	// schedule is the time-of-day brightness this writer applies, and nil means the operator
+	// wrote none: the fixed brightness then stands, which is what every install before this
+	// setting did. It stays nil on a writer that borrows a segment whatever the settings say,
+	// because the brightness in this mode is somebody else's — see retune.
+	schedule *brightnessSchedule
+
+	// level is the brightness the controller has most recently been asked to take, and -1
+	// means it has been asked for nothing yet. It is what makes a schedule cost one write per
+	// change and no more: a window that still holds the value the controller already has is
+	// not a write at all, and a value that failed to land is asked for again rather than
+	// believed.
+	level int
+
 	// borrowed is the nominated segment exactly as the controller was holding it when this
 	// module read it, and nil when nothing has been borrowed.
 	//
@@ -264,8 +277,10 @@ func newWriter(light strip, brightness int, logf func(format string, args ...any
 //
 // It takes no brightness, and that is not an oversight: a brightness is a controller-wide
 // setting, so a writer in this mode must never write one, and a constructor that could not
-// carry a brightness is one fewer place for that rule to be broken. See begin for the whole
-// of it.
+// carry a brightness is one fewer place for that rule to be broken. It takes no
+// `brightness_schedule` for the same reason, and watch.start does not hand it one: a schedule
+// is a brightness by another name, and a window's edge moving somebody else's desk light is
+// exactly what this constructor exists to prevent. See begin and retune.
 func newSegmentWriter(light strip, segment int, where string, logf func(format string, args ...any)) *writer {
 	pen := prepare(light, logf)
 	pen.segment = &segment
@@ -288,6 +303,9 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 		wake:       make(chan struct{}, 1),
 		record:     recordSend,
 		dialPixels: dialPixels,
+		// Nothing has been asked of the controller's brightness yet. -1 is a value no
+		// controller takes, so "asked for nothing" cannot be mistaken for "asked for 0".
+		level: -1,
 	}
 }
 
@@ -361,6 +379,31 @@ func (w *writer) run(ctx context.Context) {
 		select {
 		case <-w.wake:
 		default:
+		}
+
+		// A scheduled brightness changes at a window's edge and at no other moment — not when
+		// the printer moves, not when a frame is written — so it is checked on every pass of
+		// this loop rather than on anything the driver hands over. The loop already turns at
+		// the driver's own second (every tick offers a frame), so a window boundary lands
+		// within about a second of being crossed, and the wait for the light is never the
+		// reason a schedule is late.
+		//
+		// A write that fails is treated as any other failed write to this controller: it opens
+		// the same doubling window, so a controller that is off costs one attempt per window
+		// rather than one per second, and the value is asked for again when the light answers.
+		if err := w.retune(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			failures++
+
+			hold := backoffFor(failures)
+			retryAt = w.now().Add(hold)
+
+			w.logFailure(failures, hold, err)
+
+			continue
 		}
 
 		// An event takes the light for its own duration. Its deadline is stamped from the clock
@@ -620,8 +663,9 @@ func (w *writer) report(write func() error) error {
 // begin is what the writer does once, before the first frame, and the two modes it has are
 // the whole of what this module owes a controller it shares.
 //
-//   - driving the whole strip (segment nil): the brightness the operator set is written
-//     once and the strip is switched on, as this module has always done. That is settle.
+//   - driving the whole strip (segment nil): the brightness in force at this moment is written
+//     once — the fixed setting, or the window of a `brightness_schedule` that covers now — and
+//     the strip is switched on, as this module has always done. That is settle.
 //   - driving one borrowed segment: **neither is written, here or at any frame.**
 //
 // The second is the trap and it is worth stating in full. SetBrightness and SetPower are
@@ -649,23 +693,94 @@ func (w *writer) begin(ctx context.Context) {
 // settle writes the brightness this instance runs at, once, and makes sure the
 // strip is on.
 //
-// The brightness is written here and nowhere else. The operator sets it, and this
-// module does not move it afterwards — not for a state change, not for an animation,
-// not for the time of day. The power write is the other half of never leaving a strip
-// dark: a controller somebody switched off would keep its colours and show none of
-// them.
+// The brightness written here is the one in force at this moment: the fixed
+// `brightness` when no schedule is written, which is every install before the
+// schedule existed, and the window's value when one covers now. It is written here
+// and in retune, and nowhere else in the process.
+//
+// The power write is the other half of never leaving a strip dark: a controller
+// somebody switched off would keep its colours and show none of them.
 //
 // Both are best effort. A brightness or power write that failed is logged and the
 // frames follow anyway, because colour writes do not depend on either and a module
-// that stopped here would show nothing at all.
+// that stopped here would show nothing at all. A brightness that failed is not
+// recorded as written, so the next pass asks for it again rather than believing a
+// value the controller never took.
 func (w *writer) settle(ctx context.Context) {
-	if err := w.gate.do(func() error { return w.light.SetBrightness(ctx, w.brightness) }); err != nil {
+	wanted, why, _ := w.levelAt(w.now())
+
+	if err := w.gate.do(func() error { return w.light.SetBrightness(ctx, wanted) }); err != nil {
 		w.logf("%s: the light's brightness was not set: %v", name, err)
+	} else {
+		w.level = wanted
+
+		// Without a schedule the line above the watch already says what the light runs at,
+		// and a second line repeating it is noise. With one, this sentence is the only thing
+		// anywhere that says which window was judged and which clock it was judged in — the
+		// fact a person needs when the light is bright at the wrong hour.
+		if why != "" {
+			w.logf("%s: the light's brightness is %d, %s", name, wanted, why)
+		}
 	}
 
 	if err := w.gate.do(func() error { return w.light.SetPower(ctx, true) }); err != nil {
 		w.logf("%s: the light was not switched on: %v", name, err)
 	}
+}
+
+// levelAt is the brightness this writer should be running at, and a sentence saying
+// which rule chose it — empty when there is no schedule to explain.
+//
+// The fixed `brightness` setting is the answer whenever no window contains the
+// moment, which is what makes a schedule with a gap in it, or a schedule that ends,
+// behave like the setting this module has always had rather than like a light that
+// goes dark between windows.
+func (w *writer) levelAt(when time.Time) (int, string, bool) {
+	level, why, covered := w.schedule.level(when)
+	if !covered {
+		return w.brightness, why, false
+	}
+
+	return level, why, true
+}
+
+// retune writes the brightness a schedule asks for, and only when it differs from the
+// one the controller has already been given.
+//
+// **It never writes one for a borrowed segment, and that is the whole reason this
+// method is a method rather than a line in the frame path.** A brightness is
+// controller-wide: SetBrightness moves every segment on the box, including the five
+// somebody else is using. A writer that drives one borrowed segment of a desk light
+// must therefore write no brightness at all — at start, at a window's edge, ever — so
+// the check is here as well as at the constructor, and the schedule is never handed to
+// a segment writer in the first place (see watch.start). Two guards, because the cost
+// of getting this wrong is somebody's desk light dimming at eight in the evening for a
+// reason nobody on that desk can see.
+//
+// A value that has not changed is not written. That is what keeps a schedule at one
+// write per boundary rather than one a tick, and it is the same rule the frame path
+// keeps with samePicture.
+func (w *writer) retune(ctx context.Context) error {
+	if w.schedule == nil || w.segment != nil {
+		return nil
+	}
+
+	wanted, why, _ := w.levelAt(w.now())
+	if wanted == w.level {
+		return nil
+	}
+
+	if err := w.gate.do(func() error { return w.light.SetBrightness(ctx, wanted) }); err != nil {
+		return fmt.Errorf("the brightness %d was not set (%s): %w", wanted, why, err)
+	}
+
+	w.level = wanted
+
+	// One line per change, like every other line in this log: a window's edge is a
+	// transition, and a value that stood all evening writes nothing at all.
+	w.logf("%s: the light's brightness is %d, %s", name, wanted, why)
+
+	return nil
 }
 
 // paint draws one frame on the strip.
