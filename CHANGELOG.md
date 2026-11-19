@@ -130,6 +130,17 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   that writes the configuration and then does not see the light answer is refused with the safety
   snapshot's id rather than reported as a success.
 
+### Fixed
+
+- The Bindings tab offers a printer that is already shown on another light, and says which light it is on
+  beside the name — `Hermes MK4 — already on 10.0.0.136` — so a second light can be given to a printer from
+  the screen and not only by `POST /bindings`. A printer already shown on the light being edited is still
+  not offered there, the segments that light has taken are listed under the segment field, and a segment
+  that is already taken — or a whole-light binding where a segment is taken, and a segment where the light
+  is taken whole — is said before Save rather than only in the refusal after it. Each row names its light
+  beside the address, and a printer shown by more than one binding says so under its name, so two rows of
+  one printer read as two lights rather than as a duplicate.
+
 ## 0.1.0 - 2026-11-18
 
 The first release, published as a beta: the marketplace lists it on its beta channel, and it will change.
