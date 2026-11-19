@@ -3,7 +3,7 @@
     "title": "Bindings",
     "intro": "Each line is one printer drawn on one segment of one light. A change here applies at once, in the running module.",
     "multi_room": "One printer may sit on more than one light, at the cost of a second steady stream. A segment carries one printer only.",
-    "not_saved": "Nothing here is written to the module's settings, so a restart starts again from the bindings setting. Copy a working list into that setting to keep it.",
+    "not_saved": "Every change here is written into the module's own configuration store, so it survives a restart and an upgrade. A module purge or a fresh install loses it, so keep a copy of a list you want to keep.",
     "printer": "Printer",
     "controller": "Controller",
     "segment": "Segment",

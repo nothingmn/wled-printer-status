@@ -21,6 +21,12 @@ type apiUnderTest struct {
 	watch *runner
 	light *fakeStrip
 
+	// store is this module's own configuration store, and dir is the directory it lives in: the
+	// file a test reads back to see that a change made through a route is a change on disk. Nil is
+	// the module that was granted no data directory.
+	store *configTables
+	dir   string
+
 	// madeSources counts the printers a watch was built for, which is how a test sees that a
 	// change started a watch at all rather than only changing a list.
 	madeSources *atomic.Int32
@@ -41,6 +47,37 @@ func newAPIUnderTest(t *testing.T, light *fakeStrip, printers []deviceapi.Device
 func newAPIWith(t *testing.T, light *fakeStrip, printers []deviceapi.Device, start bindings, newLight func(string) (strip, error)) *apiUnderTest {
 	t.Helper()
 
+	return newAPIStored(t, light, printers, start, newLight, storeFor(t, start))
+}
+
+// storeFor is the store every fixture runs on unless it says otherwise: a directory of its own
+// holding the set it starts with, which is what a module that came up from its own document has.
+// A test that wants the module granted no directory passes nil to newAPIStored instead.
+func storeFor(t *testing.T, start bindings) *configTables {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	entries, err := storeEntries(start.identified())
+	if err != nil {
+		t.Fatalf("render the fixture's bindings for its store: %v", err)
+	}
+
+	if _, err := saveStore(dir, storedConfig{Version: storeVersion, Bindings: entries}); err != nil {
+		t.Fatalf("write the fixture's store: %v", err)
+	}
+
+	tables := &configTables{}
+	tables.grant(dir)
+
+	return tables
+}
+
+// newAPIStored is the routes over a watch built on fakes and one named store: the fixture's own,
+// or nil for a module that was granted no data directory.
+func newAPIStored(t *testing.T, light *fakeStrip, printers []deviceapi.Device, start bindings, newLight func(string) (strip, error), tables *configTables) *apiUnderTest {
+	t.Helper()
+
 	ctx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
 
@@ -56,6 +93,7 @@ func newAPIWith(t *testing.T, light *fakeStrip, printers []deviceapi.Device, sta
 		logf:     quiet,
 		tick:     5 * time.Millisecond,
 		grace:    2 * time.Second,
+		tables:   tables,
 	}
 
 	if err := watch.apply(ctx, start); err != nil {
@@ -78,9 +116,15 @@ func newAPIWith(t *testing.T, light *fakeStrip, printers []deviceapi.Device, sta
 		parent:   func() context.Context { return ctx },
 		newLight: newLight,
 		bound:    time.Second,
+		tables:   tables,
 	}.mount(mux)
 
-	return &apiUnderTest{mux: mux, watch: watch, light: light, madeSources: made}
+	dir := ""
+	if tables != nil {
+		dir = tables.directory()
+	}
+
+	return &apiUnderTest{mux: mux, watch: watch, light: light, madeSources: made, store: tables, dir: dir}
 }
 
 // do runs one request and answers with the status, the body as a map, and the raw JSON.
@@ -157,10 +201,10 @@ func TestReadingTheSetIsReadingWhatTheWriterRuns(t *testing.T) {
 		t.Fatalf("the first binding is %v on segment %v, want the whole controller", first["whole"], first["segment"])
 	}
 
-	// Nothing here can save anything, and the answer has to say so: a caller who thinks a
-	// change here survives a restart will lose two printers at the next deploy.
-	if body["persisted"] != false {
-		t.Fatalf("the list says persisted %v, and nothing on this surface writes the host's settings", body["persisted"])
+	// The set on this route is the one in the module's own store, and it says so: a caller who
+	// reads persisted: false has to know that nothing here will survive a restart.
+	if body["persisted"] != true {
+		t.Fatalf("the list says persisted %v, and the set it is reading is the one in this module's store", body["persisted"])
 	}
 
 	status, one := api.do(t, http.MethodGet, "/bindings/printer-b", "")
@@ -213,8 +257,9 @@ func TestAddingABindingIsDrivingItAtOnce(t *testing.T) {
 		t.Fatalf("POST /bindings answered %d, want %d: %v", status, http.StatusCreated, body)
 	}
 
-	if body["applied"] != true || body["persisted"] != false {
-		t.Fatalf("the answer says applied %v and persisted %v, want true and false", body["applied"], body["persisted"])
+	if body["applied"] != true || body["persisted"] != true {
+		t.Fatalf("the answer says applied %v and persisted %v, want true and true: the change took effect and it is in the store",
+			body["applied"], body["persisted"])
 	}
 
 	added := body["binding"].(map[string]any)

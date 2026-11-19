@@ -80,7 +80,7 @@ var (
 	// errNoDataDirectory is a module the operator did not grant a data directory. It runs from
 	// its settings exactly as it did before the store existed, so there is nowhere to keep an
 	// override and nothing to read one from.
-	errNoDataDirectory = errors.New("this module was granted no data directory, so it has no configuration store to keep a table in")
+	errNoDataDirectory = errors.New("this module was granted no data directory, so it has no configuration store to keep a change in")
 
 	// errNoDocument is a granted directory with no document in it, which is a start that has not
 	// finished rather than a table with nothing in it. A read answers the defaults; a write

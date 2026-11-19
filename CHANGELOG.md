@@ -140,6 +140,17 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   is taken whole — is said before Save rather than only in the refusal after it. Each row names its light
   beside the address, and a printer shown by more than one binding says so under its name, so two rows of
   one printer read as two lights rather than as a duplicate.
+- A binding added, moved or deleted through `POST /bindings`, `PUT /bindings/{id}` or
+  `DELETE /bindings/{id}` is now written into the module's own configuration document, in the same write the
+  colour, moment, layout, brightness-window and pause tables use. Before this it changed only what the
+  running process was driving: the answer said `applied: true` with `persisted: false`, and the binding was
+  gone at the next restart or settings save — which is how a strip bound an hour earlier disappeared and
+  left the panel alone. A replace keeps the binding's `id`, so a binding moved from one segment to another
+  is on the new segment after a restart under the name it already had.
+- A change to a binding that cannot be kept is refused rather than applied and lost. If the module was
+  granted no data directory, if the directory will not take the write, or if the document was written by a
+  newer release, the route answers `503 STORE_UNAVAILABLE`, the set that was running is still running, and
+  nothing is reported as applied.
 
 ## 0.1.0 - 2026-11-18
 

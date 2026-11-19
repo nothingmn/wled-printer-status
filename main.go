@@ -797,6 +797,10 @@ func routes() http.Handler {
 		live:   live,
 		fleet:  held,
 		parent: func() context.Context { return sessionCtx },
+		// The store, because a binding added, moved or deleted here is written into this
+		// module's own document rather than into a list this process happens to be holding.
+		// See reviseStored.
+		tables: tables,
 	}.mount(mux)
 
 	// The two tables the screens edit, on the same terms: the same watch, the same host list, and

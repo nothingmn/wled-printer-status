@@ -173,13 +173,16 @@ var (
 		"controller",
 	))
 
-	// StoreUnavailable is a table read or write where this module has no configuration store to
-	// read or write: the operator granted it no data directory, the document has not been written
-	// yet, or the document is one this build cannot act on. It is a 503 and not a 404 because the
-	// route exists and the table exists — what is missing is the place an edit would be kept.
+	// StoreUnavailable is a read or a write where this module has no configuration store it can
+	// act on: the operator granted it no data directory, the document has not been written yet,
+	// the document is one this build cannot act on, or the directory would not take the write.
+	// It covers every editing surface — the bindings and the tables beside them — because a
+	// binding is written into the same document the tables are. It is a 503 and not a 404 because
+	// the route exists and the thing it edits exists — what is missing is the place an edit would
+	// be kept.
 	StoreUnavailable = fault.Register(faultDomain, "STORE_UNAVAILABLE", http.StatusServiceUnavailable, fault.Document(
 		"This module has no configuration store it can read or write",
-		"This module keeps the tables a screen edits in one JSON document in the data directory the operator approves when the module is installed, and it writes that document itself at start-up. If the module was granted no directory, nothing on this surface can be saved. Send the same request again after the module has been configured, or reinstall it granting a data directory.",
+		"This module keeps its configuration — the bindings it drives and the tables a screen edits — in one JSON document in the data directory the operator approves when the module is installed, and it writes that document itself at start-up. If the module was granted no directory, or the directory cannot be written, nothing on this surface can be saved: the change was not made, and what was running is running still. Send the same request again after the module has been configured, or reinstall it granting a data directory.",
 		fault.RetryAllowed,
 		fault.ShowDetail,
 	))

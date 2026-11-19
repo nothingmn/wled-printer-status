@@ -10,7 +10,7 @@
       "get": {
         "operationId": "list-bindings",
         "summary": "The printers this module is showing",
-        "description": "Every binding in force, in the operator's order: the printer, the controller, and the segment it drives with -1 for the whole controller. A binding is one printer shown on one segment of one controller, and this is the set the writer is running on now rather than what the settings file says — the source member says which of the two it is. A printer's name comes from the host's own list, so it is absent, with names_read_failed saying why, when the host will not answer: the set is this module's record and must not become unreadable because a name could not be fetched. The host takes view_resource on the module's instance before this is called.",
+        "description": "Every binding in force, in the operator's order: the printer, the controller, and the segment it drives with -1 for the whole controller. A binding is one printer shown on one segment of one controller, and this is the set the writer is running on now, which is the set in this module's own configuration store, so the next start runs it — the source member says where it came from. A printer's name comes from the host's own list, so it is absent, with names_read_failed saying why, when the host will not answer: the set is this module's record and must not become unreadable because a name could not be fetched. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The set in force.",
@@ -25,8 +25,8 @@
                       "items": {"$ref": "#/components/schemas/Binding"}
                     },
                     "count": {"type": "integer", "description": "How many bindings the set holds."},
-                    "source": {"type": "string", "description": "Where this set came from: the bindings setting, the four settings that came before it, or a change made through these routes since the module started."},
-                    "persisted": {"type": "boolean", "description": "Always false. Nothing on this surface writes the host's settings, so a change made here lasts until the process restarts or the settings pane is saved."},
+                    "source": {"type": "string", "description": "Where this set came from: the bindings setting, the four settings that came before it, or a change made through these routes, which is written into this module's own store."},
+                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the set it is showing is the one in it, so the next start runs it. False means no document could be read — no data directory, or one this build will not act on — and then a change here cannot be kept."},
                     "names_read_failed": {"type": "string", "description": "Why a printer's name is missing, absent when the host answered."}
                   },
                   "required": ["bindings", "count", "source", "persisted"]
@@ -39,7 +39,7 @@
       "post": {
         "operationId": "add-binding",
         "summary": "Show one more printer",
-        "description": "Adds a binding and puts it into effect at once: the writer is stopped — waiting for a borrowed segment to be given back — and started again on the new set, so no restart and no settings save is needed. Nothing is saved: the host owns the settings, and this module has no call that writes them. The set that would result is held to the module's rules before anything is touched, so two bindings on one segment, two bindings on one printer, a whole controller beside a segment of it, a brightness on a borrowed segment, a printer the host does not hold and an address that is not a controller are all refused with the rule that refused them and the set that was running is left running. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Adds a binding and puts it into effect at once: the writer is stopped — waiting for a borrowed segment to be given back — and started again on the new set, so no restart and no settings save is needed. It is written into this module's own configuration store before the writer is touched, so it is what the next start reads; a store that cannot take the write refuses this call and leaves the set that was running running, rather than applying a change a restart would take away. The set that would result is held to the module's rules before anything is touched, so two bindings on one segment, two bindings on one printer, a whole controller beside a segment of it, a brightness on a borrowed segment, a printer the host does not hold and an address that is not a controller are all refused with the rule that refused them and the set that was running is left running. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {
@@ -58,8 +58,8 @@
                   "properties": {
                     "binding": {"$ref": "#/components/schemas/Binding"},
                     "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
-                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
-                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                    "persisted": {"type": "boolean", "description": "Always true here: the change was written into this module's own configuration store before the writer was restarted, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
+                    "note": {"type": "string", "description": "What took effect, and where it was written."}
                   },
                   "required": ["binding", "applied", "persisted"]
                 }
@@ -83,7 +83,7 @@
             }
           },
           "503": {
-            "description": "The host's printer list could not be read, so the printer named cannot be resolved (PRINTERS_UNAVAILABLE).",
+            "description": "Either the host's printer list could not be read, so the printer named cannot be resolved (PRINTERS_UNAVAILABLE), or this module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -116,7 +116,7 @@
                   "type": "object",
                   "properties": {
                     "binding": {"$ref": "#/components/schemas/Binding"},
-                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
+                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the binding is in it, so the next start runs it."},
                     "names_read_failed": {"type": "string", "description": "Why the printer's name is missing, absent when the host answered."}
                   },
                   "required": ["binding", "persisted"]
@@ -137,7 +137,7 @@
       "put": {
         "operationId": "change-binding",
         "summary": "Point one printer at another controller or segment",
-        "description": "Replaces where one printer is shown: its controller, its segment, its brightness. The printer is the binding's name, so a body naming a different one is refused rather than quietly moving what the id refers to — delete the binding and add the other. The change takes effect at once, in the writer that is already talking to the controller, and it is not saved: a restart or a save of the settings pane puts back what the settings say. The set the change would make is judged before anything is stopped, so a refusal leaves the set that was running running. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Replaces where one printer is shown: its controller, its segment, its brightness. The printer is the binding's name, so a body naming a different one is refused rather than quietly moving what the id refers to — delete the binding and add the other. The change takes effect at once, in the writer that is already talking to the controller, and it is written into this module's own configuration store first — under the binding's own id, which a replace never changes — so it is what the next start runs. The set the change would make is judged before anything is stopped, so a refusal leaves the set that was running running. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {
@@ -156,8 +156,8 @@
                   "properties": {
                     "binding": {"$ref": "#/components/schemas/Binding"},
                     "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
-                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
-                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                    "persisted": {"type": "boolean", "description": "Always true here: the change was written into this module's own configuration store before the writer was restarted, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
+                    "note": {"type": "string", "description": "What took effect, and where it was written."}
                   },
                   "required": ["binding", "applied", "persisted"]
                 }
@@ -187,13 +187,21 @@
                 "schema": {"$ref": "#/components/schemas/Refusal"}
               }
             }
+          },
+          "503": {
+            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
           }
         }
       },
       "delete": {
         "operationId": "delete-binding",
         "summary": "Stop showing one printer",
-        "description": "Takes one binding out of the set and puts the change into effect at once: the writer for that binding stops, and a borrowed segment is given back to the controller it came from before the route answers. The last binding may be deleted, and then this module drives nothing and the light is left as the last frame found it — which is a thing an operator may want and is better said than done by removing a setting and restarting the host. Nothing is saved: the settings still name the binding, and a restart puts it back. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Takes one binding out of the set and puts the change into effect at once: the writer for that binding stops, and a borrowed segment is given back to the controller it came from before the route answers. The last binding may be deleted, and then this module drives nothing and the light is left as the last frame found it — which is a thing an operator may want and is better said than done by removing a setting and restarting the host. The row comes out of this module's own configuration store before the writer is touched, so the next start does not run it again. The host takes operate_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The binding is gone and is no longer driven.",
@@ -210,8 +218,8 @@
                     },
                     "applied": {"type": "boolean", "description": "True when the writer is running on the new set."},
                     "driving": {"type": "boolean", "description": "Whether this module is driving any light afterwards. False means the last binding was the one deleted."},
-                    "persisted": {"type": "boolean", "description": "Always false: the settings are the host's."},
-                    "note": {"type": "string", "description": "What took effect, and what a restart puts back."}
+                    "persisted": {"type": "boolean", "description": "Always true here: the change was written into this module's own configuration store before the writer was restarted, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
+                    "note": {"type": "string", "description": "What took effect, and where it was written."}
                   },
                   "required": ["deleted", "remaining", "applied", "driving", "persisted"]
                 }
@@ -228,6 +236,14 @@
           },
           "409": {
             "description": "The binding could not be stopped cleanly, so the set that was running is running still (BINDING_REFUSED).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}

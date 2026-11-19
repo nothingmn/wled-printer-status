@@ -14,7 +14,7 @@
 // They are what a screen would call, what curl reaches today, and what the `bindings` setting
 // in module.yaml writes in one field until there is one.
 //
-// # What a change costs
+// # What a change does and what it costs
 //
 // Every write here stops the watch and starts it again on the new set, which is what makes a
 // change take effect in the writer that is already talking to the controller: no restart, no
@@ -23,13 +23,20 @@
 // given back, because a writer that gave a segment back after the next one captured it would
 // hand the operator's own bar back as though it were his.
 //
-// # What a change does not do
+// # What a change does save
 //
-// It does not save anything. The settings belong to the host: it merges module.yaml's defaults
-// with the instance's config block and sends the result on plugin.configure, and a module has
-// no call that writes them back. So a change lives until the process restarts or a person
-// saves the settings pane, and every write here says so in its answer rather than letting
-// somebody build on a change they will lose.
+// It saves the set. These routes are the editing surface docs/product-requirements.md §4 gives
+// this module, so a binding added, moved or deleted here is written into the module's own
+// configuration store — the same versioned document, the same read-change-rename, the same lock
+// the state, moment, layout, window and pause tables write through — and it is what the next
+// start reads.
+//
+// That makes the store unavailable a refusal and not a footnote. A module granted no data
+// directory, a directory that will not take the write, a document from a newer release: the route
+// answers STORE_UNAVAILABLE and the set that was running is still running. It used to answer
+// `applied: true` beside `persisted: false` — honest about the wrong half, because the change did
+// take effect and then disappeared at the next restart, with nothing in the answer a screen could
+// act on beforehand.
 package main
 
 import (
@@ -85,6 +92,31 @@ type bindingAPI struct {
 	// which is the bound configure already uses: a list that never came back must not leave a
 	// route hanging.
 	bound time.Duration
+
+	// tables is this module's own configuration store, which is where a binding lives now that
+	// this module owns its configuration: a create, a replace and a delete are writes into that
+	// document, not a list this process holds for as long as it happens to run. Nil means the
+	// module was granted no data directory, and then a change is refused rather than applied and
+	// lost — see reviseStored.
+	tables *configTables
+}
+
+// kept answers whether this module has a store it can keep a change in, which is what `persisted`
+// says on both read routes.
+//
+// It is asked of the document and not of the running set: the routes keep the two in step, a start
+// reads the document, and a read of it is what the tables' routes make on every request anyway.
+// False means the document cannot be read at all — no granted directory, a path that is not one,
+// or a document this build will not act on — which is exactly the case where nothing on any of
+// these surfaces can be saved.
+func (api bindingAPI) kept() bool {
+	if api.tables == nil {
+		return false
+	}
+
+	_, err := api.tables.load()
+
+	return err == nil
 }
 
 // lightFor is the client for one controller: the test's when one was supplied, and the process's
@@ -182,8 +214,9 @@ type bindingsAnswer struct {
 	// the first thing to read when a list is not the one the settings file shows.
 	Source string `json:"source"`
 
-	// Persisted is false and means it: nothing on this surface writes the host's settings, so
-	// what a caller changes here lasts until the process restarts.
+	// Persisted says this set is the one in this module's own configuration store, so it is what
+	// the next start runs. A module granted no data directory has nowhere to keep a set and says
+	// so here, before a caller finds it out by looking at a dark light after a restart.
 	Persisted bool `json:"persisted"`
 
 	// NamesReadFailed says why a printer's name is missing, absent when the host answered.
@@ -282,7 +315,7 @@ func (api bindingAPI) listBindings(w http.ResponseWriter, r *http.Request) {
 		Bindings:        answersOf(set, names),
 		Count:           len(set),
 		Source:          api.live.source(),
-		Persisted:       false,
+		Persisted:       api.kept(),
 		NamesReadFailed: why,
 	})
 }
@@ -307,7 +340,7 @@ func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 
 	answer(w, http.StatusOK, map[string]any{
 		"binding":           foundAnswer,
-		"persisted":         false,
+		"persisted":         api.kept(),
 		"names_read_failed": why,
 	})
 }
@@ -382,6 +415,10 @@ func toSetting(id, deviceID string, asked bindingRequest) binding {
 // may sit on several lights — multi-room status — at the cost of a second steady stream." What is
 // still refused is the same segment of the same controller twice, and bindings.check says so when
 // the set is judged, naming the binding that got there first.
+//
+// The set is written into this module's own store before the writer is touched, so the binding is
+// what the next start reads; a store that will not take the write refuses the request and leaves
+// the running set alone.
 func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 	asked, err := readBindingRequest(r)
 	if err != nil {
@@ -401,7 +438,7 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 
 	var added binding
 
-	set, err := api.live.revise(api.watchContext(), func(current bindings) (bindings, error) {
+	set, err := api.live.reviseStored(api.watchContext(), func(current bindings) (bindings, error) {
 		// Appended and then named across the whole set, in the operator's order: a printer's
 		// first binding is already named with the bare device id, so the second takes the
 		// qualified one and the first keeps the path it answered at before. See identified.
@@ -412,7 +449,7 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 		return next, nil
 	})
 	if err != nil {
-		refuse(w, r, BindingRefused.New(err.Error()))
+		api.refuseChange(w, r, err)
 
 		return
 	}
@@ -422,7 +459,7 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusCreated, map[string]any{
 		"binding":           answerOf(added, positionOf(set, added.ID), names),
 		"applied":           true,
-		"persisted":         false,
+		"persisted":         true,
 		"names_read_failed": why,
 		"note":              appliedNote,
 	})
@@ -432,9 +469,15 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 // at a different brightness.
 //
 // The name is what a caller addresses, so it does not move: a binding that is moved to another
-// segment keeps the name it had, because a path a screen already holds must keep working. What is
-// refused is a body naming a different printer than this binding shows — that is a different
-// binding, not an edit — and a body that would put this binding on a segment another one drives.
+// segment keeps the name it had, because a path a screen already holds must keep working — and
+// because the layout table is keyed on that name, so a name that moved would orphan the picture
+// somebody composed. What is refused is a body naming a different printer than this binding
+// shows — that is a different binding, not an edit — and a body that would put this binding on a
+// segment another one drives.
+//
+// The replaced binding is written into this module's own store before the writer is touched, so a
+// binding moved from one segment to another is on the new segment after the next start too, under
+// the name it already had.
 func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -460,7 +503,7 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 
 	var changed binding
 
-	set, err := api.live.revise(api.watchContext(), func(current bindings) (bindings, error) {
+	set, err := api.live.reviseStored(api.watchContext(), func(current bindings) (bindings, error) {
 		found, held := current.find(id)
 		if !held {
 			return nil, fmt.Errorf("%w: %s", errNoBinding, id)
@@ -472,18 +515,14 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 				found.DeviceID, named)
 		}
 
+		// The id is the found binding's own, whatever the body carried: a replace moves where a
+		// binding is shown and never what it is called.
 		changed = toSetting(found.ID, found.DeviceID, asked)
 
 		return current.with(changed), nil
 	})
 	if err != nil {
-		if errors.Is(err, errNoBinding) {
-			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("binding", id)))
-
-			return
-		}
-
-		refuse(w, r, BindingRefused.New(err.Error()))
+		api.refuseChange(w, r, err)
 
 		return
 	}
@@ -493,7 +532,7 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, map[string]any{
 		"binding":           answerOf(changed, positionOf(set, changed.ID), names),
 		"applied":           true,
-		"persisted":         false,
+		"persisted":         true,
 		"names_read_failed": why,
 		"note":              appliedNote,
 	})
@@ -505,12 +544,15 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 // The last binding may be deleted. It is a thing an operator may want — the light stops being
 // written to, and is left as the last frame found it — and it is better said than done by
 // removing a setting and restarting the host.
+//
+// The row comes out of this module's store before the writer is touched, so a deleted binding does
+// not come back at the next start.
 func (api bindingAPI) deleteBinding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var left bindings
 
-	_, err := api.live.revise(api.watchContext(), func(current bindings) (bindings, error) {
+	_, err := api.live.reviseStored(api.watchContext(), func(current bindings) (bindings, error) {
 		kept, held := current.without(id)
 		if !held {
 			return nil, fmt.Errorf("%w: %s", errNoBinding, id)
@@ -521,13 +563,7 @@ func (api bindingAPI) deleteBinding(w http.ResponseWriter, r *http.Request) {
 		return kept, nil
 	})
 	if err != nil {
-		if errors.Is(err, errNoBinding) {
-			refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("binding", id)))
-
-			return
-		}
-
-		refuse(w, r, BindingRefused.New(err.Error()))
+		api.refuseChange(w, r, err)
 
 		return
 	}
@@ -537,9 +573,30 @@ func (api bindingAPI) deleteBinding(w http.ResponseWriter, r *http.Request) {
 		"remaining": answersOf(left, nil),
 		"applied":   true,
 		"driving":   len(left) > 0,
-		"persisted": false,
+		"persisted": true,
 		"note":      appliedNote,
 	})
+}
+
+// refuseChange is what a create, a replace and a delete answer when the change they asked for was
+// not made. Three answers and not one, because a caller acts differently on each:
+//
+//   - the binding is not there, so the path names something this module does not drive — 404;
+//   - the set that change would make breaks a rule, so the body has to change — 409;
+//   - the change could not be kept, so the same request may succeed later and the set that was
+//     running is running still — 503.
+//
+// It is one function so that no route can answer a store that would not take the write with
+// "refused" and no route can apply a change it could not keep.
+func (api bindingAPI) refuseChange(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, errNoBinding):
+		refuse(w, r, BindingNotFound.New(err.Error()).With(fault.StringParam("binding", r.PathValue("id"))))
+	case errors.Is(err, errNotKept):
+		refuse(w, r, StoreUnavailable.New(err.Error()))
+	default:
+		refuse(w, r, BindingRefused.New(err.Error()))
+	}
 }
 
 // printerAnswer is one printer the host holds: the choice a person makes instead of typing a
@@ -877,7 +934,16 @@ func segmentsOf(state wled.State) []segmentAnswer {
 // words it wrote itself a moment earlier.
 var errNoBinding = errors.New("this module drives no binding of that name")
 
-// appliedNote is what every write on these routes answers with, because the one thing a
-// caller must not be wrong about is whether the change survives a restart.
-const appliedNote = "This took effect now: the writer was stopped and started again on the new set. " +
-	"It is not saved. The host owns the settings, so restarting this module or saving its settings pane puts back what the settings say."
+// errNotKept is a change the configured store would not take: no data directory, a directory that
+// will not accept the write, or a document this build cannot act on. It is a value for the same
+// reason errNoBinding is — the handler answers 503 by asking the error rather than by matching a
+// sentence — and it is the one error a binding route must never answer as "applied".
+var errNotKept = errors.New("the change was not made, because it could not be written into this module's configuration store")
+
+// appliedNote is what every write on these routes answers with, because the two things a caller
+// must not be wrong about are whether the change survives and what it does to the light. It is
+// composed from the same persistedNote the tables' writes use, so one sentence answers "where does
+// this live" on every editing surface this module serves.
+const appliedNote = persistedNote + " It took effect now: the writer was stopped and started again on " +
+	"the new set, or stopped for good when the set became empty. A borrowed segment was given back to " +
+	"the controller it came from before this answered."

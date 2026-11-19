@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -12,7 +13,7 @@ import (
 const (
 	originSettings = "the bindings setting of this instance"
 	originLegacy   = "controller_address, printer, brightness and segment: the four settings that came before bindings"
-	originRoutes   = "a change made through this module's own routes, which the settings do not carry"
+	originRoutes   = "a change made through this module's own routes, written into its configuration store"
 
 	// originStore is the set this module read out of its own configuration store. It is a
 	// separate answer from the settings on purpose: the settings were the migration source, the
@@ -178,30 +179,98 @@ func (r *runner) apply(parent context.Context, next bindings) error {
 	return r.applyLocked(parent, next)
 }
 
-// revise changes the set in force: change is handed the set the process is running and returns
-// the one to run instead, or the reason it cannot.
+// reviseStored changes the set in force and writes it into this module's own configuration
+// store, and it is the one path every binding route takes.
 //
-// The read of the current set and the build of the next one happen under one lock, which is
-// what makes a delete beside an add mean one thing rather than two — otherwise both requests
-// would read the same set and the second would silently undo the first.
-func (r *runner) revise(parent context.Context, change func(bindings) (bindings, error)) (bindings, error) {
+// It is the whole of a binding change: change is handed the set the process is running and returns
+// the one to run instead, or the reason it cannot. The read of the current set, the decision and
+// the build of the next one happen under one lock, which is what makes a delete beside an add mean
+// one thing rather than two — otherwise both requests would read the same set and the second would
+// silently undo the first.
+//
+// It has no sibling that changes the running set without writing the store, on purpose. There was
+// one, and it is how a binding came to survive only until the next restart: a route that could take
+// the cheap path did, and the answer it wrote said `applied: true` beside `persisted: false`.
+//
+// The order is the store first, the running set second, and it is not interchangeable. A write
+// that cannot reach the store has to leave the light showing what it was showing, so the refusal
+// is raised before the watch is touched at all. A refusal at the moment of asking is a smaller lie
+// than a disappearance the operator finds out about by looking at a dark strip.
+//
+// The write itself goes through configTables.revise, which is the same read-change-rename the
+// state, moment, layout, brightness-window and pause tables go through: one place that knows the
+// document's shape, one lock around the read and the rename, and one answer to what a directory
+// that cannot be written means.
+//
+// Lock order, which is the one thing this method has to get right: the runner's lock is held
+// while the store's is taken, never the other way round. Nothing on the store's path waits on the
+// watch — a tables route reads the running set before or after its own write, never inside it —
+// so the two locks cannot sit waiting on each other.
+func (r *runner) reviseStored(parent context.Context, change func(bindings) (bindings, error)) (bindings, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	previous := cloneBindings(r.held)
 
 	next, err := change(cloneBindings(r.held))
 	if err != nil {
 		return nil, err
 	}
 
+	// Named and judged before the store is written. A set with no names is a set the layout table
+	// has no key for, and a set that breaks a rule is one applyLocked would refuse after the
+	// document had already been changed — so both are done here, where the file has not moved yet.
+	if len(next) > 0 {
+		next = next.identified()
+
+		if err := next.check(); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := r.keepBindings(next); err != nil {
+		// Nothing has been applied. The set the light is being drawn from is the one it was
+		// drawn from before this request, and the answer says the change was not made.
+		return nil, fmt.Errorf("%w: %v", errNotKept, err)
+	}
+
 	if err := r.applyLocked(parent, next); err != nil {
+		// The store holds a set the watch would not start. Writing the previous one back is what
+		// keeps the document and the light saying the same thing; a write-back that fails is
+		// logged rather than swallowed, because the next start would then run a set nobody chose.
+		if backErr := r.keepBindings(previous); backErr != nil {
+			r.logf("%s: a change was written to the store and then refused by the watch, and the set it replaced could not be written back: %v",
+				name, backErr)
+		}
+
 		return nil, err
 	}
 
-	// A set changed through these routes is not the one the settings file says, and the answer
-	// to GET /bindings has to say which it is.
+	// The set in force is the store's now, and not a list this process holds until something
+	// replaces it.
 	r.origin = originRoutes
 
 	return cloneBindings(r.held), nil
+}
+
+// keepBindings writes one set into this module's own configuration store.
+//
+// A module granted no directory has nowhere to keep a binding and says so rather than pretending:
+// `needs.data` is how this module asks for one, and docs/product-requirements.md §4 makes the
+// store the editing surface, so a change that cannot reach it is a change that did not happen.
+func (r *runner) keepBindings(set bindings) error {
+	if r.tables == nil {
+		return errNoDataDirectory
+	}
+
+	entries, err := storeEntries(set)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.tables.revise(func(config *storedConfig) { config.Bindings = entries })
+
+	return err
 }
 
 // stop asks the watch to stop and waits for it to have given back what it borrowed.

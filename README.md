@@ -425,9 +425,9 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
 for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
 follow that printer's event stream as itself, with nobody behind the call, and for one writable
-directory — its own configuration store, one versioned JSON document holding the bindings and the two
-tables the Colours and Events screens edit, which is what lets a change made through its routes survive a
-restart and an upgrade. It declares **two** outbound
+directory — its own configuration store, one versioned JSON document holding the bindings and the five
+tables the Colours, Events, Layout, Brightness and Overview screens edit, which is what lets a change made
+through any of its routes survive a restart and an upgrade. It declares **two** outbound
 connections, both to the controller named in `controller_address` and both from this process: port 80,
 where the status colour and the progress are written as JSON state, and **UDP port 4048**, where the pixels
 of the finished word go over DDP once a second for the minute the word holds.
@@ -528,10 +528,15 @@ is; the same segment of the same controller twice is still refused, and the refu
 got there first.
 
 Every write takes effect **at once**: the watch is stopped — waiting for a borrowed segment to be given
-back — and started again on the new set, so no restart and no reinstall is needed. What it does **not** do
-is save: the settings belong to the host, a module has no call that writes them, and a restart or a save
-of the settings pane puts back what the settings say. Every write's answer carries `"persisted": false`
-and says so in words.
+back — and started again on the new set, so no restart and no reinstall is needed. It is also **kept**:
+the set is written into this module's own configuration store, the same `config.json` the colour, moment,
+layout, brightness-window and pause tables live in, and that is what the next start reads. Every write's
+answer carries `"persisted": true` and says where it went.
+
+That makes a store the module cannot reach a **refusal** and not a footnote. A module granted no data
+directory, a directory that will not take the write, or a document written by a newer release answers
+`503 STORE_UNAVAILABLE` — and the set that was running is running still, rather than a change that takes
+effect now and disappears at the next restart. `GET /bindings` answers `"persisted"` for the same fact.
 
 A refusal means nothing changed: the set that was running is running still. The whole watch is rebuilt on
 every change, so a borrowed segment beside the one you changed is given back and borrowed again — a
