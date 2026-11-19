@@ -191,6 +191,42 @@ type writer struct {
 	// because the brightness in this mode is somebody else's — see retune.
 	schedule *brightnessSchedule
 
+	// store is this module's own configuration as it reaches the painter: a state's colour and
+	// word, the pause, and the brightness windows. Nil means there is no store to ask — a module
+	// the host granted no directory, or a writer a test built — and the renderer's own table and
+	// the settings are then the whole picture, which is what every install before the store
+	// existed did. See show.go.
+	store lights
+
+	// printer is the binding's own device id, which is the name a pause on one binding is kept
+	// under, and empty for a writer that is not a binding.
+	printer string
+
+	// pauseEffect is what a pause does to this binding: it is switched off, or its borrowed zone is
+	// handed back. It is pause.go's answer, kept here rather than decided again, because the one
+	// thing that must not be got wrong is a borrowed zone being powered off with somebody else's
+	// run on the same strip.
+	pauseEffect string
+
+	// paused is whether this goroutine has made the one write a pause costs. The store says which
+	// instant a pause ends at; this says whether the light has been switched off for it yet, which
+	// is what keeps a pause to one write and then none.
+	paused bool
+
+	// afterPause is set when a pause ends, so that the frame written next is painted rather than
+	// suppressed as "already shown": the light has been dark, and nothing the writer remembers
+	// about it is evidence of what is on the wall.
+	afterPause bool
+
+	// spoken is the state table's word the light is holding, and nil when it holds none. It is the
+	// event's own hold — the picture, its pixels, the repeat that keeps live mode alive and the
+	// deadline — because a state's word is the same kind of picture as the finished word.
+	spoken *heldEvent
+
+	// saidWord is the last thing this writer said about a word it could not draw, so that a word
+	// too wide for its panel costs one line and not one a second.
+	saidWord string
+
 	// level is the brightness the controller has most recently been asked to take, and -1
 	// means it has been asked for nothing yet. It is what makes a schedule cost one write per
 	// change and no more: a window that still holds the value the controller already has is
@@ -239,7 +275,12 @@ type writer struct {
 	// controller or the writer's own state.
 	span atomic.Pointer[[2]int]
 
-	latest atomic.Pointer[render.Frame]
+	// latest holds the newest scene waiting to be painted, and standing the newest one offered —
+	// which is not the same thing: latest is emptied by the writer as it paints, while standing is
+	// what the state table's word is decided from on every pass, because a word has to be measured
+	// against the moment it is painted at and not against the moment it was submitted.
+	latest   atomic.Pointer[scene]
+	standing atomic.Pointer[scene]
 
 	// fired is the newest event the driver has offered and the writer has not taken. It is an
 	// atomic pointer for the same reason latest is one: the driver stores, the writer swaps,
@@ -314,6 +355,10 @@ func newSegmentWriter(light strip, segment int, where string, logf func(format s
 	pen.segment = &segment
 	pen.where = where
 
+	// A writer built for one segment of somebody else's controller is the case the pause exception
+	// exists for, and it asks pause.go rather than deciding for itself.
+	pen.pauseEffect = pauseEffectOn(binding{Segment: segment})
+
 	return pen
 }
 
@@ -331,18 +376,49 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 		wake:       make(chan struct{}, 1),
 		record:     recordSend,
 		dialPixels: dialPixels,
+		// A whole light is switched off by a pause, which is the rule and the answer pause.go
+		// gives a binding with no segment. A writer built for one segment replaces this in
+		// newSegmentWriter, from the same function.
+		pauseEffect: effectOff,
 		// Nothing has been asked of the controller's brightness yet. -1 is a value no
 		// controller takes, so "asked for nothing" cannot be mistaken for "asked for 0".
 		level: -1,
 	}
 }
 
+// scene is one turn of the driver as the writer paints it: the frame the renderer decided, the
+// state that frame is about, and the moment this module began showing that state.
+//
+// The last two travel beside the frame because of one rule the writer cannot answer for itself: a
+// state carrying a word beats the layout composer for as long as that word's `holds` says, and the
+// hold is measured from when the state began. A frame does not know what state it is or when the
+// state started, and the writer's own clock is the only thing that may judge whether a hold has run
+// out — so the driver hands over the two facts and the writer does the arithmetic at paint time.
+type scene struct {
+	frame render.Frame
+	state string
+	since time.Time
+}
+
 // submit offers one frame to the writer and never waits for it. The newest frame
 // replaces whatever was waiting; the ring is dropped when one is already pending,
 // because a pending ring already means "look at the slot".
 func (w *writer) submit(frame render.Frame) {
-	if w.latest.Swap(&frame) != nil {
-		// A frame was already waiting, and the ring that put it there is still pending: a
+	w.submitScene(scene{frame: frame})
+}
+
+// submitScene offers one turn of the driver, frame and state together.
+//
+// The scene is kept in two places for two different readers, and both are the writer's own
+// goroutine: latest is the one slot the painter takes, and standing is what the state table's word
+// is decided from on every pass — including the passes where nothing new has been decided, because
+// a word that holds for thirty seconds has to be re-judged against the clock after the driver has
+// stopped sending anything new.
+func (w *writer) submitScene(sc scene) {
+	w.standing.Store(&sc)
+
+	if w.latest.Swap(&sc) != nil {
+		// A scene was already waiting, and the ring that put it there is still pending: a
 		// second ring would buy nothing and would outlive the look it asked for.
 		return
 	}
@@ -407,6 +483,19 @@ func (w *writer) run(ctx context.Context) {
 		select {
 		case <-w.wake:
 		default:
+		}
+
+		// The pause, before anything this loop would write. A pause is a light switched off and
+		// then nothing at all: no frames, no brightness, no retries, no lines, until it ends. It
+		// is asked here rather than on the driver's tick because the instant it ends is the store's
+		// and the clock's, and the wait below is bounded by that instant — so a pause that runs out
+		// repaints at the moment it runs out and not at the next time the printer happens to move.
+		if w.holdPause(ctx) {
+			if ctx.Err() != nil {
+				return
+			}
+
+			continue
 		}
 
 		// A scheduled brightness changes at a window's edge and at no other moment — not when
@@ -525,10 +614,65 @@ func (w *writer) run(ctx context.Context) {
 			w.held = nil
 		}
 
+		// The state table's word, and it comes before the frame because of the rule it keeps: a
+		// state carrying a word beats the layout composer, so the word is the picture and the
+		// frame the driver keeps deciding waits in its one slot. While it holds, nothing below
+		// runs; when it stops applying — the state moved, or its hold ran out — the word lets go
+		// and the frame is painted in this same pass, which is what makes an expiry immediate.
+		wait, holding, err := w.speak(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			failures++
+
+			hold := backoffFor(failures)
+			retryAt = w.now().Add(hold)
+
+			w.logFailure(failures, hold, err)
+
+			continue
+		}
+
+		if holding {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.wake:
+			case <-w.after(wait):
+			}
+
+			continue
+		}
+
 		// Nothing is in the way, so anything the driver has decided goes out now, newest
 		// first: a frame that arrived during the window is held here, in the one slot,
 		// and never queued.
-		frame := w.latest.Swap(nil)
+		var frame *render.Frame
+
+		if decided := w.latest.Swap(nil); decided != nil {
+			picture := decided.frame
+			frame = &picture
+		} else if w.afterPause {
+			// A pause has just ended and the driver may not have said anything new yet. The
+			// newest scene it offered is still the picture, and waiting a tick for it to offer
+			// it again is the light that stays dark for a second after the button — which is the
+			// defect this rule exists to prevent, at a smaller scale.
+			if standing := w.standing.Load(); standing != nil {
+				picture := standing.frame
+				frame = &picture
+			}
+		}
+
+		// A pause has just ended, so whatever this writer last delivered is no evidence of what is
+		// on the wall: the light was dark, and a frame identical to the one before it must still be
+		// painted rather than suppressed as "already shown".
+		if w.afterPause {
+			w.afterPause = false
+
+			last, lastOK = nil, w.now()
+		}
 
 		// A composed picture — a bar, digits, a job's name — is pixels this module drew, and
 		// this firmware draws pixels only while a stream is live: it leaves realtime 2500 ms
@@ -632,7 +776,7 @@ func (w *writer) run(ctx context.Context) {
 				// it, so the pass after the window has to have something to paint: without this the
 				// panel would keep the picture before it until the driver's next tick, and a failed
 				// entry would cost a whole second on every attempt that never quite lands.
-				w.latest.Store(frame)
+				w.latest.Store(&scene{frame: *frame})
 
 				continue
 			}
@@ -828,6 +972,14 @@ func (w *writer) report(write func() error) error {
 // and this function reaches it only when no segment was named. A writer built by
 // newSegmentWriter has no brightness to write even if something asked it to.
 func (w *writer) begin(ctx context.Context) {
+	if _, paused := w.pauseNow(); paused {
+		// A light that is already paused is switched off by the first pass of the loop and
+		// nothing else: `settle` writes a brightness and a power-on, and a pause is one write
+		// followed by none. A borrowed zone is not even borrowed, because there is nothing to
+		// hand back yet and the zone is somebody else's until this module draws in it.
+		return
+	}
+
 	if w.segment != nil {
 		w.borrow(ctx)
 
@@ -875,20 +1027,53 @@ func (w *writer) settle(ctx context.Context) {
 	}
 }
 
-// levelAt is the brightness this writer should be running at, and a sentence saying
-// which rule chose it — empty when there is no schedule to explain.
+// levelAt is the brightness this writer should be running at, a sentence saying which rule chose it
+// — empty when there is nothing to explain — and whether a window chose it at all.
 //
-// The fixed `brightness` setting is the answer whenever no window contains the
-// moment, which is what makes a schedule with a gap in it, or a schedule that ends,
-// behave like the setting this module has always had rather than like a light that
-// goes dark between windows.
+// The store's list wins when it holds anything, and the setting is what it falls back to: the
+// setting is the migration source (docs/product-requirements.md §4), the list is what the Brightness
+// screen edits, and both are read by `brightnessSchedule.level` so a window cannot mean two things.
+// `judgesBrightness` is the companion question — "is anything judging this at all" — and retune
+// needs both, because "no window covers now" and "nothing is being judged" carry the same brightness
+// and only the first is worth keeping in step with the controller.
+//
+// The fixed `brightness` setting is the answer whenever no window contains the moment, which is what
+// makes a schedule with a gap in it, or a schedule that ends, behave like the setting this module has
+// always had rather than like a light that goes dark between windows.
 func (w *writer) levelAt(when time.Time) (int, string, bool) {
+	if w.store != nil {
+		if asked, held := w.store.level(when); held {
+			if asked.covered {
+				return asked.level, asked.why, true
+			}
+
+			return w.brightness, asked.why, false
+		}
+	}
+
 	level, why, covered := w.schedule.level(when)
 	if !covered {
 		return w.brightness, why, false
 	}
 
 	return level, why, true
+}
+
+// judgesBrightness reports whether anything is judging the brightness by the time of day at this
+// moment: a list of windows in this module's own store, or the `brightness_schedule` setting.
+//
+// It exists because "no window covers now" and "nothing is being judged at all" are different
+// answers with the same brightness in them, and only the first is a reason to keep comparing the
+// value the controller holds against the value the windows ask for. It asks the store the same
+// question `levelAt` does, so the two cannot disagree about whether there is a list.
+func (w *writer) judgesBrightness(when time.Time) bool {
+	if w.store != nil {
+		if _, held := w.store.level(when); held {
+			return true
+		}
+	}
+
+	return w.schedule != nil
 }
 
 // retune writes the brightness a schedule asks for, and only when it differs from the
@@ -908,11 +1093,18 @@ func (w *writer) levelAt(when time.Time) (int, string, bool) {
 // write per boundary rather than one a tick, and it is the same rule the frame path
 // keeps with samePicture.
 func (w *writer) retune(ctx context.Context) error {
-	if w.schedule == nil || w.segment != nil {
+	if w.segment != nil {
 		return nil
 	}
 
 	wanted, why, _ := w.levelAt(w.now())
+	if !w.judgesBrightness(w.now()) {
+		// Nothing is judging the brightness by the time of day — no window in the store and no
+		// schedule in the settings — so the fixed value `settle` wrote is the whole answer and
+		// there is nothing here to keep in step.
+		return nil
+	}
+
 	if wanted == w.level {
 		return nil
 	}
@@ -1201,22 +1393,13 @@ func (w *writer) release() {
 		return
 	}
 
+	// The write goes out on a context of its own, because the one that ended the watch is already
+	// cancelled and a cancelled context fails the request before it is sent. The give-back itself is
+	// handBack's, so that a stop and a pause cannot put two different segments back.
 	ctx, cancel := context.WithTimeout(context.Background(), wled.DefaultTimeout)
 	defer cancel()
 
-	held := *w.borrowed
-
-	if err := w.gate.do(func() error { return w.light.RestoreSegment(ctx, held.Segment) }); err != nil {
-		w.logf("%s: the borrowed segment %d on %s was not given back: %v", name, held.ID, w.where, err)
-
-		return
-	}
-
-	w.borrowed = nil
-
-	w.logf("%s: gave segment %d %q back to %s: pixels %d-%d, colour %s, effect %d, brightness %s",
-		name, held.ID, held.Name, w.where, held.Start, held.Stop,
-		coloursPhrase(held.Colors), held.Effect, brightnessPhrase(held.Brightness))
+	w.handBack(ctx)
 }
 
 // coloursPhrase names a segment's colours in a log line: one red,green,blue triple per colour,
@@ -1517,6 +1700,24 @@ type driver struct {
 	leds       int
 	infoAt     time.Time
 	infoFailed bool
+
+	// store is the same store the writer reads, and it is here for the one thing a frame carries:
+	// a state's colour. A frame is what /status answers with and what the Overview's thumbnail is
+	// drawn from, so a colour changed in the store has to reach the frame rather than only the
+	// pixels — otherwise the page and the wall would disagree about the same state.
+	//
+	// The word is deliberately not decided here. It is a picture, it lasts as long as its state
+	// does, and whether it has run out is a question for the moment of the paint; the driver hands
+	// the writer the state and the moment the state began and lets it draw.
+	store lights
+
+	// shown is the row of the state table the last frame was about, and shownSince the moment this
+	// module began showing it. A word holds from the start of its state — thirty seconds of a state
+	// the printer entered thirty seconds ago, not thirty seconds of a module running — and neither
+	// fact is in the frame.
+	shown      string
+	shownSince time.Time
+	shownEver  bool
 }
 
 // newDriver prepares the reader for one watch. It sends nothing until run is
@@ -1561,8 +1762,67 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 
 	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
 
+	// What the frame is about, and the colour the store has for it. Both are decided here rather
+	// than in the painter because a frame is what /status answers with and what the Overview draws
+	// its thumbnail from: a colour that only reached the pixels would be a page that disagrees with
+	// the wall.
+	shown, since := d.showing(snapshot, frame, at)
+	frame.Colour = d.colourOf(shown, frame.Colour)
+
 	d.pub(snapshot, frame)
-	d.writer.submit(frame)
+	d.writer.submitScene(scene{frame: frame, state: shown, since: since})
+}
+
+// showing is the row of the state table this frame is about, and the moment this module began
+// showing that state.
+//
+// The row is read off the frame's own reason rather than worked out again here, and that is the
+// point: whether a printer counts as disconnected or stale is `render.Decide`'s rule — with its
+// thirty-second horizon and its exception for a job that is over — and a second copy of that
+// arithmetic in this file would be a second answer to which picture is on the light.
+func (d *driver) showing(snapshot printer.Snapshot, frame render.Frame, at time.Time) (string, time.Time) {
+	name := ""
+
+	switch frame.Reason {
+	case render.ReasonDisconnected:
+		name = disconnectedState
+	case render.ReasonStale:
+		name = staleState
+	default:
+		if definition, known := findState(snapshot.State.Value); known && snapshot.State.Known {
+			// The table's own spelling, so that a store row written in any case is the same row.
+			name = definition.name
+		}
+	}
+
+	if !d.shownEver || name != d.shown {
+		// The state began here: the first look is a baseline rather than a transition, and a
+		// module restarted beside a printer that has been printing for an hour begins showing
+		// that state at its own first look. A word's hold is counted from this moment, which is
+		// the only one this process can honestly name.
+		d.shown, d.shownSince, d.shownEver = name, at, true
+	}
+
+	return d.shown, d.shownSince
+}
+
+// colourOf is the colour the light is drawn in for one state: the store's, when somebody has
+// overridden it, and otherwise the one the renderer decided.
+//
+// The fallback is the renderer's own answer and not a copy of a default, which is the rule the store
+// keeps everywhere else: a state nobody has edited has no row to read, and `show.overridden` is what
+// says whether the colour that came back was the operator's or the code's.
+func (d *driver) colourOf(state string, fallback wled.RGB) wled.RGB {
+	if d.store == nil || state == "" {
+		return fallback
+	}
+
+	held, known := d.store.show(state)
+	if !known || !held.overridden() {
+		return fallback
+	}
+
+	return held.colour
 }
 
 // note writes one line for each thing about the printer that has changed since the last

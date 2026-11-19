@@ -506,6 +506,12 @@ func (w *writer) takeEvent() {
 	}
 
 	w.held = &heldEvent{event: *fired, until: w.now().Add(fired.holds)}
+
+	// An event takes the light from a state table's word. The word is re-established when the event's
+	// hold ends — `speak` finds the state still carrying it — and leaving it recorded as up would have
+	// the next repeat push pixels over an establishing body that named the event instead, which is a
+	// segment whose name and picture disagree.
+	w.spoken = nil
 }
 
 // deliverEvent paints one event and reports what happened to the status route, so that a light
@@ -516,15 +522,7 @@ func (w *writer) takeEvent() {
 // every pixelRepeat until it ends: the picture does not move, and only its repetition is what
 // keeps the panel drawing it.
 func (w *writer) deliverEvent(ctx context.Context, ev event) error {
-	var frame []wled.RGB
-
-	err := w.report(func() error {
-		var pushErr error
-
-		frame, pushErr = w.paintEvent(ctx, ev)
-
-		return pushErr
-	})
+	frame, err := w.paintReported(ctx, ev)
 	if err != nil {
 		return err
 	}
@@ -535,6 +533,30 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 	}
 
 	return nil
+}
+
+// paintReported paints one picture and records what the controller did with it, so that a light
+// which took the word and a light which refused it are distinguishable without looking at the panel.
+//
+// It is one function rather than two because the two callers are the same write: an event, which
+// holds the light for its own duration, and a state's word, which holds it while its state does.
+// Both are the event's painter underneath, and a second copy of the report around it would be a
+// second place for a write to reach a controller without the status route knowing.
+func (w *writer) paintReported(ctx context.Context, ev event) ([]wled.RGB, error) {
+	var frame []wled.RGB
+
+	err := w.report(func() error {
+		var pushErr error
+
+		frame, pushErr = w.paintEvent(ctx, ev)
+
+		return pushErr
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return frame, nil
 }
 
 // paintEvent draws one event: the word, in the event's colour, on a dark panel, and returns the

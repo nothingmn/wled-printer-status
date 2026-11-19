@@ -656,7 +656,7 @@
       "put": {
         "operationId": "change-state",
         "summary": "Set the colour, the word and the hold one state is drawn with",
-        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. Nothing is sent to the light, and this build still draws each state with the colour internal/render holds, so the write is the record the Colours screen edits. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. Nothing is sent to the light: the painter reads this store on the next pass of its own loop, so a colour reaches the light within a tick, and a word a state carries is what a panel shows for as long as its hold lasts. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {
@@ -676,7 +676,7 @@
                     "state": {"$ref": "#/components/schemas/State"},
                     "applied": {"type": "boolean", "description": "True when the row is the one in force."},
                     "persisted": {"type": "boolean", "description": "Always true here: the row was written into this module's own store, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
-                    "note": {"type": "string", "description": "What was written, and what it does not yet change."}
+                    "note": {"type": "string", "description": "What was written, and what it now does on the light."}
                   },
                   "required": ["state", "applied", "persisted"]
                 }
@@ -1078,7 +1078,7 @@
       "put": {
         "operationId": "pause-binding",
         "summary": "Pause one binding, and leave the rest of the module alone",
-        "description": "Writes one binding's own pause with the absolute instant it ends at. The six lengths are 10m, 1h, 6h, 1d, 3d and forever, and a length outside them is refused by name rather than rounded. A pause switches the light off when it is obeyed; a binding that drives one segment of a strip somebody else also drives is handed back instead, because the rest of that strip belongs to its owner — the answer's effect says which of the two this binding is. This build stores and reports the pause and does not yet switch anything off: the wiring lands in a later wave, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one binding's own pause with the absolute instant it ends at. The six lengths are 10m, 1h, 6h, 1d, 3d and forever, and a length outside them is refused by name rather than rounded. A pause switches the light off; a binding that drives one segment of a strip somebody else also drives is handed back instead, because the rest of that strip belongs to its owner — the answer's effect says which of the two this binding is. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
@@ -1101,7 +1101,7 @@
       "delete": {
         "operationId": "resume-binding",
         "summary": "Take one binding's own pause out of the store",
-        "description": "Removes one binding's own pause, so nothing will pause that binding on the next start either. A binding with no pause is not an error: the answer says resumed: false. This build does not yet repaint from a resume, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes one binding's own pause, so nothing will pause that binding on the next start either. A binding with no pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The pause is gone, or there was none.",
@@ -1232,7 +1232,7 @@
       "put": {
         "operationId": "pause-everything",
         "summary": "Pause every binding, for one of the six lengths",
-        "description": "The header's panic button. A pause switches the light off when it is obeyed, one write and then nothing until it ends; a binding that drives a borrowed zone is handed back instead, because powering that controller down would take somebody else's strip with it. The expiry is stored as an absolute instant and not as a length or a timer, so a pause survives a restart and a settings save — this process is rebuilt on both. This build stores and reports the pause and does not yet switch anything off, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "description": "The header's panic button. A pause switches the light off when it is obeyed, one write and then nothing until it ends; a binding that drives a borrowed zone is handed back instead, because powering that controller down would take somebody else's strip with it. The expiry is stored as an absolute instant and not as a length or a timer, so a pause survives a restart and a settings save — this process is rebuilt on both. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
@@ -1253,7 +1253,7 @@
       "delete": {
         "operationId": "resume-everything",
         "summary": "Take the global pause out of the store",
-        "description": "Removes the global pause, so nothing will pause this module on the next start either. A module with no global pause is not an error: the answer says resumed: false. This build does not yet repaint from a resume, and the note says so. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes the global pause, so nothing will pause this module on the next start either. A module with no global pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The global pause is gone, or there was none.",

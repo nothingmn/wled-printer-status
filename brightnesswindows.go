@@ -255,11 +255,13 @@ const windowsZonedNote = "This module's timezone setting names no zone, so no wi
 	"container whose clock is almost always UTC and a window judged there fires hours away from the evening it was " +
 	"written for."
 
-// windowsStoredNote is what every write to the window list says: the list is kept, and the brightness
-// on the light still comes from the `brightness_schedule` setting until the writer reads this table.
-const windowsStoredNote = "This build still runs the brightness on the light from the brightness_schedule setting, " +
-	"read in the zone the timezone setting names, so this is the list the Brightness screen edits and not yet a " +
-	"change on the light."
+// windowsStoredNote is what every write to the window list says: this list is what the light follows,
+// and `brightness_schedule` is the fallback it was migrated from — read only while this list is empty,
+// which is what makes an install whose windows were pasted into the settings go on running unchanged.
+const windowsStoredNote = "This list is what the light's brightness follows whenever it holds a window: the first " +
+	"window that contains the moment decides, and the fixed brightness stands where none does. brightness_schedule " +
+	"is the fallback it was migrated from, read only while this list is empty. Both are judged in the zone the " +
+	"timezone setting names, and never in this process's own clock."
 
 // windowsBorrowedNote is the one fact about windows that a whole-controller list hides, and it is
 // worth stating on every answer: a brightness write is controller-wide, so a window only ever lands

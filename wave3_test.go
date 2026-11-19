@@ -1121,10 +1121,11 @@ func TestAPauseOnABindingThisModuleDoesNotDriveIsRefused(t *testing.T) {
 	}
 }
 
-// TestEveryWriteInThisWaveSaysWhatItDoesNotDo is the note discipline wave 2 set: a write that is kept
-// and not obeyed has to say so on the answer, or somebody stands in front of a light waiting for it to
-// change.
-func TestEveryWriteInThisWaveSaysWhatItDoesNotDo(t *testing.T) {
+// TestEveryWriteInThisWaveSaysWhatItDoes is the note discipline wave 2 set: every write says what it
+// does and what it is worth, because somebody standing in front of a light needs to know whether the
+// change he just saved is a change he will see. Three of these five now change the light, and the
+// layout's does not; the notes are where that difference lives.
+func TestEveryWriteInThisWaveSaysWhatItDoes(t *testing.T) {
 	under := newWave3UnderTest(t, twoPrinters(), twoBindings(), "", at(), "America/Denver")
 
 	cases := []struct {
@@ -1137,13 +1138,13 @@ func TestEveryWriteInThisWaveSaysWhatItDoesNotDo(t *testing.T) {
 		{http.MethodPut, "/bindings/printer-a/layout", `{"name": false}`,
 			"not yet a change on the light", "survives a restart and an upgrade"},
 		{http.MethodPut, "/pause", `{"for": "10m"}`,
-			"does not yet switch anything off", "survives a restart and a settings save"},
+			"switched off now and stays off", "survives a restart and a settings save"},
 		{http.MethodPut, "/bindings/printer-a/pause", `{"for": "10m"}`,
-			"does not yet switch anything off", "survives a restart and a settings save"},
+			"switched off now and stays off", "survives a restart and a settings save"},
 		{http.MethodPost, "/windows", `{"from": "08:00", "to": "09:00", "brightness": 100}`,
-			"not yet a change on the light", "survives a restart and an upgrade"},
+			"what the light's brightness follows", "survives a restart and an upgrade"},
 		{http.MethodDelete, "/pause", "",
-			"does not yet paint from a resume", "nothing will pause this on the next start either"},
+			"painted again at once", "nothing will pause this on the next start either"},
 	}
 
 	for _, one := range cases {

@@ -11,12 +11,16 @@
 // person can change, a registered code for every refusal, and a note on every write saying what a
 // write is and is not.
 //
-// # What a write here does not do
+// # What a write here does
 //
-// It does not touch the light, and it does not stop the watch. A colour, a word or a moment is a
-// record the screen edits; the picture on the light is drawn by internal/render and by event.go,
-// and this build still draws each state with the colour that package holds and still fires one
-// moment. That is said in the note of every write rather than left for somebody to discover by
+// It does not touch the light itself, and it does not stop the watch: nothing on this surface opens
+// a socket to a controller, which is why every one of these writes works while a lamp is unplugged.
+// What a colour and a word do is reach the painter on its next pass, because the writer reads this
+// store on every pass of its own loop rather than keeping a copy from start-up — so an edit lands on
+// the light within a tick, and a module that restarted between two edits reads the same answer.
+//
+// A moment is still a record only: one moment fires today, and the Events screen's table is not yet
+// obeyed. That is said in the note of a moment's write rather than left for somebody to discover by
 // looking at a lamp that did not change.
 //
 // # Why the store is read on every request
@@ -48,10 +52,13 @@ const (
 	persistedNote = "This was written into this module's own configuration store, the config.json in the directory " +
 		"the host granted, so it survives a restart and an upgrade. A module purge or a fresh install loses it."
 
-	// statesDrawnNote says plainly that the state table is a record this build does not yet read
-	// when it paints: the colours on the light are still internal/render's own.
-	statesDrawnNote = "This build still draws each state with the colour internal/render holds for it, so this is the " +
-		"record the Colours screen edits and not yet a change on the light."
+	// statesDrawnNote says what a state's colour and word now do on the light, and what a state nobody
+	// has edited still does. It is the note that would be false if the painter stopped reading this
+	// table, so it is written as the rule rather than as a change.
+	statesDrawnNote = "A state's colour is the colour its light is drawn in, and a word a state carries is what a panel " +
+		"shows for as long as its hold lasts: the word beats the Layout composer, and a strip - which cannot draw " +
+		"a word - shows the state's colour instead. A state nobody has edited keeps the colour internal/render " +
+		"holds for it, and holds it as a default rather than as a copy written into this store."
 
 	// momentsFiredNote says the same about the moment table: one moment is fired today.
 	momentsFiredNote = "This build fires one moment today — the finished word, held for a minute — so this is the record " +
@@ -86,6 +93,22 @@ var (
 type configTables struct {
 	mu  sync.Mutex
 	dir string
+
+	// generation counts the writes this process has made to the document. It exists for the
+	// painter: the writer reads the store on its own loop, and a counter is how it can tell
+	// "nothing has changed" from "somebody wrote" without comparing file contents every second.
+	// A write from outside this process — a person with an editor on the volume — is caught by the
+	// file's own modification time instead, which the two together cover.
+	generation uint64
+}
+
+// stamp is where the document is and how many writes this process has made to it, read under the
+// lock so that a reader cannot see a directory and a counter from either side of a change.
+func (t *configTables) stamp() (string, uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.dir, t.generation
 }
 
 // grant records the directory the host gave this module, which arrives once on plugin.configure.
@@ -94,6 +117,7 @@ func (t *configTables) grant(dir string) {
 	defer t.mu.Unlock()
 
 	t.dir = strings.TrimSpace(dir)
+	t.generation++
 }
 
 // directory is the directory the host granted, and empty when it granted none.
@@ -157,6 +181,9 @@ func (t *configTables) revise(change func(*storedConfig)) (storedConfig, error) 
 	if _, err := saveStore(t.dir, config); err != nil {
 		return storedConfig{}, err
 	}
+
+	// The document on disk is not the one the painter last read.
+	t.generation++
 
 	return config, nil
 }

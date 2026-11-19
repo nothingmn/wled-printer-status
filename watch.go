@@ -90,6 +90,11 @@ type watchConfig struct {
 	// not: it is what a panel's picture is composed from, and a borrowed segment cannot be a panel
 	// at all (writer.refusePanel), so the layout is simply never read on one.
 	layout layout
+
+	// tables is this module's own configuration store, which the painter now obeys: a state's
+	// colour and word, the pause, and the brightness windows. Nil means there is none to read — a
+	// test's watch — and the renderer's table and the settings are then the whole picture.
+	tables *configTables
 }
 
 // start runs one watch: a source, a writer and a driver per binding, one client and one gate per
@@ -170,12 +175,27 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			pen.gate = door
 			pen.layout = c.layout
 
+			// The store, as this binding's painter reads it: one reader per binding, because a
+			// pause is kept per binding and one reader shared between two would be answering for
+			// whichever printer happened to be asked last.
+			if c.tables != nil {
+				pen.store = &storeLights{tables: c.tables, printer: b.DeviceID, logging: c.logf}
+				pen.printer = b.DeviceID
+			}
+
+			// What a pause does to this binding, from pause.go's own answer: a whole light is
+			// switched off, and a zone this module borrows is handed back rather than powered
+			// down. Deciding it here and not in the writer is the point — the writer obeys the
+			// answer, and there is one place the exception can be got wrong.
+			pen.pauseEffect = pauseEffectOn(b)
+
 			if c.record != nil {
 				report := c.record
 				pen.record = func(sent sendView) { report(b, sent) }
 			}
 
 			drive := newDriver(source, pen, light, c.logf)
+			drive.store = pen.store
 
 			if c.tick > 0 {
 				drive.tick = c.tick

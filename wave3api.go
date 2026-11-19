@@ -6,11 +6,11 @@
 // docs/product-requirements.md §4 deletes the manifest's settings text areas as an editing surface
 // and makes this module's own store the thing a person edits, edited through routes like the ones
 // bindingsapi.go and tablesapi.go already serve. These three arrive together because they are one
-// wave's work and they share one fact: none of them changes what the light draws yet. The layout is
-// stored, the windows are stored, the pause is stored with the instant it ends at — and the painter
-// still composes from the `layout` setting, still takes its brightness from `brightness_schedule`,
-// and does not yet obey a pause. Every write on these routes says so in its note, which is the
-// convention wave 2 set and the one thing a caller must not be wrong about.
+// wave's work, and they differ in one fact a caller has to be able to read off an answer: which of
+// them the painter obeys. The windows are what the light's brightness follows, the pause switches
+// the light off, and a binding's own layout is still a record — the panel composes from the `layout`
+// setting. Every write says which of the three it is in its note, which is the convention wave 2 set
+// and the one thing a caller must not be wrong about.
 //
 // # The rules every route here follows
 //

@@ -26,13 +26,18 @@
 // and "is it paused now" is computed from the clock at read time. Nothing runs a timer, nothing has to
 // fire, and an expired pause is simply a row whose instant has passed.
 //
-// # What this wave does with it
+// # What the painter does with it
 //
-// It stores and reports. It does not switch the light off and it does not release a borrow: the
-// wiring that makes the light obey a pause is a later wave, and every write on these routes says so
-// in its note. What this wave *does* decide, and fixes in the store's shape, is the thing the wiring
-// wave must not get wrong: which bindings go dark and which are handed back. `pauseEffectOn` is the
-// one function that answers it, and it answers "hands-back" for every borrowed binding.
+// A pause switches the light off, and then costs nothing: one write and no more until it ends. The
+// writer asks this file's functions on every pass of its own loop — `globalPause` and
+// `bindingPause` for "is one in force at this instant", and `pauseEffectOn` for what it does to a
+// binding — so nothing is cached and nothing arms a timer. An instant that has passed is simply a
+// row that is no longer in force, and the pass that finds it repaints at once rather than waiting
+// for the next thing the printer says.
+//
+// The decision this file owns, and the one the writer must not make for itself, is which bindings go
+// dark and which are handed back: `pauseEffectOn` answers "hands-back" for every borrowed binding,
+// because switching that controller off would take the rest of somebody else's strip with it.
 package main
 
 import (
@@ -497,11 +502,12 @@ func bindingPauseAnswerOf(b binding, light controllerAnswer, rows []storedPause,
 // Notes every pause write carries, because the two things a caller must not be wrong about are what
 // a pause is worth and what it does.
 const (
-	// pauseStoredNote says a pause survives a restart and a settings save, and that this build does
-	// not yet obey it.
+	// pauseStoredNote says a pause survives a restart and a settings save, and what it does to the light
+	// while it lasts.
 	pauseStoredNote = "This was written into this module's own configuration store with the absolute instant it ends " +
-		"at, so it survives a restart and a settings save. This build stores and reports a pause and does not yet " +
-		"switch anything off: the wiring that makes the light obey it lands in a later wave."
+		"at, so it survives a restart and a settings save. The light is switched off now and stays off until that " +
+		"instant passes or the pause is cleared: no frames, no brightness, no retries in between, and then it comes " +
+		"back on by itself."
 
 	// pauseHandBackNote is the exception, stated wherever a pause is written, because the one thing
 	// that must not be got wrong is that a borrowed zone is given back rather than powered off.
@@ -511,6 +517,6 @@ const (
 
 	// pauseResumedNote says what DELETE did.
 	pauseResumedNote = "The pause was taken out of this module's own configuration store, so nothing will pause this " +
-		"on the next start either. This build does not yet paint from a resume either: the repaint that makes a light " +
-		"come back on lands in the same wave as the one that switches it off."
+		"on the next start either. The light is switched back on and its picture is painted again at once, rather than " +
+		"waiting for the next tick of the printer."
 )

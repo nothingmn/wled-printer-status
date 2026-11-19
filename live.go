@@ -83,6 +83,12 @@ type runner struct {
 	// before the setting existed — in the middle of a print, with nothing on the instance to say
 	// why. See setLayout.
 	layout layout
+
+	// tables is this module's own configuration store, which every writer built here is handed so
+	// that the painter obeys it: a state's colour and word, the pause, and the brightness windows.
+	// Nil means the module was granted no directory and runs from its settings, which is how this
+	// module behaved before the store existed.
+	tables *configTables
 }
 
 // set is the set in force, as a copy: the caller gets the bindings and not the lock.
@@ -302,6 +308,7 @@ func (r *runner) build(parent context.Context, set bindings) (context.CancelFunc
 		tick:      r.tick,
 		schedule:  r.schedule,
 		layout:    r.layout,
+		tables:    r.tables,
 	}
 
 	if len(set) > 1 {

@@ -68,6 +68,10 @@ type fakeStrip struct {
 	// restores is every segment written back to the controller, in the order it was
 	// written: the give-back a writer makes when it stops.
 	restores []wled.Segment
+
+	// powers is every power write the controller took, in order, so that a test can tell a light
+	// switched off from one left alone.
+	powers []bool
 }
 
 func newFakeStrip() *fakeStrip {
@@ -87,13 +91,23 @@ func (f *fakeStrip) SetBrightness(context.Context, int) error {
 	return nil
 }
 
-func (f *fakeStrip) SetPower(context.Context, bool) error {
+func (f *fakeStrip) SetPower(_ context.Context, on bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.settled++
+	f.powers = append(f.powers, on)
 
 	return nil
+}
+
+// powerWrites is every power write the controller took, in order. A pause is one `false` and a
+// resume is one `true`, and a test about a borrowed zone asserts that this stays empty.
+func (f *fakeStrip) powerWrites() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]bool(nil), f.powers...)
 }
 
 // SetSegments records one request: the segments its body carried, in order, and the

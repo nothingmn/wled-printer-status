@@ -374,6 +374,9 @@ var (
 		},
 		newLight: func(address string) (strip, error) { return wled.New(address) },
 		logf:     logf,
+		// The store the routes edit, so that the writers a change rebuilds are built on what the
+		// painter now obeys rather than on the settings alone.
+		tables: tables,
 	}
 
 	// tables is this module's own configuration as the state and moment tables reach it: the
