@@ -142,7 +142,9 @@ name refuses the start.
 | --- | --- |
 | `controller_address` | `http://10.0.0.136` — required; the egress entry names this setting |
 | `printer` | `07e893bb-b922-4ff0-9ad3-061b957400c3` — the device id, so a second printer arriving later cannot change what this instance watches |
-| `brightness` | `128` — written once at start and never moved afterwards |
+| `brightness` | `128` — written once at start and never moved afterwards, unless a schedule is written, where it is the value that stands between windows |
+| `brightness_schedule` | a list of windows, one per line (`from`, `to`, `brightness`, optional `days`); empty is the fixed brightness this instance has always run at |
+| `timezone` | the IANA zone a `brightness_schedule` is judged in, such as `America/Denver` — required whenever a schedule is written, and never defaulted to the container's clock |
 | `message` | the default line; left at the manifest's own words |
 
 ```console
@@ -622,6 +624,105 @@ version=0.1.0 options=6 egress=2` with `bindings type=list default="[]"`) and by
 package; getting it onto a live instance costs one `module add` and one restart, which this run did not
 spend twice. And **nobody has looked at the panel** — this change does not draw anything differently, and
 the frame it reports is the frame the run before it reported.
+
+**Tenth run, 2026-11-19 00:25Z, from `1ecdf9c`.** The change from *a brightness written once* to *a
+brightness that follows the time of day*, judged in a zone the operator names. Built from `git archive
+HEAD` for the reason run six gives; release `/config/config.d/wled-release-1ecdf9c`, whose `linux_amd64`
+digest is `dcbd2ef7757cb61150e3f063c885dff530f6a0a57f76998be3fab4b6ad543357` and is what the installed binary
+reads back.
+
+`ui/` is unchanged between the release that last carried a bundle (`e8bc059`) and this commit — the only
+difference between the two trees is `.github/workflows/ci.yml` — so the browser half in this release is the
+bundle that release installed, carried over rather than rebuilt, and it is listed in `checksums.txt` like
+every other file. `module add` answered `10 files verified against checksums.txt` and printed the two new
+settings among the six it now lists.
+
+**The refusal came first, and on the instance rather than in a test.** The release was installed once with a
+misspelt zone — `"timezone": "America/Denverr"`, everything else as below — and the core restarted. The module
+printed its handshake line, was asked to configure, and refused. Nothing was written to the panel: the
+refusal happens in `plugin.configure`, before a writer exists.
+
+```console
+00:25:15.576Z  wled-printer-status 0.1.0 is serving on stdio as pid 15
+00:25:15.584Z  WARN resource failed to start  attempt=1 class=permanent
+  error="core.internal/RESOURCE_PLUGIN_SETTINGS: the module refused the settings it was given: wirerpc:
+  -32603: timezone is \"America/Denverr\", which is not a zone this build can load: write an IANA name such
+  as America/Denver, because the schedule is judged in the zone you name and not in this process's own
+  clock (unknown time zone America/Denverr)"
+00:25:15.584Z  resource state changed  state=failed result=start-error serving=false attempt=1
+00:25:16.168Z  readiness ready=true serving=3 declared=4 … sink:wled-printer-status=failed/optional
+```
+
+`class=permanent` is the useful half: the core does not retry this, so a misspelt zone is one failed start and
+a sentence, not a loop. The rest of the instance stayed `ready` throughout (`serving 3 declared 4` with this
+one instance `failed`), which is what an optional instance refusing its own settings should look like.
+
+**Then the settings it should have had.** A schema-valid schedule that does nothing, written on purpose: a
+window that covers the whole day at the brightness already in force, so the panel is not changed while the
+unverified word on it is still waiting for the operator's eyes.
+
+```console
+$ docker exec prusa_connect cat /config/config.d/wled-settings.json
+{
+  "message": "Wled Printer Status is serving.",
+  "controller_address": "http://10.0.0.136",
+  "printer": "07e893bb-b922-4ff0-9ad3-061b957400c3",
+  "brightness": 128,
+  "brightness_schedule": [
+    {"from": "00:00", "to": "23:59", "brightness": 128}
+  ],
+  "timezone": "America/Denver"
+}
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-1ecdf9c \
+    -settings /config/config.d/wled-settings.json -approve
+  checksums   10 files verified against checksums.txt
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+```
+
+`docker restart prusa_connect` at **00:25:44Z** was `healthy` at **00:25:44Z + 25 s**, readiness answered
+`serving 4 declared 4 blocked []` with this instance `ready`, and the log named the zone — both the line the
+watch prints and the line the brightness write prints:
+
+```console
+00:25:46.436Z  watching printer 07e893bb-… and driving http://10.0.0.136 at the brightness of
+               brightness_schedule judged in America/Denver, with 128 standing wherever no window covers
+               the moment
+00:25:46.449Z  the light's brightness is 128, the 00:00-23:59 window of America/Denver, where it is 17:25 MST
+00:25:47.450Z  the controller drives 16384 LEDs
+00:25:47.450Z  the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+`17:25 MST` against a container clock at `00:25Z` is the whole point of the change in one line: the window was
+read in the operator's zone, and the log says which clock it read. A build reading the process's clock would
+have printed something else here, and the test that catches that is
+`TestAScheduleIsJudgedInItsZoneAndNotInTheContainersClock`.
+
+The panel, read straight after, unchanged and still tracking the print that was running:
+
+```console
+$ curl -s http://10.0.0.136/json/state            # 00:26Z
+bri 128  on true  mainseg 0
+seg0 start 0 stop 202 rows 0..64  col [[0,170,0],[0,0,0],[0,0,0]]  n None  fx 0
+seg1 start 202  on true
+$ curl -s …/status
+"frame":{"colour":{"r":0,"g":170,"b":0},"lit":12943,"total":16384,"reason":"progress"},
+"last_send":{"at":"2026-11-19T00:25:47.450858004Z","ok":true}
+```
+
+12943/16384 × 256 = 202.2, so 202 columns: the progress bar is the printer's own number, and `bri` is the
+128 the fixed setting already had — the schedule wrote the value that was already there, which is what a
+do-nothing schedule is for. The installed `linux_amd64` digest read back as the release's own line, above.
+
+**What this run does not prove.** A window's *edge* moving a live panel's brightness. The schedule installed
+covers the whole day at the value in force, so no edge was crossed and no second brightness write was made;
+that path is proved by the tests with an injected clock and by nothing on this device. It was written that
+way on purpose: the `FINISHED` word on this panel is still unverified, nobody has looked at it, and the
+brightness is not the thing to change underneath an experiment that only the operator's eyes can settle. The
+desk light at `10.0.0.253` was not written to, no preview was fired, and no pixels were pushed.
 
 ## 6. Restart the core once, and prove it is well
 
