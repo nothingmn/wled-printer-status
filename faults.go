@@ -318,6 +318,77 @@ var (
 		fault.RetryNever,
 		fault.ShowDetail,
 	))
+
+	// SnapshotNotFound is a snapshot id this module holds no file for, or one taken from another
+	// light. Both are the same answer to a caller: there is no snapshot of this light by that name.
+	SnapshotNotFound = fault.Register(faultDomain, "SNAPSHOT_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module holds no snapshot of that name for this light",
+		"Read GET /devices/{name}/snapshot for the ids it holds, newest first. A snapshot is named by the light it was taken from and the moment it was taken, and a snapshot taken from another light is not one this light can be restored from.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"snapshot",
+	))
+
+	// SnapshotUnreadable is a light that could not be read, so no snapshot of it could be taken —
+	// including the safety snapshot a restore takes first, which is why a restore refuses on this
+	// code rather than writing and hoping. A dead light is exactly the case a snapshot exists for,
+	// and it is also the case in which a new one cannot be taken.
+	SnapshotUnreadable = fault.Register(faultDomain, "SNAPSHOT_UNREADABLE", http.StatusServiceUnavailable, fault.Document(
+		"This light could not be read, so it was not snapshotted",
+		"A snapshot is the light's own configuration, presets and state, read from the light: a light that does not answer cannot be copied, and a restore also takes a copy of the light as it is first, so it does nothing at all while the light is unreadable. Read GET /devices/{name}/snapshot for the snapshots this module already holds — those exist because they were taken while the light was alive, and they survive the light dying.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+		"controller",
+	))
+
+	// RestoreNotConfirmed is a restore body that did not say it meant it. It is refused before the
+	// snapshot is read, because a restore rewrites a controller's whole configuration and a caller
+	// that did not mean it must not be able to learn what it would have done.
+	RestoreNotConfirmed = fault.Register(faultDomain, "RESTORE_NOT_CONFIRMED", http.StatusConflict, fault.Document(
+		"The restore was not confirmed",
+		"A restore rewrites the light's whole configuration and restarts it, so the body has to carry confirm: true beside the snapshot's id. Nothing was read and nothing was written.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"snapshot",
+	))
+
+	// RestoreRefused is a restore this module will not attempt: a snapshot this build cannot build
+	// a body from, a snapshot taken from another light or from a display of another shape, a light
+	// that did not answer when it was asked who it is, or a controller that refused the
+	// configuration write. Every one of them leaves the light as it was, or says which snapshot
+	// puts it back.
+	RestoreRefused = fault.Register(faultDomain, "RESTORE_REFUSED", http.StatusConflict, fault.Document(
+		"The restore was refused and nothing was written",
+		"A snapshot is restored only onto the light it was taken from: the same address, the same controller name, the same shape and the same pixel count. Anything else is a configuration written to a display it was not made for, which is a scrambled picture rather than a restore. The detail names what did not match, and every refusal either wrote nothing at all or names the safety snapshot that puts the light back.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"snapshot", "controller", "safety_snapshot",
+	))
+
+	// RestoreBodyInvalid is a restore body that is not one: not JSON, a key this module does not
+	// read, or no snapshot named.
+	RestoreBodyInvalid = fault.Register(faultDomain, "RESTORE_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a restore request",
+		"Write a JSON object carrying snapshot, the id of a snapshot GET /devices/{name}/snapshot reports, and confirm: true to mean it. Every other key is refused rather than ignored. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// RestoreNotAnswered is a restore that wrote the configuration and then did not see the light
+	// answer again inside the wait. It is a 504 because the module reached the light, the light
+	// took the body, and what did not happen is the answer coming back.
+	//
+	// It is deliberately not a success. A light that is mid-reboot looks exactly like this, so the
+	// restore may yet have worked, and the detail says so rather than either claiming it did or
+	// claiming it did not — and names the safety snapshot, which is the one thing a person can act
+	// on either way.
+	RestoreNotAnswered = fault.Register(faultDomain, "RESTORE_NOT_ANSWERED", http.StatusGatewayTimeout, fault.Document(
+		"The light was written the snapshot and has not answered since",
+		"A configuration write restarts the light, and this module waits for it to answer before saying the restore took: a light that is still rebooting looks exactly like one that has failed. This answer means the wait ran out. The restore may still have worked — read GET /devices/{name}/snapshot, or look at the light. If it did not, restoring the safety snapshot named here puts the light back as it was.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+		"snapshot", "safety_snapshot",
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

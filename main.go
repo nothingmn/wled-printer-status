@@ -19,6 +19,14 @@
 //	GET /states                the state table: a colour, a word and a hold per state, and where each came from
 //	GET /lights/{light}/moments the moment table: every moment that light has, per printer on it
 //	                           PUT and DELETE on both to edit one row. See tablesapi.go
+//	GET /frames                one picture per binding, reconstructed from the frame this module
+//	                           decided, for the Overview screen's thumbnails. See framesapi.go
+//	GET /devices/{name}/snapshot  the snapshots this module holds of one light, and POST on the same
+//	                           name takes one now. See devicesapi.go
+//	GET /devices/{name}/snapshot/{id}  one of them, with what a restore would send and what it would not
+//	POST /devices/{name}/restore   put one back: the light's whole configuration, with an explicit
+//	                           confirmation, a safety snapshot taken first, and a wait for the light
+//	                           to answer again before the route claims it worked
 //
 // The paths are relative to the mount, so a caller reaches them under
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/. The host decides who may call
@@ -794,6 +802,21 @@ func routes() http.Handler {
 		live:   live,
 		fleet:  held,
 		tables: tables,
+	}.mount(mux)
+
+	// A light's snapshots and a restore onto it. The snapshots are files in the directory the store
+	// is in, and the restore is the one route in this module that rewrites a controller's own
+	// configuration: see devicesapi.go.
+	deviceAPI{
+		live:   live,
+		tables: tables,
+	}.mount(mux)
+
+	// The Overview screen's thumbnails: one reconstructed picture per binding, drawn by the same
+	// code that draws the light and cheap enough to ask for on every draw. See framesapi.go.
+	framesAPI{
+		live:  live,
+		cache: newFrameCache(),
 	}.mount(mux)
 
 	mux.HandleFunc("GET /wled-printer-status", func(w http.ResponseWriter, r *http.Request) {

@@ -67,6 +67,35 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - The configuration document is at schema version 3. A version 2 document is stepped up in place, bindings,
   state table and moment table and all, with the layout table, the windows and the pause arriving empty. A
   version 4 document is refused, naming both versions.
+- `GET /frames` answers one frame per binding for the Overview screen's thumbnails: the frame this module
+  decided — colour, fill, total, percent, the job's name and the reason — how old the reading behind it is,
+  when the light last took a write, and the picture itself as a PNG. The picture is drawn by the same code
+  that draws the light, so a thumbnail cannot disagree with the panel, and it is a reconstruction: this
+  firmware cannot read its pixels back. Nothing on this route opens a socket to a controller, so a light
+  that has stopped answering still has a picture, from its last reading, with `stale` true and the age in
+  seconds beside it. A panel is composed exactly as the painter composes it while a job is running, and is
+  otherwise its own fill; a binding that borrows a segment draws only that segment's run.
+- `GET /devices/{name}/snapshot` answers the snapshots this module holds of one light, newest first, and
+  `POST` on the same route takes one now: the light's `/json/cfg`, its `/presets.json`, its `/json/state`,
+  and the identity a restore is checked against — the address, the name the light calls itself, its
+  firmware, and its shape and pixel count. Each snapshot is a file of its own in the module's data
+  directory, `0600`, named after the light and the moment, `10.0.0.136-20261119T183002Z`. They are files and
+  not part of the configuration document, so the document stays at schema version 3 and a module purge that
+  loses the bindings does not lose the backups.
+  `GET /devices/{name}/snapshot/{id}` answers one, with the table a restore would send and the list it
+  would not.
+- Every snapshot says what it does not hold: the wifi password is not in a configuration dump at all on
+  either of the operator's lights, so a literal hundred-per-cent clone including the credentials is
+  impossible over the API, and `complete_clone` is false on every answer rather than implied.
+- `POST /devices/{name}/restore` puts a snapshot's configuration back on the light it was taken from. It
+  requires `confirm: true`, refuses a snapshot from another light and one from a display of another shape
+  or pixel count, takes a safety snapshot of the light as it is now and keeps it before writing anything,
+  and waits for the light to answer again before it says the restore took — nine seconds at most, against
+  the 5.7 seconds a measured reboot takes. It writes `light`, `def`, `if`, `timers`, `um`, `ap`, `id` and
+  the presets, sends the `nw` section whole except for its `ins` credential, and never writes `rev`, `vid`,
+  `hw`, `ol`, `ota`, `remote` or `wifi`; the answer lists both sides with the reason for each. A restore
+  that writes the configuration and then does not see the light answer is refused with the safety
+  snapshot's id rather than reported as a success.
 
 ## 0.1.0 - 2026-11-18
 

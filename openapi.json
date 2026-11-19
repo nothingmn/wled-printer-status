@@ -1365,6 +1365,423 @@
         }
       }
     },
+    "/frames": {
+      "get": {
+        "operationId": "list-frames",
+        "summary": "One picture per binding, for the Overview screen's thumbnails",
+        "description": "One frame per binding this module is drawing, each carrying the frame it decided (colour, fill, total, percent, name and reason), how old the reading behind it is, when it last wrote, and the picture itself as a PNG in base64 - drawn by the same code that draws the light, from the frame the painter decided and not from a second reading of it. A thumbnail is a reconstruction and not a screenshot: this firmware cannot read its pixels back. Nothing on this route opens a socket to a controller, so a light that has stopped answering still has a picture, taken from its last reading, with reading.stale true and its age in reading.age_seconds. A panel is composed exactly as the painter composes it when the layout draws something and the frame is about a job in progress, and is otherwise the panel's own fill; a strip binding that borrows a segment draws only that segment's run. The pictures are cached against the frame that produced them, and image.cached says whether this answer was served from that cache. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "One frame per binding, in the order the bindings first published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "frames": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FrameAnswer"
+                      }
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "How many frames are in the list."
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "What a thumbnail is, in the words the page repeats: a reconstruction from the frame this module decided, not a screenshot."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No frame has been decided yet, or the one binding's picture cannot be drawn (NO_READING_YET).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{name}/snapshot": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "list-snapshots",
+        "summary": "The snapshots this module holds of one light, newest first",
+        "description": "Every snapshot this module holds for one light, newest first: the id, when it was taken, the light it came from, the file's size, how many presets it holds, and what it does not contain. A snapshot is the light's own /json/cfg, its /presets.json and its /json/state, kept as a file in the directory the module was granted, 0600, one file per snapshot. They live beside this module's configuration document and not in it, and they survive a module purge that the document does not. Nothing on this route opens a socket to a controller: the list exists because a dead light cannot be read, so it has to answer while the light is dead. A file that cannot be decoded is reported in unreadable rather than left out, because a backup somebody believes he has and cannot restore is a fact he needs to see. The omissions are the honest part: no configuration dump on the lights this build was measured against carries the wifi password, so a literal hundred-per-cent clone is impossible over the API. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The snapshots this module holds for this light, and the light's own name and address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": {
+                      "type": "string",
+                      "description": "The light's name on these routes."
+                    },
+                    "address": {
+                      "type": "string",
+                      "description": "The controller's base URL as an operator wrote it."
+                    },
+                    "snapshots": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Snapshot"
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "persisted": {
+                      "type": "boolean",
+                      "description": "False when this module was granted no data directory, in which case no snapshot can be taken or kept."
+                    },
+                    "unreadable": {
+                      "type": "array",
+                      "description": "Files in the snapshot folder that cannot be decoded, with the reason. Absent when every file reads.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "why": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This module's snapshot folder cannot be read (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "take-snapshot",
+        "summary": "Snapshot one light now",
+        "description": "Reads the light and keeps a snapshot of it now: its /json/cfg, its /presets.json, its /json/state and the identity that makes a restore safe - the address this module names it by, the name it calls itself, its firmware, and its shape and pixel count. This is the screen's refresh now, on demand, and it is what an operator takes before changing something on the light or before replacing it. A light that does not answer is refused rather than stored half-read (SNAPSHOT_UNREADABLE); the snapshots already held stay readable, which is the whole reason they are kept. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The snapshot was written and is answered with the id it was given.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": {
+                      "type": "string"
+                    },
+                    "snapshot": {
+                      "$ref": "#/components/schemas/Snapshot"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The light could not be read, so it was not snapshotted (SNAPSHOT_UNREADABLE), or this module has no directory to keep one in (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{name}/snapshot/{id}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The snapshot's id, as GET /devices/{name}/snapshot reports it: the light's name and the moment it was taken, such as 10.0.0.136-20261119T183002Z.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "read-snapshot",
+        "summary": "One snapshot, with what a restore would send and what it would not",
+        "description": "One snapshot by id, with the sizes of the three documents it holds, everything a restore would write and everything it refuses to, and whether this build can build a body from it at all. The restore table is worked out here and not only at restore time because the page that offers the button is the page that has to show it: light, def, if, timers, um, ap, id and the presets are written; rev, vid, hw, ol, ota, remote and wifi are not, each with its reason; and the network section nw is written whole except for nw.ins, because a configuration write that omits nw clears the light's linked remote. Nothing here touches a light. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The snapshot, and what restoring it would do.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": {
+                      "type": "string"
+                    },
+                    "snapshot": {
+                      "$ref": "#/components/schemas/Snapshot"
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "config_bytes": {
+                          "type": "integer"
+                        },
+                        "presets_bytes": {
+                          "type": "integer"
+                        },
+                        "state_bytes": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "restorable": {
+                      "type": "boolean",
+                      "description": "False when this build cannot build a restore body from this file, in which case unrestorable says why."
+                    },
+                    "unrestorable": {
+                      "type": "string"
+                    },
+                    "restore": {
+                      "$ref": "#/components/schemas/RestorePlan"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name, or holds no snapshot of that id for it (CONTROLLER_NOT_FOUND, SNAPSHOT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no snapshot folder to read (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{name}/restore": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "restore-snapshot",
+        "summary": "Put a snapshot's configuration back on its light, and wait for it to answer",
+        "description": "Writes a snapshot's configuration back onto the light it was taken from, asks the light to reload it, and waits for it to answer before answering this call: a restore that reported success while the light was mid-reload would be a lie the page believes. It is the one route in this module that rewrites a controller's own configuration, so it refuses more than it accepts. The body must carry confirm: true, and that is checked before the snapshot is even read. The snapshot must have been taken from this light - same address, same controller name - and from a display of the same shape and pixel count, or the restore is refused: a configuration written to another display is a scrambled picture. A safety snapshot of the light as it is now is taken and kept before anything is written, and its id is in every answer that follows, so a restore that went wrong is reversible; a light that cannot be copied is not restored at all. The network section is written whole except for nw.ins. The firmware revision, the hardware revision and the wifi credentials are never written, so this is not a hundred-per-cent clone and the answer says so. The wait is nine seconds, under the ten the host allows a call; the measured restart on the operator's strip is 5.7 seconds and the answer carries that measurement beside this light's own. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "snapshot",
+                  "confirm"
+                ],
+                "properties": {
+                  "snapshot": {
+                    "type": "string",
+                    "description": "The id of a snapshot GET /devices/{name}/snapshot reports."
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "description": "True to mean it. A restore rewrites the light's whole configuration and restarts it, and false is refused before the snapshot is read."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The configuration was written, the restart was asked for, and the light answered again inside the wait.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": {
+                      "type": "string"
+                    },
+                    "restored": {
+                      "$ref": "#/components/schemas/Snapshot"
+                    },
+                    "safety_snapshot": {
+                      "$ref": "#/components/schemas/Snapshot"
+                    },
+                    "restore": {
+                      "$ref": "#/components/schemas/RestorePlan"
+                    },
+                    "reboot": {
+                      "$ref": "#/components/schemas/Reboot"
+                    },
+                    "complete_clone": {
+                      "type": "boolean",
+                      "description": "Always false: no snapshot holds the wifi password, so no restore is a clone of the device."
+                    },
+                    "omits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "member": {
+                            "type": "string"
+                          },
+                          "why": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a restore request (RESTORE_BODY_INVALID). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name, or holds no snapshot of that id for it (CONTROLLER_NOT_FOUND, SNAPSHOT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The restore was not confirmed (RESTORE_NOT_CONFIRMED), or it was refused: another light's snapshot, another display's shape, a light that did not answer when asked who it is, or a controller that refused the write (RESTORE_REFUSED). Nothing was written, or the detail names the safety snapshot that puts the light back.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The light could not be read, so the safety snapshot a restore takes first could not be taken, or this module has no directory to keep it in (SNAPSHOT_UNREADABLE, STORE_UNAVAILABLE). Nothing was written.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The configuration was written and the light has not answered again inside the wait (RESTORE_NOT_ANSWERED). It may still have worked; the safety snapshot named in the detail puts the light back either way.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/wled-printer-status": {
       "get": {
         "operationId": "read-wled-printer-status",
@@ -1698,6 +2115,277 @@
           "retryable": {"type": "boolean", "description": "Whether sending the same request again can work."}
         },
         "required": ["code", "title"]
+      },
+      "SnapshotDevice": {
+        "type": "object",
+        "description": "The light a snapshot was taken from: this module's name for it, the light's own name, its firmware, and the display it was configured for. It is what a restore is checked against before anything is written.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The light's name on these routes: its address without the scheme."
+          },
+          "address": {
+            "type": "string"
+          },
+          "controller": {
+            "type": "string",
+            "description": "The name the light calls itself, from its /json/info."
+          },
+          "firmware": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "panel",
+              "strip"
+            ]
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "pixels": {
+            "type": "integer"
+          }
+        }
+      },
+      "Snapshot": {
+        "type": "object",
+        "description": "One snapshot of one light: its configuration, its presets and its state, kept as a file of its own in the directory this module was granted.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The snapshot's name on these routes, and its file's name: the light and the moment, such as 10.0.0.136-20261119T183002Z."
+          },
+          "taken_at": {
+            "type": "string",
+            "description": "When the light was read, RFC 3339 in UTC."
+          },
+          "device": {
+            "$ref": "#/components/schemas/SnapshotDevice"
+          },
+          "bytes": {
+            "type": "integer",
+            "description": "The file's size on disk."
+          },
+          "presets": {
+            "type": "integer",
+            "description": "How many preset slots it defines, not counting slot 0."
+          },
+          "omits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "member": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "What this snapshot cannot give back, worked out from the bytes it holds: always nw.ins, and the wifi password, which no configuration dump on the lights this build was measured against carries."
+          },
+          "complete_clone": {
+            "type": "boolean",
+            "description": "Always false: a literal hundred-per-cent clone is impossible over the API."
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "RestorePlan": {
+        "type": "object",
+        "description": "What a restore writes and what it refuses to, worked out from one snapshot before anything is sent.",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sections written, in the order they go out: light, def, if, timers, um, ap, id, and presets when the snapshot holds a table."
+          },
+          "withheld": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "section": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The sections of the dump that are not written, each with its reason: rev and vid by the requirements, hw, ol, ota, remote and wifi because the requirements' restore table does not list them."
+          },
+          "nw": {
+            "type": "object",
+            "description": "The network section is sent whole except for its credential, because a configuration write that omits it clears the light's linked remote.",
+            "properties": {
+              "sent": {
+                "type": "boolean"
+              },
+              "members_removed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The members of the network section that are not written back. ins, the credential."
+              },
+              "why": {
+                "type": "string"
+              }
+            }
+          },
+          "presets": {
+            "type": "boolean",
+            "description": "True when the snapshot's preset table is written with the configuration."
+          }
+        }
+      },
+      "Reboot": {
+        "type": "object",
+        "description": "What a restore measured while it waited for the light to answer again.",
+        "properties": {
+          "requested": {
+            "type": "boolean",
+            "description": "Always true: the restart is asked for in the body that was written."
+          },
+          "observed": {
+            "type": "boolean",
+            "description": "True when at least one poll failed, so the light was seen to go away and come back. False means it answered throughout, which is reported rather than glossed."
+          },
+          "polls": {
+            "type": "integer"
+          },
+          "failed_polls": {
+            "type": "integer"
+          },
+          "first_refusal_seconds": {
+            "type": "number",
+            "description": "From the write to the first poll that failed. Absent when no poll failed."
+          },
+          "answered_after_seconds": {
+            "type": "number",
+            "description": "From the write to the first answer this module believed, which is the first one at least a second after the write."
+          },
+          "outage_seconds": {
+            "type": "number",
+            "description": "From the first refusal to the answer: how long the light was away. Absent when it never went away."
+          },
+          "waited_seconds": {
+            "type": "number"
+          },
+          "measured_reference": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hand measurement this route was built from: the first refusal and the first answer, on the operator's own strip."
+          },
+          "measured_source": {
+            "type": "string",
+            "description": "Where those numbers were measured."
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "FrameAnswer": {
+        "type": "object",
+        "description": "One binding's frame for the Overview screen: what this module decided, how old the reading is, and the picture itself.",
+        "properties": {
+          "binding": {
+            "type": "string",
+            "description": "The printer this binding shows, by the device id the binding routes use."
+          },
+          "printer": {
+            "$ref": "#/components/schemas/Bound"
+          },
+          "light": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              },
+              "segment": {
+                "type": "integer",
+                "description": "The segment this binding drives, and -1 for the whole light."
+              }
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "panel",
+              "strip"
+            ]
+          },
+          "width": {
+            "type": "integer",
+            "description": "The picture's width in pixels: the light's own, or the borrowed run's."
+          },
+          "height": {
+            "type": "integer"
+          },
+          "frame": {
+            "type": "object",
+            "description": "The frame this module decided: colour, lit, total, percent, name and reason."
+          },
+          "reading": {
+            "type": "object",
+            "description": "How old the reading behind the picture is, and whether it is stale."
+          },
+          "last_send": {
+            "type": "object",
+            "description": "What the last write to the light did."
+          },
+          "image": {
+            "type": "object",
+            "required": [
+              "media_type",
+              "base64"
+            ],
+            "properties": {
+              "media_type": {
+                "type": "string",
+                "description": "image/png."
+              },
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "bytes": {
+                "type": "integer"
+              },
+              "base64": {
+                "type": "string",
+                "description": "The PNG, base64-encoded: the data URL is data: followed by media_type, a semicolon, base64, a comma, then this string."
+              },
+              "cached": {
+                "type": "boolean",
+                "description": "True when this answer was served from the cache against the same frame."
+              }
+            }
+          },
+          "note": {
+            "type": "string",
+            "description": "What a person has to know to read the picture honestly: a stale reading's age, or why a frame could not be drawn."
+          }
+        }
       }
     }
   }

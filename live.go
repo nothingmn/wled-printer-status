@@ -129,6 +129,20 @@ func (r *runner) setLayout(shape layout) {
 	r.layout = shape
 }
 
+// shape is the arrangement of a panel this instance composes with, read under the same lock a change
+// takes: a route drawing a thumbnail asks what the painter is composing with, and the answer has to
+// be the one the next writer is built from.
+//
+// It is the `layout` setting's layout and not the per-binding layout table, because that table is a
+// record this build does not draw from yet — a thumbnail composed from it would show a picture no
+// panel is showing.
+func (r *runner) shape() layout {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.layout
+}
+
 // origin is where the set in force came from, in the words the routes answer with.
 func (r *runner) source() string {
 	r.mu.Lock()

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -180,9 +181,20 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 				drive.tick = c.tick
 			}
 
-			if c.publish != nil {
-				show := c.publish
-				drive.pub = func(snapshot printer.Snapshot, frame render.Frame) { show(b, snapshot, frame) }
+			// Every frame this driver decides is published twice over: the answer /status reads,
+			// and the shape of the display it was decided for. The second is what GET /frames
+			// draws a thumbnail from, and it is published here rather than worked out there
+			// because the writer is the only thing that knows what the controller reported about
+			// itself and which run a borrowed segment holds. A thumbnail drawn from a second
+			// reading of the light would be a second answer to what the light is.
+			show := c.publish
+			if show == nil {
+				show = func(_ binding, snapshot printer.Snapshot, frame render.Frame) { publish(snapshot, frame) }
+			}
+
+			drive.pub = func(snapshot printer.Snapshot, frame render.Frame) {
+				publishShape(b, pen.shapeOf())
+				show(b, snapshot, frame)
 			}
 
 			runners = append(runners, runner{binding: b, source: source, pen: pen, drive: drive})
@@ -363,6 +375,93 @@ func forgetBindings() {
 	defer bindingMu.Unlock()
 
 	bindingHeld = nil
+
+	bindingShapeMu.Lock()
+	defer bindingShapeMu.Unlock()
+
+	bindingShapes = nil
+}
+
+// bindingShape is what one binding draws on: the light's own matrix, and the run of it a borrowed
+// segment drives.
+//
+// It exists because a thumbnail has to know how big the picture is, and the only honest source of
+// that is the writer: the controller's own report of its geometry, and the bounds the segment had
+// when it was borrowed. A route that read /json/info for itself would answer for whatever the light
+// says now, in a second request, on a light that may not answer at all — and the Overview thumbnail
+// is precisely the picture that has to draw for a light that has stopped answering.
+type bindingShape struct {
+	// geometry is the matrix the controller reported, and the zero panel for a strip.
+	geometry panel
+
+	// span is the run a borrowed segment occupies, and nil for a binding that drives the whole
+	// light. It is what makes the strip thumbnail the binding's own zone rather than somebody
+	// else's 48 pixels.
+	span *[2]int
+}
+
+// kind is panel or strip, in the words the routes use.
+func (s bindingShape) kind() string {
+	if s.geometry.matrix() {
+		return snapshotKindPanel
+	}
+
+	return snapshotKindStrip
+}
+
+// pixelsOf is the picture this binding draws for one frame: the panel's own geometry, the borrowed
+// run, or the run the frame says the light holds.
+//
+// The last case is the whole-light strip before the controller has said how many LEDs it drives,
+// which is a width of zero and a frame of nothing to draw: a thumbnail of a light whose length is
+// unknown would be a picture of a light that does not exist.
+func (s bindingShape) pixelsOf(frame render.Frame) (int, int) {
+	if s.geometry.matrix() {
+		return s.geometry.width, s.geometry.height
+	}
+
+	if s.span != nil {
+		return s.span[1] - s.span[0], 1
+	}
+
+	return frame.Total, 1
+}
+
+// The shape of each binding, beside the per-binding store above and published for the same reason:
+// a route that is asked what a light is drawing needs the display as well as the frame, and both
+// come from the watch rather than from a second reading of the light.
+//
+//nolint:gochecknoglobals // the one thing GET /frames reads out of the watch.
+var (
+	bindingShapeMu sync.Mutex
+	bindingShapes  map[string]bindingShape
+)
+
+// shapeKey names one binding's shape the way the status store names the binding: by its controller
+// and its segment, which is the pair that survives a printer being renamed.
+func shapeKey(controller string, segment int) string {
+	return fmt.Sprintf("%s#%d", controller, segment)
+}
+
+// publishShape records what one binding draws on, as its writer last saw it.
+func publishShape(b binding, shape bindingShape) {
+	bindingShapeMu.Lock()
+	defer bindingShapeMu.Unlock()
+
+	if bindingShapes == nil {
+		bindingShapes = make(map[string]bindingShape, 1)
+	}
+
+	bindingShapes[shapeKey(b.Address, b.Segment)] = shape
+}
+
+// shapeOf is the shape recorded for one binding, and the zero shape for one that has not published
+// — which draws nothing, and says so rather than guessing a width.
+func shapeOf(controller string, segment int) bindingShape {
+	bindingShapeMu.Lock()
+	defer bindingShapeMu.Unlock()
+
+	return bindingShapes[shapeKey(controller, segment)]
 }
 
 // previewTarget is the writer POST /preview-finished fires the finished word at, and the

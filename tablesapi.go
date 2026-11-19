@@ -96,6 +96,18 @@ func (t *configTables) grant(dir string) {
 	t.dir = strings.TrimSpace(dir)
 }
 
+// directory is the directory the host granted, and empty when it granted none.
+//
+// It is here rather than in a field of its own on the Devices routes so that there is one answer to
+// where this module's files live: the document and the snapshots are both in it, and two copies of
+// the answer would be two things to keep in step.
+func (t *configTables) directory() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.dir
+}
+
 // load is the document as it stands, read from the granted directory.
 func (t *configTables) load() (storedConfig, error) {
 	t.mu.Lock()

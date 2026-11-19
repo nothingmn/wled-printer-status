@@ -233,6 +233,12 @@ type writer struct {
 	// total are the printer's, and this is only how they are laid out.
 	geometry atomic.Pointer[panel]
 
+	// span is the run of pixels this writer borrowed, and nil for one that drives the whole
+	// light. It is an atomic pointer for the reason geometry is one: the writer's goroutine
+	// records it when it borrows, and a route drawing a thumbnail reads it without touching the
+	// controller or the writer's own state.
+	span atomic.Pointer[[2]int]
+
 	latest atomic.Pointer[render.Frame]
 
 	// fired is the newest event the driver has offered and the writer has not taken. It is an
@@ -957,7 +963,21 @@ func (w *writer) paint(ctx context.Context, frame render.Frame) error {
 // off realtime for the rest of the day: a composed frame is held live, and there is no reason to
 // hold a light live to show one colour.
 func (w *writer) drawablePanel(frame render.Frame) bool {
-	return w.panelOf().matrix() && w.layout.draws() && aboutAJob(frame)
+	return drawsComposed(frame, w.panelOf(), w.layout)
+}
+
+// drawsComposed is the rule above as a function of its three facts, so that the one other caller
+// that has to make the same decision — GET /frames, drawing a thumbnail — is making it by the same
+// rule rather than by a copy of it. A picture composed on the Overview from a rule the painter does
+// not use is a thumbnail that disagrees with the light, which is the one thing it must never do.
+func drawsComposed(frame render.Frame, geometry panel, shape layout) bool {
+	return geometry.matrix() && shape.draws() && aboutAJob(frame)
+}
+
+// shapeOf is what this writer draws on, as GET /frames needs it: the geometry the controller
+// reported, and the run of a segment it borrowed.
+func (w *writer) shapeOf() bindingShape {
+	return bindingShape{geometry: w.panelOf(), span: w.span.Load()}
 }
 
 // pictureOf is a frame as the operator's layout draws it at this moment.
@@ -1072,6 +1092,10 @@ func (w *writer) borrow(ctx context.Context) {
 			held := borrowed{Segment: segment}
 			w.borrowed = &held
 			w.borrowErr = nil
+
+			// What this binding draws on, for the thumbnail: a borrowed zone is its own run of
+			// pixels and not the strip it sits in.
+			w.span.Store(&[2]int{segment.Start, segment.Stop})
 
 			w.logf("%s: borrowed segment %d %q from %s: pixels %d-%d, colour %s, effect %d, brightness %s; its other segments and the controller's own brightness and power are not touched",
 				name, id, segment.Name, w.where, segment.Start, segment.Stop,
