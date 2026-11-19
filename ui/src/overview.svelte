@@ -45,7 +45,9 @@
 	const api = moduleApi(host);
 	const t = host.t;
 
-	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	/** A printer's name, worn as a link to its own page. The address beside it is drawn by
+	 *  printer-link.svelte, so both parts are links, which is the shape a light wears on the
+	 *  Lights screen. */
 	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** Every picture, one per binding, as GET /frames last answered. */
@@ -495,9 +497,10 @@
 				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_free_printers')}</p>
 			{:else}
 				<!-- The name here stays plain text: this row *is* the control that picks a printer,
-				     and an anchor inside a button is invalid HTML and would swallow the press. The
-				     printer's own page is linked everywhere the printer is shown, which is the
-				     Overview row and the Bindings row. -->
+				     and an anchor inside a button is invalid HTML and would swallow the press. Where a
+				     printer is named as information -- this screen's rows, Bindings' rows, the Lights
+				     screen's segment column -- printer-link.svelte draws its name and its address, as
+				     both links. -->
 				{#each freePrinters as printer (printer.id)}
 					<button
 						type="button"

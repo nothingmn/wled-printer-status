@@ -8,6 +8,7 @@
   "common.segment_number": "Segment {count}",
 
   "printer.open_in_connect": "{printer} — open this printer's page in Prusa Connect in a new window",
+  "printer.open_address": "{address} — open this printer's page in Prusa Connect in a new window",
 
   "screen.right_now": "Overview",
   "screen.bindings": "Bindings",

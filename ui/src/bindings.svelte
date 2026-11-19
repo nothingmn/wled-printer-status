@@ -72,7 +72,9 @@
 	const api = moduleApi(host);
 	const t = host.t;
 
-	/** A printer's name, worn as a link to its own page: the shape the Lights screen gives a light. */
+	/** A printer's name, worn as a link to its own page. The address beside it is drawn by
+	 *  printer-link.svelte, so both parts are links, which is the shape a light wears on the
+	 *  Lights screen. */
 	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	let printers = $state<Printer[]>([]);
