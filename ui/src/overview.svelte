@@ -1,0 +1,524 @@
+<script lang="ts">
+	// Right now: the one question this screen answers, and the only one it is allowed to.
+	//
+	// docs/product-requirements.md §2.1, in the operator's own words: *what is on my walls
+	// at this moment*. One sentence, one row per light, and nothing that is a second copy
+	// of Diagnostics -- no counters, no charts, no rates.
+	//
+	//   - **The picture is the module's own PNG.** GET /frames answers one frame per
+	//     binding with the picture already drawn by the same code that draws the light,
+	//     and it is put in an `<img>` as it came. Nothing here redraws it: a second
+	//     renderer on the page is a second answer to what is on the wall, and the one on
+	//     the page is the one nobody can check against the light.
+	//   - **One row per light**, and a row per binding on it, because a segment carries one
+	//     printer: a light with two printers is two pictures, and hiding one of them would
+	//     hide half of what is on the wall.
+	//   - **A pause per row**, beside `Pause everything` in the shell's header: one
+	//     mechanism, the same six lengths (pause.svelte.ts).
+	//   - **A one-click bind**, with the defaults it applies stated on the page rather
+	//     than hidden behind the click.
+	//
+	// It is refreshed while it is open, because a page that answers "right now" and then
+	// stops is a page that lies after ten seconds. The refresh keeps the last good frames
+	// when a read fails, so a blink does not blank the wall.
+	import { onMount } from 'svelte';
+
+	import { Badge, Button } from '@prusa/connect-ui/primitives';
+
+	import { moduleApi, type BindingRequest, type Frame, type PausedBinding, type Printer } from './api';
+	import { ageText, describe, lengthText, lightName, segmentText } from './format';
+	import { heldHost } from './host';
+	import { loadLights, lights, addressOf, freeSegments, roomOn, type LightFacts } from './lights.svelte';
+	import {
+		LENGTHS,
+		fateOf,
+		everythingPaused,
+		pauseOne,
+		refreshPauses,
+		resumeOne,
+	} from './pause.svelte';
+
+	const host = heldHost();
+	const api = moduleApi(host);
+	const t = host.t;
+
+	/** Every picture, one per binding, as GET /frames last answered. */
+	let frames = $state<Frame[]>([]);
+	/** The sentence GET /frames carries about what a thumbnail is. */
+	let pictureNote = $state('');
+	/** Why there is no picture at all yet, which is not the same as a broken screen. */
+	let waiting = $state('');
+	let printers = $state<Printer[]>([]);
+	/** The printer picked for a one-click bind, and null when none is. */
+	let picked = $state<string | null>(null);
+	/** The row whose six lengths are open, and null when none is. */
+	let open = $state<string | null>(null);
+	let failure = $state('');
+	let notice = $state('');
+	let loading = $state(true);
+	/** True while a pause menu is being obeyed, so one press is one write. */
+	let working = $state(false);
+
+	/** A light's name as a frame or a binding gives it: the address without the scheme. */
+	const keyOf = (frame: Frame): string => frame.light.name !== '' ? frame.light.name : lightName(frame.light.address);
+
+	/** What a person calls the printer, falling back to the id the host gave it. */
+	const printerOf = (frame: Frame): string => frame.printer.name !== '' ? frame.printer.name : frame.printer.id;
+
+	/**
+	 * The pictures grouped by the light they are on, in the order the module answered.
+	 * This is the screen's one structural decision: §2.1 says one row per light, and a
+	 * light carrying two printers is two rows under the one light.
+	 */
+	const groups = $derived.by(() => {
+		const held = new Map<string, { light: string; address: string; frames: Frame[] }>();
+
+		for (const frame of frames) {
+			const key = keyOf(frame);
+			const seen = held.get(key);
+
+			if (seen === undefined) held.set(key, { light: key, address: frame.light.address, frames: [frame] });
+			else seen.frames.push(frame);
+		}
+
+		return [...held.values()];
+	});
+
+	/** One segment in the light's own words, from the light's own list when it answered. */
+	const segmentOf = (frame: Frame): string => {
+		if (frame.light.segment < 0) return t('common.whole_light');
+
+		const light = lights.list.find((one) => (one.controller?.name ?? '') === keyOf(frame));
+		const segment = light?.segments.find((one) => one.id === frame.light.segment);
+
+		return segmentText(t, frame.light.segment, segment?.name, segment);
+	};
+
+	/**
+	 * Everything that needs the operator, in §2.1's shape: the light's name and how long,
+	 * never an error code. A light that would not take a write is the light not answering;
+	 * a printer whose newest fact is stale is the printer gone quiet, which is a different
+	 * fault and says so.
+	 */
+	const troubles = $derived.by(() => {
+		const said: string[] = [];
+
+		for (const frame of frames) {
+			const age = (instant: string | undefined): string => ageText(t, instant) ?? t('common.just_now');
+
+			if (frame.last_send?.ok === false) {
+				said.push(t('overview.light_not_answering', { light: keyOf(frame), age: age(frame.last_send.at) }));
+				continue;
+			}
+
+			if (frame.reading?.stale === true) {
+				said.push(t('overview.printer_quiet', { printer: printerOf(frame), age: age(frame.reading.last_change) }));
+			}
+		}
+
+		return said;
+	});
+
+	/** How many bindings are paused on their own account, which the sentence counts. */
+	const pausedCount = $derived(
+		frames.filter((frame) => fateOf({ light: keyOf(frame), segment: frame.light.segment })?.due_to === 'binding').length,
+	);
+
+	/** How long a binding's own pause has left, in words. */
+	const pausedForOf = (fate: PausedBinding | undefined): string => {
+		if (fate === undefined) return '';
+
+		const left = fate.until === undefined ? undefined : (Date.parse(fate.until) - Date.now()) / 1000;
+
+		return lengthText(t, left, fate.forever === true);
+	};
+
+	/** The lights a printer can still go on, which is the column's whole list. */
+	const roomy = $derived(
+		lights.list
+			.map((one) => ({ one, room: roomOn(one) }))
+			.filter((held) => held.room.room),
+	);
+
+	/** Where a printer already is, by the light's own name, for the column that offers it. */
+	const whereIs = (printer: Printer): string => {
+		const lightsShown = frames
+			.filter((frame) => frame.printer.id === printer.id)
+			.map((frame) => keyOf(frame));
+
+		return lightsShown.length === 0 ? t('overview.no_light_yet') : t('overview.on_light', { lights: lightsShown.join(', ') });
+	};
+
+	const load = async (quiet = false): Promise<void> => {
+		if (!quiet) loading = true;
+
+		try {
+			const [pictures, fleet] = await Promise.all([
+				// A module that has not drawn a picture yet answers 503, which is a fact about
+				// the moment and not a failure of this screen: it is said, not thrown.
+				api.listFrames().catch((problem: unknown) => {
+					waiting = describe(problem);
+
+					return { frames: [] as Frame[], count: 0, note: '' };
+				}),
+				api.listPrinters(),
+			]);
+
+			frames = pictures.frames;
+			pictureNote = pictures.note;
+			printers = fleet.printers;
+			if (pictures.frames.length > 0) waiting = '';
+			failure = '';
+		} catch (problem) {
+			// A quiet refresh that fails keeps the wall it already drew.
+			if (!quiet) failure = `${t('overview.load_failed')}: ${describe(problem)}`;
+		} finally {
+			loading = false;
+		}
+	};
+
+	/** Puts one printer on one light with the defaults §2.1 states. */
+	const bind = async (one: LightFacts): Promise<void> => {
+		if (picked === null) return;
+
+		const room = roomOn(one);
+		const body: BindingRequest = { printer: picked, controller: addressOf(one) };
+
+		// The whole light unless a zone is already taken: a whole-light binding and a zone
+		// binding are refused beside each other, so the second printer on a light takes the
+		// first free segment instead. A brightness is left out on purpose -- the module
+		// writes 128 at start unless a day schedule covers the moment, which is exactly the
+		// default this page promises.
+		if (!room.whole) {
+			const first = freeSegments(one)[0];
+
+			if (first === undefined) {
+				failure = t('overview.no_segment_free');
+
+				return;
+			}
+
+			body.segment = first.id;
+		}
+
+		const printer = printers.find((held) => held.id === picked);
+
+		working = true;
+		failure = '';
+		notice = '';
+
+		try {
+			await api.addBinding(body);
+			notice = t('overview.bind_done', { printer: printer?.name ?? picked, light: (one.controller?.name ?? '') });
+			picked = null;
+			await Promise.all([load(true), loadLights()]);
+		} catch (problem) {
+			failure = `${t('overview.bind_failed')}: ${describe(problem)}`;
+		} finally {
+			working = false;
+		}
+	};
+
+	/** Pairs every light with room with the picked printer, which is what `bind them all` says. */
+	const bindEvery = async (): Promise<void> => {
+		if (picked === null) return;
+
+		const printer = printers.find((held) => held.id === picked);
+		working = true;
+		failure = '';
+		notice = '';
+
+		try {
+			let placed = 0;
+
+			for (const held of roomy) {
+				const body: BindingRequest = { printer: picked, controller: addressOf(held.one) };
+				const first = freeSegments(held.one)[0];
+
+				if (!held.room.whole && first !== undefined) body.segment = first.id;
+				await api.addBinding(body);
+				placed += 1;
+			}
+
+			notice = t('overview.bind_all_done', { count: placed, printer: printer?.name ?? picked });
+			picked = null;
+			await Promise.all([load(true), loadLights()]);
+		} catch (problem) {
+			failure = `${t('overview.bind_failed')}: ${describe(problem)}`;
+		} finally {
+			working = false;
+		}
+	};
+
+	const stopRow = async (frame: Frame, length: (typeof LENGTHS)[number]['id']): Promise<void> => {
+		open = null;
+		working = true;
+		await pauseOne(frame.binding, length);
+		working = false;
+	};
+
+	const resumeRow = async (frame: Frame): Promise<void> => {
+		working = true;
+		await resumeOne(frame.binding);
+		working = false;
+	};
+
+	onMount(() => {
+		void Promise.all([load(), loadLights(), refreshPauses()]);
+	});
+
+	// The page answers "right now", so it keeps answering. Ten seconds is fast enough to
+	// watch a print move and slow enough that two lights cost six reads a minute.
+	$effect(() => {
+		const tick = (): void => {
+			if (host.signal.aborted) return;
+			void Promise.all([load(true), refreshPauses()]);
+		};
+
+		const timer = setInterval(tick, 10_000);
+
+		return () => clearInterval(timer);
+	});
+</script>
+
+<section class="flex flex-col gap-4">
+	<header class="flex flex-col gap-1">
+		<h1 class="text-lg font-semibold">{t('overview.title')}</h1>
+		<p class="text-sm">
+			{#if everythingPaused()}
+				<span class="font-medium">{t('overview.everything_paused')}</span>
+				<span class="opacity-70">{t('overview.everything_paused_body')}</span>
+			{:else}
+				<span class="font-medium">{t('overview.summary_lights', { count: groups.length })}</span>
+				{t('overview.summary_showing', { count: frames.length })}
+				<span class="opacity-40">·</span>
+				{#if troubles.length === 0}
+					<span class="font-medium">{t('overview.nothing_needs_you')}</span>
+				{:else}
+					<span class="font-medium">{troubles.join(' · ')}</span>
+				{/if}
+				{#if pausedCount > 0}
+					<span class="opacity-40">·</span>
+					<span class="font-medium">{t('overview.paused_count', { count: pausedCount })}</span>
+				{/if}
+			{/if}
+		</p>
+	</header>
+
+	{#if failure !== ''}
+		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+	{/if}
+
+	{#if notice !== ''}
+		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+	{/if}
+
+	{#if loading}
+		<p class="text-sm opacity-70">{t('overview.loading')}</p>
+	{:else if groups.length === 0}
+		<!-- §2.1 and §3: the first run says one sentence about what to do first, not an
+		     empty grid, and a module that has just started says what it is waiting for. -->
+		<div class="rounded border px-4 py-6">
+			<p class="text-sm font-medium">{t('overview.first_run')}</p>
+			{#if waiting !== ''}
+				<p class="mt-1 text-xs opacity-70">{t('overview.no_picture_yet', { why: waiting })}</p>
+			{/if}
+		</div>
+	{:else}
+		<div class="overflow-hidden rounded border">
+			{#each groups as group (group.light)}
+				<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+					<span class="text-sm font-semibold">{group.light}</span>
+					<span class="font-mono text-xs opacity-60">{group.address}</span>
+					{#if group.frames.length > 1}
+						<Badge variant="secondary" size="sm">
+							{t('overview.printers_on_light', { count: group.frames.length })}
+						</Badge>
+					{/if}
+				</div>
+				{#each group.frames as frame (frame.binding)}
+					{@const fate = fateOf({ light: keyOf(frame), segment: frame.light.segment })}
+					{@const paused = fate?.paused === true}
+					<div
+						class="grid items-start gap-3 border-b px-3 py-3 last:border-b-0 sm:grid-cols-[190px_1fr_auto] sm:items-center sm:gap-4"
+					>
+						<div class="min-w-0">
+							{#if (frame.image?.base64 ?? '') !== ''}
+								<img
+									src={`data:${frame.image?.media_type ?? 'image/png'};base64,${frame.image?.base64 ?? ''}`}
+									alt={t('overview.thumbnail_alt', { light: group.light, printer: printerOf(frame) })}
+									class={frame.kind === 'panel'
+										? 'block h-auto w-full max-w-[190px] rounded bg-black object-contain [image-rendering:pixelated]'
+										: 'block h-3 w-full max-w-[190px] rounded bg-black [image-rendering:pixelated]'}
+								/>
+							{:else}
+								<div class="flex h-10 w-full max-w-[190px] items-center justify-center rounded bg-black px-2 text-center text-[10px] text-white/60">
+									{t('overview.picture_missing')}
+								</div>
+							{/if}
+						</div>
+
+						<div class="min-w-0 text-sm">
+							<div class="font-medium">
+								{printerOf(frame)}
+								<span class="font-normal opacity-60">· {segmentOf(frame)}</span>
+							</div>
+							<div class="text-xs opacity-70">
+								{#if frame.printer.state_known}
+									{frame.printer.state}
+								{:else}
+									{t('overview.state_unknown')}
+								{/if}
+								{#if frame.frame.percent >= 0}
+									· {frame.frame.percent}%
+								{/if}
+								{#if paused}
+									· {fate?.effect === 'hands-back' ? t('overview.handed_back') : t('overview.switched_off')}
+								{/if}
+							</div>
+							{#if frame.note}
+								<div class="text-xs opacity-70">{frame.note}</div>
+							{/if}
+						</div>
+
+						<div class="flex flex-col items-start gap-1 sm:items-end">
+							{#if paused}
+								<Badge variant="secondary">
+									{fate?.due_to === 'global'
+										? t('overview.paused_with_everything')
+										: t('overview.paused_for', { length: pausedForOf(fate) })}
+								</Badge>
+							{:else}
+								<Badge variant={frame.last_send?.ok === false ? 'destructive' : 'outline'}>
+									{frame.last_send === null
+										? t('overview.no_write_yet')
+										: ageText(t, frame.last_send.at) === null
+											? t('overview.written')
+											: t('overview.wrote_ago', { age: ageText(t, frame.last_send.at) ?? '' })}
+								</Badge>
+							{/if}
+
+							{#if paused && fate?.due_to === 'binding'}
+								<Button variant="ghost" size="sm" disabled={working} onclick={() => void resumeRow(frame)}>
+									{t('overview.resume')}
+								</Button>
+							{:else if !paused}
+								<Button
+									variant="ghost"
+									size="sm"
+									disabled={working || everythingPaused()}
+									aria-expanded={open === frame.binding}
+									onclick={() => (open = open === frame.binding ? null : frame.binding)}
+								>
+									{t('overview.pause')}
+								</Button>
+							{/if}
+
+							{#if open === frame.binding}
+								<div class="flex flex-wrap justify-end gap-1">
+									{#each LENGTHS as length (length.id)}
+										<Button variant="ghost" size="sm" disabled={working} onclick={() => void stopRow(frame, length.id)}>
+											{t(length.key)}
+										</Button>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			{/each}
+		</div>
+	{/if}
+
+	{#if pictureNote !== '' && frames.length > 0}
+		<p class="text-xs opacity-60">{pictureNote}</p>
+	{/if}
+
+	<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
+
+	<div class="grid gap-3 md:grid-cols-2">
+		<div class="overflow-hidden rounded border">
+			<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+				<span>{t('overview.printers_heading')}</span>
+				<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: printers.length })}</span>
+			</div>
+			{#if printers.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
+			{:else}
+				{#each printers as printer (printer.id)}
+					<button
+						type="button"
+						class={picked === printer.id
+							? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
+							: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
+						aria-pressed={picked === printer.id}
+						onclick={() => (picked = picked === printer.id ? null : printer.id)}
+					>
+						<span class="font-medium">{printer.name}</span>
+						<span class="text-xs opacity-60">{whereIs(printer)}</span>
+						{#if picked === printer.id}
+							<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
+						{/if}
+					</button>
+				{/each}
+			{/if}
+		</div>
+
+		<div class="overflow-hidden rounded border">
+			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+				<span>{t('overview.lights_heading')}</span>
+				<span class="font-normal opacity-60">{t('overview.lights_count', { count: roomy.length })}</span>
+				{#if roomy.length > 0}
+					<Button
+						variant="secondary"
+						size="sm"
+						class="ml-auto"
+						disabled={picked === null || working}
+						onclick={() => void bindEvery()}
+					>
+						{t('overview.bind_them_all', { count: roomy.length })}
+					</Button>
+				{/if}
+			</div>
+			{#if roomy.length === 0}
+				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_lights_waiting')}</p>
+			{:else}
+				{#each roomy as held (addressOf(held.one))}
+					<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
+						<span class="font-medium">{held.one.controller?.name}</span>
+						<span class="font-mono text-xs opacity-60">{held.one.controller?.address}</span>
+						<span class="text-xs opacity-60">
+							{held.room.whole
+								? t('overview.whole_free')
+								: t('overview.free_segments', { free: held.room.free, total: held.one.segments.length })}
+						</span>
+						<span class="ml-auto">
+							<Button
+								variant="default"
+								size="sm"
+								disabled={picked === null || working}
+								onclick={() => void bind(held.one)}
+							>
+								{picked === null ? t('overview.bind') : t('overview.bind_one', { printer: printers.find((one) => one.id === picked)?.name ?? '' })}
+							</Button>
+						</span>
+					</div>
+				{/each}
+			{/if}
+			<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
+		</div>
+	</div>
+
+	<div class="rounded border px-3 py-3 text-sm">
+		<p class="text-xs font-medium uppercase tracking-wide opacity-60">{t('overview.defaults_heading')}</p>
+		<ul class="mt-1 list-disc pl-5 text-sm">
+			<li>{t('overview.defaults_whole')}</li>
+			<li>{t('overview.defaults_brightness')}</li>
+			<li>{t('overview.defaults_colours')}</li>
+			<li>{t('overview.defaults_shape')}</li>
+			<li>{t('overview.defaults_events')}</li>
+		</ul>
+	</div>
+
+	<p class="text-xs opacity-60">{t('overview.footnote')}</p>
+</section>

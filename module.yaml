@@ -334,10 +334,11 @@ permissions:
 # It is a convenience and not a requirement. The settings above are the
 # module's whole configuration, the host applies them, and every one of them can
 # be written without this bundle; a person who never opens the tab loses nothing.
-# What the tab adds is the one setting a text area cannot express: `bindings` is a
-# list of objects, and the tab lists those objects as rows, offers the printers and
-# controllers as the choices this module's own routes already report, and writes
-# through POST/PUT/DELETE /bindings instead of asking anybody to hand-edit JSON.
+# What the tab adds is everything a text area cannot express: `bindings` is a
+# list of objects, the moment and state tables are tables, and the lights
+# themselves carry segments and presets that belong in a picker rather than in
+# JSON. docs/product-requirements.md §2 is the eight screens behind it, and the
+# tab opens on the first of them.
 #
 # Three keys and one rule between them:
 #
@@ -357,6 +358,12 @@ permissions:
 #              `register.settings('bindings', ...)` in ui/src/index.ts and this
 #              id have to be the same string.
 #
+# The id stays `bindings`, which is the name this tab had while the bindings list
+# was all it held: it is the name the host records against a registration, and
+# changing it would be changing where the host looks. The title is what a person
+# reads, and it now says what the tab is -- the module's screens -- instead of
+# naming the first thing it ever showed.
+#
 # Nothing here adds a permission. The tab speaks only to this module's own routes,
 # on the session the operator already holds, and reads no printer itself.
 ui:
@@ -365,4 +372,4 @@ ui:
   contributes:
     settings:
       - id: bindings
-        title: Bindings
+        title: WLED Printer Status
