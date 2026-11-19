@@ -1591,6 +1591,215 @@ screens; whether those seven draw correctly is what the browser was not used for
 panel is painting: its `/json/state` segment colour is the establishing body (`[0,0,0]`, `stop 256`),
 because a panel's frame arrives over DDP, and only `/status` and `/frames` describe what was drawn.
 
+**Tenth run, 2026-11-19 20:32Z, from `962371f`, tagged `v0.3.0`.** The first release since `0.2.0` that
+carries what the operator is waiting to try: the host Settings pane gone from the manifest, the seven
+optional panel lines and the font's colon, slash and underscore, the **Lights** screen with a list of lights
+and a light added by address, the Layout screen as four groups with the picture held in view, and test
+fixtures no longer anchored to a wall clock. One commit of another writer's work rides with it —
+`e8fc754`, the mDNS document and the one Lights sentence it corrects — because it landed before the build
+and a release is built from `git archive HEAD`.
+
+**The version is its own commit and both halves move in it.** `version: 0.3.0` in `module.yaml`,
+`extension.Version("0.3.0")` in `main.go`, and the changelog's newest heading is `## 0.3.0 — 2026-11-19`
+instead of an `Unreleased` that named no version. The host compares the two strings as exact text and a
+mismatch installs and never starts, so a release that moves one and not the other is a module that goes
+dark. The tag is annotated and `v0.1.0` (`701d090`) and `v0.2.0` (`905454f`) did not move.
+
+**The store half of the way back is not the same document any more.** `0.2.0` writes schema 5 and this
+release writes 7, so a rollback needs the version-5 document put back, not just the old binary.
+`/home/robchartier/wled-rollback/ROLLBACK-905454f.md` carries both halves, and records the correction that
+what was running is `905454f` (`v0.2.0`), not the `531e73c` the brief named: the declaration's `source`, the
+installed binary's `1b0629e3…` and the tag all say so.
+
+**The bundle is rebuilt, not carried.** `ui/src` moved heavily, so a copied bundle would be a stale screen
+with every checksum still passing. Out of `git archive HEAD`, with the lockfile pinned:
+
+```console
+$ docker run --rm --user $(id -u):$(id -g) -e HOME=/tmp -e CI=true \
+    -v $SRC:$SRC -w $SRC/ui node:22-bookworm \
+    sh -c 'set -eu; mkdir -p /tmp/bin; corepack enable --install-directory /tmp/bin; \
+           export PATH=/tmp/bin:$PATH; \
+           pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
+             && pnpm run check && pnpm run build'
+$ svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
+svelte-check found 0 errors and 0 warnings
+$ vite build
+dist/ui/index.js  238.60 kB │ gzip: 48.94 kB
+✓ built in 617ms
+```
+
+Run a second time over the same export it produced the **same** digest, so the build is reproducible and
+`cmp` reports the two byte-identical:
+
+```console
+shipped  53d175cddda478c91cf148f2d71e393962bac417b091a97035d9e7e8593cd2c5  release/ui/index.js  (238,604 B)
+installed 53d175cddda478c91cf148f2d71e393962bac417b091a97035d9e7e8593cd2c5  modules/…/bundle/ui/index.js
+served    53d175cddda478c91cf148f2d71e393962bac417b091a97035d9e7e8593cd2c5  <base>/ui/ui/index.js
+was       4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872  the 0.2.0 bundle
+```
+
+**The shipped bundle holds all seven screens and the rename.** Counted in the built file, not the source:
+
+```console
+$ for id in right-now bindings events colours layout devices diagnostics; do
+    printf '%-12s %s\n' $id "$(grep -o -F "\"$id\"" ui/index.js | wc -l)"; done
+right-now    1
+bindings     4
+events       1
+colours      1
+layout       1
+devices      1
+diagnostics  1
+$ grep -o -F 'screen.lights' ui/index.js | wc -l        # 1
+$ grep -o -F 'devices.title' ui/index.js | wc -l        # 1
+$ grep -n '"screen.lights"\|"devices.title"' ui/locales/en.json
+15:  "screen.lights": "Lights",
+386:  "devices.title": "Lights",
+```
+
+The locale file is the discriminator a stale bundle cannot pass: **567 flat keys**, against the installed
+0.2.0 bundle's **512**, and the add-a-light text is present only in the new one — `devices.add_label`,
+`devices.add_button` ("Read it and add it"), `devices.added` — with **zero** `devices.add` keys in the old
+file. Each catalogue value is still a top-level string, which is the shape the host's loader accepts.
+
+**The install, with no `-settings`.** The manifest declares no options, so a settings block is a block of
+keys this build does not read and the host refuses the start (§4a). The command and its answer, verbatim:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.3.0 \
+    -from /config/config.d/wled-release-962371f -approve; echo "MODULE_ADD_EXIT=$?"
+installed com.github.aux.nothingmn.wled-printer-status/wled-printer-status as sink:wled-printer-status
+  files       config/config.d/modules/wled-printer-status
+  namespace   com.github.aux.nothingmn.wled-printer-status
+  checksums   10 files verified against checksums.txt
+  connects to 10.0.0.136 port 80,4048 from the process: The module drives this WLED controller, a 256x64
+              panel, over the two connections such a controller answers on. …
+  connects to 10.0.0.253 port 80,4048 from the process: The module drives this WLED controller, a strip,
+              over the two connections such a controller answers on. …
+  granted     org:local#viewer@sink:wled-printer-status for observe. The viewer role also carries
+              view_resource, read_storage
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+```
+
+It asked for nothing new — no `new` line, because `observe`, the data directory and the 32 MiB budget were
+already in the declaration. `sha256sum -c checksums.txt` had already passed inside the container against
+the staged directory, so the ten files the host recorded are the ten it verified.
+
+**One restart, then healthy in four seconds.**
+
+```console
+$ docker restart prusa_connect
+20:32:32Z → 20:32:33Z
+t+1s starting   t+2s starting   t+3s starting   t+4s healthy
+prusa_connect|Up 6 seconds (healthy)
+```
+
+**The store stepped 5 → 7 and the log says so in one line; the document proves both steps ran.** The two
+steps are separate in `store.go`: 5 → 6 stamps the layout rows' seven optional lines (absent means off, so a
+layout nobody switched a line on gains no key), and 6 → 7 seeds the lights list from every address a
+binding already names.
+
+```console
+msg="wled-printer-status 0.3.0 is serving on stdio as pid 23"
+msg="wled-printer-status: the configuration store at /config/config.d/module-data/wled-printer-status/config.json
+     was upgraded from schema version 5 to 7"
+msg="wled-printer-status: the set this start runs is the one in this module's own store at
+     /config/config.d/module-data/wled-printer-status/config.json, schema version 7 (2 bindings);
+     the settings are a migration source and are not applied again"
+msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128"
+msg="wled-printer-status: watching printer 07e893bb-… and driving segment 5 of http://10.0.0.253,
+     leaving its other segments and its brightness and power alone"
+msg="wled-printer-status: 10.0.0.136 answered, and what it says about itself is now in the store"
+msg="wled-printer-status: 10.0.0.253 answered, and what it says about itself is now in the store"
+msg=readiness ready=true serving=4 declared=4 …
+```
+
+The document after it, read straight out of the config volume:
+
+```console
+$ docker exec prusa_connect sh -c 'cat /config/config.d/module-data/wled-printer-status/config.json' | jq -c …
+{"version":7,"bindings":2,"lights":2,"states":0,"moments":2,"layouts":1,"windows":0,"pauses":0}
+lights: [{"address":"http://10.0.0.136","calls_itself":"morpheus","firmware":"14.7.0-mdev","pixels":16384,
+          "kind":"panel","width":256,"height":64,"probed_at":"2026-11-19T20:32:34Z"},
+         {"address":"http://10.0.0.253","calls_itself":"CyberDesk","firmware":"16.0.1","pixels":48,
+          "kind":"strip","probed_at":"2026-11-19T20:32:34Z"}]
+```
+
+Two bindings, one per light, both unchanged: the panel whole at segment `-1` and brightness 128, the strip
+on segment `5`. The two moments and the one layout row are the operator's own and travelled through the
+upgrade untouched — the layout row still carries its eight fields (`bar_band: top`, `bar_rows: 12`,
+`percent_scale: 5`, `take-turns` every 15 s) and no optional line, which is what step 6 writes for a layout
+nobody switched a line on.
+
+**`GET /lights` lists both lights, and a light it has never seen is read before it is kept.**
+
+```console
+$ curl -s -o lights.json -w 'HTTP %{http_code}\n' $B/lights
+HTTP 200
+{"count":2,"persisted":true,"lights":[
+  {"name":"10.0.0.136","address":"http://10.0.0.136","calls_itself":"morpheus","firmware":"14.7.0-mdev",
+   "pixels":16384,"kind":"panel","width":256,"height":64,"facts_known":true},
+  {"name":"10.0.0.253","address":"http://10.0.0.253","calls_itself":"CyberDesk","firmware":"16.0.1",
+   "pixels":48,"kind":"strip","facts_known":true}]}
+```
+
+**The egress experiment: the module's own process inside the container reached an address it had never
+talked to.** `10.0.0.99` is a light the operator has, and nothing in the declaration or the store named it:
+
+```console
+$ curl -s -X POST -H 'Content-Type: application/json' -d '{"address":"10.0.0.99"}' \
+    -o post.json -w 'HTTP %{http_code} in %{time_total}s\n' $B/lights
+HTTP 201 in 0.118163s
+{"light":{"name":"10.0.0.99","address":"http://10.0.0.99","calls_itself":"DamonAward","firmware":"16.0.1",
+ "pixels":24,"kind":"strip","probed_at":"2026-11-19T20:32:59Z","facts_known":true}, …}
+$ GET /lights again   → count 3, persisted true
+$ store digest        → bb3f3112… → b8a7774…   (the add reached the file, in the same act)
+```
+
+So the container's network passes a plain HTTP read to a light on the LAN, and mDNS is not needed for a
+typed address. **It answers `201` and the list now holds three lights**, the third being one this build was
+not told about; `DELETE /lights/10.0.0.99` is what takes it off again. Worth knowing beside it: the
+manifest's `egress` block declares only the two controllers this release was built against, so reading a
+third address is traffic the operator's install prompt did not describe — a gap the manifest schema has no
+form for while the module keeps its own inventory.
+
+**The page is served and the bytes are the shipped ones**, at the doubled `ui/ui` the route prefix and the
+bundle root each contribute:
+
+```console
+$ curl -s -o served.js -w 'HTTP %{http_code} bytes=%{size_download}\n' $B/ui/ui/index.js
+HTTP 200 bytes=238604
+$ sha256sum served.js release/ui/index.js
+53d175cddda478c91cf148f2d71e393962bac417b091a97035d9e7e8593cd2c5  served.js
+53d175cddda478c91cf148f2d71e393962bac417b091a97035d9e7e8593cd2c5  release/ui/index.js
+$ curl -s -o served-en.json -w 'HTTP %{http_code}\n' $B/ui/ui/locales/en.json
+HTTP 200        # 50,818 bytes, 0d532ac3…, 567 flat keys, devices.title "Lights"
+$ curl -s -o /dev/null -w '%{http_code}\n' \
+    http://10.0.0.160:8080/settings/extensions/com.github.aux.nothingmn.wled-printer-status
+200
+```
+
+**What was left running.** Both lights on at brightness 128 with the printing colour `[0,170,0]` and the
+progress at 74 %: 12,124 of 16,384 pixels on the panel, 35 of 48 on the strip, `last_send.ok: true` on both
+(the panel at `20:33:12Z`, the strip at `20:32:35Z`). `GET /pause` answers `paused: false` with `pauses: []`,
+`states` and `pauses` are empty, and no identify or preview was fired — the operator fires those.
+
+One measured wrinkle, taken before the deploy rather than after it: the panel's HTTP is slow. Two of three
+`/json/info` probes at `20:28Z` took **7.4 s** while a third took 0.03 s, and the module's `/status` carried
+`last_send.ok: false` with `context deadline exceeded` against it at `20:28:26Z`. Every capture taken with a
+60 s timeout answered `200`, and after the restart both writes report `ok: true`. It is a fact about the
+device's responsiveness, not about this release, and it is the first thing to look at if the panel's picture
+stops moving.
+
+**What this run does not prove.** That a person saw the page — **no browser was opened against it**; the
+asset answers `200`, is 238,604 bytes and hashes to the shipped file, and the catalogue it draws from is
+served beside it, but whether the seven screens render correctly is the operator's look. Nor does it prove
+the panel is painting: its `/json/state` segment is the establishing body in black, because a panel's frame
+arrives over DDP, and only `/status` and `/frames` describe what was drawn.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
