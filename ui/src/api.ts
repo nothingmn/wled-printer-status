@@ -274,6 +274,177 @@ export interface PauseBody {
   note?: string;
 }
 
+/**
+ * What a moment can show — docs/product-requirements.md §2.3 in the screen's own words, and
+ * momenttable.go's four constants. Anything else is refused by the route by name.
+ */
+export type Shows = 'Preset' | 'Word' | 'Colour' | 'Nothing';
+
+/**
+ * What one moment does on one printer on one light: whether it is on, what it shows, which of
+ * those it shows, for how long — and where that answer came from.
+ *
+ * The moment belongs to the light and this entry to the (light, printer) pair, which is what
+ * makes the same printer show one thing in the office and another in the workshop. One printer
+ * on a light is one entry per moment, which is the screen's flat table.
+ */
+export interface MomentEntry {
+  /** The host's device id for the printer this entry is about. */
+  printer: string;
+  /** The name an operator gave the machine, absent when the host could not be read. */
+  printer_name?: string;
+  /** The segment that printer is on, on this light, and -1 for the whole light. */
+  segment: number;
+  /** True when that printer drives the whole light. */
+  whole: boolean;
+  /** Whether the moment is shown at all. */
+  enabled: boolean;
+  shows: Shows;
+  /**
+   * Which one of those: a preset's name as WLED spells it, the text to draw for a Word, a
+   * state's name for a Colour, and empty for Nothing. It is meaningful only for its own
+   * `shows`, and the route refuses a mismatch rather than coercing one.
+   */
+  which: string;
+  /** `forever` — until the light's own state changes — or a duration such as `60s` or `5m`. */
+  for: string;
+  /**
+   * `store` when somebody edited this entry, `default` when it is what a delete would put
+   * back: for the finished moment on, showing this build's word for a minute; for every other
+   * moment, off and showing nothing.
+   */
+  origin: 'store' | 'default';
+}
+
+/** One moment a light has, and what each printer on it shows for it. */
+export interface Moment {
+  /** print-finished, print-started, filament-change, paused, error-or-attention, light-lost,
+   * print-cancelled or printer-went-quiet. */
+  moment: string;
+  /** The words the approved Events screen prints for it, such as "Print finished". */
+  label: string;
+  /** What the moment is, in one line. */
+  meaning: string;
+  /** One entry per printer on the light, in the operator's order. */
+  entries: MomentEntry[];
+  /** How many printers this moment carries an entry for, which is how the screen indents. */
+  printer_count: number;
+}
+
+/** GET /lights/{light}/moments: the Events screen's whole table for one light. */
+export interface MomentsBody {
+  light: string;
+  address: string;
+  /** Every printer on this light, in the operator's order, in the shape GET /bindings carries. */
+  printers: Binding[];
+  moments: Moment[];
+  count: number;
+  /** False when this module has no store to keep a change in; `note` says why. */
+  persisted: boolean;
+  note?: string;
+  /** Stored rows about moments this build does not have, as light/printer/moment. */
+  unknown_moments?: string[];
+}
+
+/**
+ * One entry as a caller writes it. `enabled` and `shows` are required, because a body that
+ * forgot them would switch a moment off in silence.
+ */
+export interface MomentRequest {
+  /** Required when the light carries more than one printer; the route refuses a guess. */
+  printer?: string;
+  enabled: boolean;
+  shows: Shows;
+  which?: string;
+  for?: string;
+}
+
+/** What PUT and DELETE on one moment answer: the entry now in force, and whether it was kept. */
+export interface MomentAnswer {
+  light: string;
+  moment: MomentEntry;
+  /** PUT: true when the entry is the one in force. */
+  applied?: boolean;
+  /** DELETE: false when there was nothing stored, which is not an error. */
+  removed?: boolean;
+  persisted: boolean;
+  note?: string;
+}
+
+/** How long a state's word holds before the state's own picture comes back. */
+export type Holds = 'forever' | '30s' | '60s' | '5m';
+
+/** Where one value of a state's row came from: the store, or Appendix A's own answer. */
+export type Origin = 'store' | 'default';
+
+/** What a state's word is doing at the moment the answer was written. */
+export type WordShows = 'none' | 'showing' | 'expired' | 'later';
+
+/**
+ * One row of the state table: a state, the colour it is drawn in, the word that replaces the
+ * state's own picture while it holds, and where each of the three came from.
+ *
+ * `kind` separates the ten states the host reports from the two conditions this module computes
+ * for itself, which is why a twelve-row answer has `conditions: 2`.
+ */
+export interface StateRow {
+  /** IDLE, BUSY, READY, PRINTING, PAUSED, FINISHED, STOPPED, ATTENTION, ERROR or UNKNOWN, or
+   * one of the conditions Disconnected and Stale. */
+  state: string;
+  kind: 'state' | 'condition';
+  colour: FrameColour;
+  colour_origin: Origin;
+  /** The text the panel draws while the state holds, and empty for no word. */
+  word: string;
+  word_origin: Origin;
+  holds: Holds;
+  holds_origin: Origin;
+  /**
+   * What the word is doing now. `expired` is the one that matters: a word set on a state that
+   * has been showing for hours is spent before anybody reads it, and an answer that did not
+   * say so looked like a success.
+   */
+  word_shows: WordShows;
+  /** The last instant the word is showing, RFC 3339 in UTC. Empty when nothing counts down. */
+  word_until?: string;
+  /** True when any of the three came from the store, which is what decides a reset. */
+  overridden: boolean;
+  /** What the state means, in one line. */
+  meaning: string;
+}
+
+/** GET /states: the Colours screen's whole table. */
+export interface StatesBody {
+  states: StateRow[];
+  /** How many rows the table holds: twelve, of which ten are states. */
+  count: number;
+  /** How many of `count` are conditions rather than states the host reports. */
+  conditions: number;
+  persisted: boolean;
+  note?: string;
+  unknown_states?: string[];
+}
+
+/**
+ * One state's row as a caller writes it. At least one of the three is required: a body carrying
+ * none of them is refused, because clearing a row is what DELETE is for.
+ */
+export interface StateRequest {
+  colour?: FrameColour;
+  word?: string;
+  holds?: Holds;
+}
+
+/** What PUT and DELETE on one state answer: the row now in force, and whether it was kept. */
+export interface StateAnswer {
+  state: StateRow;
+  applied?: boolean;
+  /** DELETE: false when the state was already at its default, which is not an error. */
+  removed?: boolean;
+  persisted: boolean;
+  note?: string;
+}
+
 const operation = (
   id: string,
   method: Operation['method'],
@@ -297,6 +468,25 @@ const routes = (namespace: string) => {
     readController: operation('read-controller', 'GET', `${base}/controllers/{name}`, 'json'),
     readStatus: operation('read-status', 'GET', `${base}/status`, 'json'),
     listFrames: operation('list-frames', 'GET', `${base}/frames`, 'json'),
+
+    // The moment table, one light at a time: the light is the noun because a moment belongs to
+    // the light while what it shows belongs to the (light, printer) pair. There is no POST — the
+    // eight moments are a closed list, so a moment is edited and reset, never added.
+    listMoments: operation('list-moments', 'GET', `${base}/lights/{light}/moments`, 'json'),
+    changeMoment: operation(
+      'change-moment',
+      'PUT',
+      `${base}/lights/{light}/moments/{moment}`,
+      'json',
+      'application/json',
+    ),
+    resetMoment: operation('delete-moment', 'DELETE', `${base}/lights/{light}/moments/{moment}`, 'json'),
+
+    // The state table: one row per state the light can be in, written whole and reset whole.
+    listStates: operation('list-states', 'GET', `${base}/states`, 'json'),
+    changeState: operation('change-state', 'PUT', `${base}/states/{state}`, 'json', 'application/json'),
+    resetState: operation('delete-state', 'DELETE', `${base}/states/{state}`, 'json'),
+
     readPause: operation('read-pause', 'GET', `${base}/pause`, 'json'),
     pauseEverything: operation('pause-everything', 'PUT', `${base}/pause`, 'json', 'application/json'),
     resumeEverything: operation('resume-everything', 'DELETE', `${base}/pause`, 'json'),
@@ -370,6 +560,41 @@ export const moduleApi = (host: ModuleHost) => {
 
     /** One picture per binding, drawn by the module's own renderer. */
     listFrames: () => transport.call<FramesBody>(held.listFrames, {}, host.signal),
+
+    /** One light's whole moment table: every moment, with one entry per printer on it. */
+    listMoments: (light: string) =>
+      transport.call<MomentsBody>(held.listMoments, { path: { light } }, host.signal),
+
+    /**
+     * Writes one (light, printer) entry for one moment. The body replaces the entry whole, so a
+     * caller sends all four fields: a field left out goes back to its default, not to what the
+     * row had.
+     */
+    changeMoment: (light: string, moment: string, body: MomentRequest) =>
+      transport.call<MomentAnswer>(held.changeMoment, { path: { light, moment }, body }, host.signal),
+
+    /**
+     * Puts one printer's entry for one moment back to its default. The printer is a query
+     * parameter because the path already carries the light and the moment, and because a DELETE
+     * body is the one part of HTTP a proxy may drop.
+     */
+    resetMoment: (light: string, moment: string, printer: string) =>
+      transport.call<MomentAnswer>(held.resetMoment, { path: { light, moment }, query: { printer } }, host.signal),
+
+    /** Every state, with the colour, word and hold in force and where each came from. */
+    listStates: () => transport.call<StatesBody>(held.listStates, {}, host.signal),
+
+    /**
+     * Writes one state's row, whole. A field the body leaves out goes back to its default — the
+     * colour Appendix A gives the state, no word, and a hold of forever — so a caller that means
+     * to keep a word sends it with every colour change.
+     */
+    changeState: (state: string, body: StateRequest) =>
+      transport.call<StateAnswer>(held.changeState, { path: { state }, body }, host.signal),
+
+    /** Puts one state back to Appendix A's colour, no word, and a hold of forever. */
+    resetState: (state: string) =>
+      transport.call<StateAnswer>(held.resetState, { path: { state } }, host.signal),
 
     readPause: () => transport.call<PauseBody>(held.readPause, {}, host.signal),
 

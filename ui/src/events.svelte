@@ -1,0 +1,637 @@
+<script lang="ts">
+	// Events: what one light shows when something *happens*.
+	//
+	// docs/product-requirements.md §2.3, in the five decisions the page is built around:
+	//
+	//   - **The page is scoped to one light**, by the selector at the top. A moment is a
+	//     transition — a print finishing, a pause, a light lost — and the list of them belongs to
+	//     the light, so a page covering two lights would be two tables pretending to be one.
+	//   - **The moment is the top row.** One printer on the light is exactly the flat table.
+	//     More than one printer and each moment keeps its row and gains one indented sub-row per
+	//     printer, carrying that printer's segment and its own four settings. Settings belong to
+	//     the (light, printer) pair, which is also what makes multi-room sane: the same printer on
+	//     two lights carries two independent sets.
+	//   - **`shows` decides what `which` is.** Preset names the light's own preset by name, Word
+	//     is a word for a panel, Colour names one of the twelve states, and Nothing names nothing.
+	//     The field changes with the choice, and the route refuses a `which` that does not belong
+	//     to its `shows` — so the refusal is shown where the field is rather than swallowed.
+	//   - **No preset gallery, no preset editor, no effect, speed or palette control anywhere.**
+	//     Presets are made and tuned in WLED's own interface; this page only names one. No route
+	//     lists a light's presets either (see the notes under the table), so `which` for a Preset
+	//     is the name as WLED spells it, typed, and the module stores it as written.
+	//   - **Editing never needs the light.** PUT and DELETE write this module's own store and send
+	//     nothing to the light — which is exactly right, because the moment somebody stands at a
+	//     light editing moments is often the moment the light is the thing that is off.
+	//
+	// Two things this page cannot offer, both reported rather than faked: the mockup's per-row
+	// `test` button (no route runs one moment on one light, and the preview routes paint a whole
+	// light, which an editor must not do), and a picker for preset names (the routes serve the
+	// light's segments, never its presets).
+	import { onMount } from 'svelte';
+
+	import { Badge, Button } from '@prusa/connect-ui/primitives';
+
+	import {
+		moduleApi,
+		type Frame,
+		type Moment,
+		type MomentEntry,
+		type MomentRequest,
+		type MomentsBody,
+		type Shows,
+		type StateRow,
+	} from './api';
+	import { describe, lightName, segmentText } from './format';
+	import { fitsPanel, missingGlyphs } from './glyphs';
+	import { heldHost } from './host';
+	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
+
+	const host = heldHost();
+	const api = moduleApi(host);
+	const t = host.t;
+
+	/** What one row is being edited towards: the entry the route would be sent. */
+	interface Draft {
+		enabled: boolean;
+		shows: Shows;
+		which: string;
+		for: string;
+	}
+
+	/** The lengths the field suggests. The route accepts any positive duration, so this is a hint. */
+	const LENGTH_HINTS = ['forever', '10s', '30s', '60s', '2m', '5m', '15m', '1h'] as const;
+
+	/** The light this page is scoped to, by the name these routes use: its address, no scheme. */
+	let chosen = $state('');
+	/** The light's moment table as the route last answered it. */
+	let board = $state<MomentsBody | null>(null);
+	/** The state table's own names, so a Colour can only name a colour the module draws. */
+	let states = $state<StateRow[]>([]);
+	/** One shape per light, learned from the frame the module has drawn: only a frame knows it. */
+	let shapes = $state<Record<string, 'panel' | 'strip'>>({});
+	/** Each row's draft, keyed `moment|printer`, which is the same key the route writes by. */
+	let drafts = $state<Record<string, Draft>>({});
+	/** One refusal per row, so a bad `which` is answered beside the field that caused it. */
+	let faults = $state<Record<string, string>>({});
+	let loading = $state(true);
+	let reading = $state(false);
+	let busy = $state(false);
+	let failure = $state('');
+	let notice = $state('');
+
+	/** The key of one row: the (light, printer) moment this page edits. */
+	const rowKey = (moment: string, printer: string): string => `${moment}|${printer}`;
+
+	/** One entry as a draft to edit. */
+	const draftOf = (entry: MomentEntry): Draft => ({
+		enabled: entry.enabled,
+		shows: entry.shows,
+		which: entry.which,
+		for: entry.for,
+	});
+
+	/** One row's draft, or the entry's own values before anything was typed. */
+	const draftAt = (moment: string, entry: MomentEntry): Draft => drafts[rowKey(moment, entry.printer)] ?? draftOf(entry);
+
+	/** Whether a draft says enough for the route to accept it, by its own `shows`. */
+	const complete = (draft: Draft): boolean => {
+		if (draft.shows === 'Nothing') return draft.which.trim() === '';
+		if (draft.shows === 'Colour') return states.some((one) => one.state === draft.which);
+
+		return draft.which.trim() !== '';
+	};
+
+	/** Whether a row has been edited away from what the store holds. */
+	const dirty = (moment: string, entry: MomentEntry): boolean => {
+		const draft = drafts[rowKey(moment, entry.printer)];
+		if (draft === undefined) return false;
+
+		return (
+			draft.enabled !== entry.enabled ||
+			draft.shows !== entry.shows ||
+			draft.which.trim() !== entry.which ||
+			draft.for.trim() !== entry.for
+		);
+	};
+
+	/** This light's shape, once a frame has told us, and empty before that. */
+	const shapeOf = (light: string): 'panel' | 'strip' | '' => shapes[light] ?? '';
+
+	/** One segment in the light's own words: its name, its number and the run it covers. */
+	const segmentOf = (segment: number): string => {
+		const found = lights.list.find((one) => nameOf(one) === chosen)?.segments.find((one) => one.id === segment);
+
+		return segmentText(t, segment, found?.name, found);
+	};
+
+	/** The shows this light is offered. §2.3: a word is panel only, so a strip is not offered one. */
+	const offers = (entry: MomentEntry): Shows[] => {
+		const all: Shows[] =
+			shapeOf(chosen) === 'strip' ? ['Preset', 'Colour', 'Nothing'] : ['Preset', 'Word', 'Colour', 'Nothing'];
+
+		// A stored Word on a strip is shown and not hidden: the route accepts it and the light
+		// draws its colour instead, and a select with nothing selected would be a row a person
+		// cannot read.
+		if (!all.includes(entry.shows)) all.splice(1, 0, entry.shows);
+
+		return all;
+	};
+
+	/**
+	 * What one `shows` is called. Written out as four literals rather than built from the value,
+	 * so that the catalogue check can see every key this screen names.
+	 */
+	const showsLabel = (shows: Shows): string => {
+		if (shows === 'Preset') return t('events.shows_preset');
+		if (shows === 'Word') return t('events.shows_word');
+		if (shows === 'Colour') return t('events.shows_colour');
+
+		return t('events.shows_nothing');
+	};
+
+	/**
+	 * Whether a word would reach the panel at all: the font's own glyphs, and the scale of five
+	 * the module draws at. The route accepts the word either way — the font is not its business —
+	 * so this is a warning and not a refusal, and it says what the light will do instead.
+	 */
+	const wordTrouble = (word: string): string => {
+		if (word.trim() === '') return '';
+
+		const missing = missingGlyphs(word);
+		if (missing.length > 0) return t('events.word_undrawable', { chars: missing.join(' ') });
+		if (!fitsPanel(word)) return t('events.word_too_wide', { word: word.trim().toUpperCase() });
+
+		return '';
+	};
+
+	/** The board with one entry replaced, so a write's answer lands without a second read. */
+	const withEntry = (held: MomentsBody | null, moment: string, entry: MomentEntry): MomentsBody | null => {
+		if (held === null) return null;
+
+		return {
+			...held,
+			moments: held.moments.map((one) =>
+				one.moment === moment
+					? { ...one, entries: one.entries.map((had) => (had.printer === entry.printer ? entry : had)) }
+					: one,
+			),
+		};
+	};
+
+	/** Reads one light's table and seeds a draft per row. */
+	const openLight = async (light: string): Promise<void> => {
+		chosen = light;
+		board = null;
+		drafts = {};
+		faults = {};
+		notice = '';
+		reading = true;
+
+		try {
+			const answer = await api.listMoments(light);
+			board = answer;
+			drafts = Object.fromEntries(
+				answer.moments.flatMap((one) =>
+					one.entries.map((entry) => [rowKey(one.moment, entry.printer), draftOf(entry)]),
+				),
+			);
+			failure = '';
+		} catch (problem) {
+			failure = `${t('events.load_failed')}: ${describe(problem)}`;
+		} finally {
+			reading = false;
+		}
+	};
+
+	const load = async (): Promise<void> => {
+		loading = true;
+		failure = '';
+
+		try {
+			await loadLights();
+
+			// Two facts this page needs that the moment table does not carry: the state table's
+			// names (a Colour names one of them) and each light's shape — only a frame knows
+			// whether a light is a panel, and a strip is not offered a word. Both are reads, and
+			// both are allowed to fail without failing the page.
+			const [table, pictures] = await Promise.all([
+				api.listStates().catch(() => ({ states: [] as StateRow[], count: 0, conditions: 0, persisted: false })),
+				api.listFrames().catch(() => ({ frames: [] as Frame[], count: 0, note: '' })),
+			]);
+
+			states = table.states;
+			shapes = Object.fromEntries(
+				pictures.frames.map((frame) => [
+					frame.light.name !== '' ? frame.light.name : lightName(frame.light.address),
+					frame.kind,
+				]),
+			);
+
+			const first = lights.list[0];
+			if (first !== undefined) await openLight(nameOf(first));
+		} catch (problem) {
+			failure = `${t('events.load_failed')}: ${describe(problem)}`;
+		} finally {
+			loading = false;
+		}
+	};
+
+	/** Writes one row's draft. Nothing is sent to the light; this is the module's own store. */
+	const commit = async (moment: string, entry: MomentEntry): Promise<void> => {
+		const key = rowKey(moment, entry.printer);
+		const draft = drafts[key];
+		if (draft === undefined || !complete(draft)) return;
+
+		const body: MomentRequest = {
+			// Named on every write, even on a light carrying one printer, so a row can never land
+			// on a printer the operator did not point at.
+			printer: entry.printer,
+			enabled: draft.enabled,
+			shows: draft.shows,
+			which: draft.which.trim(),
+			for: draft.for.trim(),
+		};
+
+		busy = true;
+		delete faults[key];
+		notice = '';
+
+		try {
+			const answer = await api.changeMoment(chosen, moment, body);
+			board = withEntry(board, moment, answer.moment);
+			drafts[key] = draftOf(answer.moment);
+		} catch (problem) {
+			// The draft stays as it was typed, with the route's own sentence beside it, so the
+			// field is fixed rather than retyped.
+			faults[key] = describe(problem);
+		} finally {
+			busy = false;
+		}
+	};
+
+	/** Puts one row back to the default a delete restores. */
+	const reset = async (moment: string, entry: MomentEntry): Promise<void> => {
+		const key = rowKey(moment, entry.printer);
+
+		busy = true;
+		delete faults[key];
+		notice = '';
+
+		try {
+			const answer = await api.resetMoment(chosen, moment, entry.printer);
+			board = withEntry(board, moment, answer.moment);
+			drafts[key] = draftOf(answer.moment);
+			notice = answer.removed ? t('events.reset_done') : t('events.was_default');
+		} catch (problem) {
+			faults[key] = describe(problem);
+		} finally {
+			busy = false;
+		}
+	};
+
+	/** Throws a row's draft away and starts again from what the store holds. */
+	const discard = (moment: string, entry: MomentEntry): void => {
+		drafts[rowKey(moment, entry.printer)] = draftOf(entry);
+		delete faults[rowKey(moment, entry.printer)];
+	};
+
+	/** `shows` changed, and `which` changes with it: it means nothing on its own. */
+	const chooseShows = (moment: string, entry: MomentEntry, shows: Shows): void => {
+		const draft = drafts[rowKey(moment, entry.printer)];
+		if (draft === undefined) return;
+
+		const named = states.some((one) => one.state === draft.which);
+
+		draft.shows = shows;
+
+		// Nothing names nothing; a Colour is one of the twelve by name, so it starts on one that
+		// exists; and a Word or a Preset is whatever the operator writes, so a leftover state name
+		// is not carried into it as though it were one.
+		if (shows === 'Nothing') draft.which = '';
+		else if (shows === 'Colour') draft.which = named ? draft.which : (states[0]?.state ?? '');
+		else if (named) draft.which = '';
+
+		void commit(moment, entry);
+	};
+
+	onMount(() => {
+		void load();
+	});
+</script>
+
+<section class="flex flex-col gap-4">
+	<header class="flex flex-wrap items-end gap-3">
+		<div class="flex flex-col gap-1">
+			<h1 class="text-lg font-semibold">{t('events.title')}</h1>
+			<p class="text-sm opacity-70">{t('events.intro')}</p>
+		</div>
+
+		<label class="ml-auto flex flex-col gap-1 text-sm">
+			<span class="text-xs opacity-70">{t('events.light')}</span>
+			<select
+				class="rounded border px-2 py-1"
+				value={chosen}
+				disabled={loading || lights.list.length === 0}
+				onchange={(event) => void openLight((event.currentTarget as HTMLSelectElement).value)}
+			>
+				{#each lights.list as one (addressOf(one))}
+					<option value={nameOf(one)}>{one.controller?.name ?? addressOf(one)}</option>
+				{/each}
+			</select>
+		</label>
+	</header>
+
+	{#if failure !== ''}
+		<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
+	{/if}
+	{#if notice !== ''}
+		<div class="rounded border px-3 py-2 text-sm" role="status">{notice}</div>
+	{/if}
+
+	{#if loading}
+		<p class="text-sm opacity-70">{t('events.loading')}</p>
+	{:else if lights.list.length === 0}
+		<div class="rounded border px-4 py-6">
+			<p class="text-sm font-medium">{t('events.no_lights')}</p>
+		</div>
+	{:else if board !== null}
+		<p class="rounded border px-3 py-2 text-sm">
+			{#if board.printers.length > 1}
+				<span class="font-medium">{t('events.many_printers', { count: board.printers.length })}</span>
+			{:else}
+				<span class="font-medium">{t('events.one_printer')}</span>
+			{/if}
+			{t('events.presets_are_theirs')}
+			{#if shapeOf(chosen) === 'strip'}
+				{t('events.strip_no_word')}
+			{:else if shapeOf(chosen) === ''}
+				{t('events.shape_unknown')}
+			{/if}
+		</p>
+
+		{#if !board.persisted}
+			<p class="rounded border px-3 py-2 text-sm" role="status">
+				{t('events.not_kept', { why: board.note ?? '' })}
+			</p>
+		{/if}
+
+		<!--
+			One snippet for the four settings and the actions, because the flat table and the
+			indented sub-rows carry exactly the same controls: two copies would be two answers to
+			what a row holds. The leading cell differs — a moment, or a printer and its segment —
+			and belongs to the table, not here.
+		-->
+		{#snippet controls(one: Moment, entry: MomentEntry)}
+			{@const draft = draftAt(one.moment, entry)}
+			{@const who = `${one.label} · ${entry.printer_name ?? entry.printer}`}
+
+			<td class="px-3 py-2 align-top">
+				<input
+					type="checkbox"
+					class="h-4 w-4 align-middle"
+					checked={draft.enabled}
+					disabled={busy}
+					aria-label={t('events.on_for', { moment: who })}
+					onchange={(event) => {
+						drafts[rowKey(one.moment, entry.printer)] = {
+							...draft,
+							enabled: (event.currentTarget as HTMLInputElement).checked,
+						};
+						void commit(one.moment, entry);
+					}}
+				/>
+			</td>
+
+			<td class="px-3 py-2 align-top">
+				<select
+					class="rounded border px-2 py-1 text-sm"
+					value={draft.shows}
+					disabled={busy}
+					aria-label={t('events.shows_for', { moment: who })}
+					onchange={(event) =>
+						chooseShows(one.moment, entry, (event.currentTarget as HTMLSelectElement).value as Shows)}
+				>
+					{#each offers(entry) as shows (shows)}
+						<option value={shows}>{showsLabel(shows)}</option>
+					{/each}
+				</select>
+			</td>
+
+			<td class="px-3 py-2 align-top">
+				{#if draft.shows === 'Preset'}
+					<input
+						type="text"
+						class="w-40 rounded border px-2 py-1 text-sm"
+						value={draft.which}
+						placeholder={t('events.preset_placeholder')}
+						disabled={busy}
+						aria-label={t('events.which_for', { moment: who })}
+						onchange={(event) => {
+							drafts[rowKey(one.moment, entry.printer)] = {
+								...draft,
+								which: (event.currentTarget as HTMLInputElement).value,
+							};
+							void commit(one.moment, entry);
+						}}
+					/>
+				{:else if draft.shows === 'Word'}
+					<div class="flex flex-col gap-1">
+						<input
+							type="text"
+							class="w-40 rounded border px-2 py-1 text-sm"
+							value={draft.which}
+							placeholder={t('events.word_placeholder')}
+							disabled={busy}
+							aria-label={t('events.which_for', { moment: who })}
+							onchange={(event) => {
+								drafts[rowKey(one.moment, entry.printer)] = {
+									...draft,
+									which: (event.currentTarget as HTMLInputElement).value,
+								};
+								void commit(one.moment, entry);
+							}}
+						/>
+						<span class="text-[10px] opacity-60">{t('events.word_panel_only')}</span>
+						{#if wordTrouble(draft.which) !== ''}
+							<span class="text-[10px] opacity-80" role="alert">{wordTrouble(draft.which)}</span>
+						{/if}
+					</div>
+				{:else if draft.shows === 'Colour'}
+					<select
+						class="rounded border px-2 py-1 text-sm"
+						value={draft.which}
+						disabled={busy}
+						aria-label={t('events.which_for', { moment: who })}
+						onchange={(event) => {
+							drafts[rowKey(one.moment, entry.printer)] = {
+								...draft,
+								which: (event.currentTarget as HTMLSelectElement).value,
+							};
+							void commit(one.moment, entry);
+						}}
+					>
+						{#each states as colour (colour.state)}
+							<option value={colour.state}>{colour.state}</option>
+						{/each}
+					</select>
+				{:else}
+					<span class="text-xs opacity-60">{t('events.nothing_names_nothing')}</span>
+				{/if}
+			</td>
+
+			<td class="px-3 py-2 align-top">
+				<input
+					type="text"
+					class="w-24 rounded border px-2 py-1 font-mono text-xs"
+					value={draft.for}
+					list="moment-lengths"
+					disabled={busy}
+					aria-label={t('events.for_for', { moment: who })}
+					onchange={(event) => {
+						drafts[rowKey(one.moment, entry.printer)] = {
+							...draft,
+							for: (event.currentTarget as HTMLInputElement).value,
+						};
+						void commit(one.moment, entry);
+					}}
+				/>
+			</td>
+
+			<td class="px-3 py-2 text-right align-top">
+				<div class="flex flex-wrap items-center justify-end gap-1">
+					<Badge variant={entry.origin === 'store' ? 'secondary' : 'outline'} size="sm">
+						{entry.origin === 'store' ? t('events.yours') : t('events.default')}
+					</Badge>
+					{#if dirty(one.moment, entry) && complete(draft)}
+						<Button variant="ghost" size="sm" disabled={busy} onclick={() => void commit(one.moment, entry)}>
+							{t('events.save')}
+						</Button>
+					{/if}
+					{#if dirty(one.moment, entry)}
+						<Button variant="link" size="sm" disabled={busy} onclick={() => discard(one.moment, entry)}>
+							{t('events.discard')}
+						</Button>
+					{/if}
+					{#if entry.origin === 'store'}
+						<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(one.moment, entry)}>
+							{t('events.reset')}
+						</Button>
+					{/if}
+				</div>
+			</td>
+		{/snippet}
+
+		<div class="overflow-hidden rounded border">
+			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+				<span class="text-sm font-medium">{t('events.moments')}</span>
+				<span class="ml-auto text-xs opacity-60">
+					{board.printers.length > 1 ? t('events.each_moment_then_printers') : t('events.one_row_per_moment')}
+				</span>
+			</div>
+
+			<div class="overflow-x-auto">
+				{#if board.printers.length > 1}
+					<table class="w-full min-w-[860px] text-left text-sm">
+						<thead>
+							<tr class="border-b text-xs uppercase tracking-wide opacity-60">
+								<th class="px-3 py-2 font-medium">{t('events.moment')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.printer_segment')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.on')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.shows')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.which')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.for')}</th>
+								<th class="px-3 py-2"></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each board.moments as one (one.moment)}
+								<tr class="border-b bg-black/[0.03] dark:bg-white/[0.06]">
+									<td colspan="7" class="px-3 py-2">
+										<span class="text-sm font-semibold">{one.label}</span>
+										<span class="ml-2 text-xs opacity-60">{one.meaning}</span>
+										<span class="ml-2 text-xs opacity-60">
+											· {t('events.printer_count', { count: one.printer_count })}
+										</span>
+									</td>
+								</tr>
+								{#each one.entries as entry (entry.printer)}
+									<tr class="border-b">
+										<td colspan="2" class="px-3 py-2 pl-8 align-top">
+											<span class="font-medium">{entry.printer_name ?? entry.printer}</span>
+											<span class="block font-mono text-[11px] opacity-60">
+												↳ {segmentOf(entry.segment)}
+											</span>
+										</td>
+										{@render controls(one, entry)}
+									</tr>
+									{#if (faults[rowKey(one.moment, entry.printer)] ?? '') !== ''}
+										<tr class="border-b">
+											<td colspan="7" class="px-3 py-2 pl-8 text-xs">
+												<span role="alert">{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}</span>
+											</td>
+										</tr>
+									{/if}
+								{/each}
+							{/each}
+						</tbody>
+					</table>
+				{:else}
+					<!-- One printer: exactly the flat table §2.3 asks for, with no sub-rows. -->
+					<table class="w-full min-w-[760px] text-left text-sm">
+						<thead>
+							<tr class="border-b text-xs uppercase tracking-wide opacity-60">
+								<th class="px-3 py-2 font-medium">{t('events.moment')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.on')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.shows')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.which')}</th>
+								<th class="px-3 py-2 font-medium">{t('events.for')}</th>
+								<th class="px-3 py-2"></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each board.moments as one (one.moment)}
+								{#each one.entries as entry (entry.printer)}
+									<tr class="border-b last:border-b-0">
+										<td class="px-3 py-2 align-top">
+											<span class="font-medium">{one.label}</span>
+											<span class="block text-xs opacity-60">{one.meaning}</span>
+										</td>
+										{@render controls(one, entry)}
+									</tr>
+									{#if (faults[rowKey(one.moment, entry.printer)] ?? '') !== ''}
+										<tr class="border-b last:border-b-0">
+											<td colspan="6" class="px-3 py-2 text-xs">
+												<span role="alert">{t('events.refused')} {faults[rowKey(one.moment, entry.printer)]}</span>
+											</td>
+										</tr>
+									{/if}
+								{/each}
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+			</div>
+
+			<div class="border-t bg-black/5 px-3 py-2 text-xs opacity-70 dark:bg-white/10">
+				{t('events.footnote')}
+			</div>
+		</div>
+
+		<datalist id="moment-lengths">
+			{#each LENGTH_HINTS as hint (hint)}
+				<option value={hint}></option>
+			{/each}
+		</datalist>
+
+		<div class="flex flex-col gap-1 text-xs opacity-70">
+			<p>{t('events.for_forever')}</p>
+			<p>{t('events.preset_not_checked')}</p>
+			<p>{t('events.kept_without_light')}</p>
+			{#if (board.unknown_moments ?? []).length > 0}
+				<p>{t('events.unknown_moments', { list: (board.unknown_moments ?? []).join(', ') })}</p>
+			{/if}
+		</div>
+	{:else if reading}
+		<p class="text-sm opacity-70">{t('events.reading')}</p>
+	{/if}
+</section>

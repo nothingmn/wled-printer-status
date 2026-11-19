@@ -8,11 +8,13 @@
 // no route, no URL and no navigation state to keep in step with the host.
 //
 // Only screens that exist are listed. A rail entry for a screen with nothing behind
-// it is a link that lies, so the six screens of the next waves join this list as
+// it is a link that lies, so the four screens of the next waves join this list as
 // they land, in the order §2 lists them.
 import type { Component } from 'svelte';
 
 import Bindings from './bindings.svelte';
+import Colours from './colours.svelte';
+import Events from './events.svelte';
 import Overview from './overview.svelte';
 
 /** One screen: its name on the rail, and the component that draws it. */
@@ -31,4 +33,6 @@ export interface Screen {
 export const SCREENS: Screen[] = [
 	{ id: 'right-now', key: 'screen.right_now', component: Overview },
 	{ id: 'bindings', key: 'screen.bindings', component: Bindings },
+	{ id: 'events', key: 'screen.events', component: Events },
+	{ id: 'colours', key: 'screen.colours', component: Colours },
 ];

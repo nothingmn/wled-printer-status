@@ -149,6 +149,27 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   `hw`, `ol`, `ota`, `remote` or `wifi`; the answer lists both sides with the reason for each. A restore
   that writes the configuration and then does not see the light answer is refused with the safety
   snapshot's id rather than reported as a success.
+- The Events screen is the moment table, one light at a time: the light is chosen at the top, the moment is
+  the row, and a light carrying more than one printer gains an indented sub-row per printer with that
+  printer's segment and its own `enabled`, `shows`, `which` and `for` — a light carrying one printer is
+  exactly the flat table. `shows` decides what `which` is: a preset's name as WLED spells it, typed because
+  no route lists a light's presets and stored as written; a word for a panel; one of the twelve state
+  names; or nothing. The field changes with the choice, and a `which` that does not belong to its `shows`
+  is refused with the reason beside the field rather than coerced. A change is written into the module's
+  own store and kept whether or not the light is answering, a row at its default says so and offers no
+  reset, and a stored row offers one.
+- The Colours screen shows ten rows, each drawn twice — a 256 × 64 panel and a 48-pixel strip — from the
+  module's own font at its own scale of five, with a colour, an editable word and a `holds` per row. The
+  rows are the approved screen's own: the eight states a person has something to say about, and, in the
+  two places `BUSY` and `READY` would have taken, the light unreachable and the printer lost — the two
+  conditions this module computes, and the host has no word for either. `BUSY` and `READY` are still in
+  the table the routes serve and still paintable and overridable; this page does not edit them and says
+  so. Each of the colour, the word and the hold says whether it came from you or from the table, a reset
+  appears only where something is stored, and the word's standing is shown rather than implied: `showing`
+  with the instant it stops, `expired` when the hold has run out — where the preview drops the word,
+  because that is what the light shows — or `later` when no light is showing that state. A character the
+  font cannot draw, and a word too wide for the panel at that scale, are named beside the field, because
+  the module refuses such a word and draws the state's colour instead.
 
 ### Fixed
 
