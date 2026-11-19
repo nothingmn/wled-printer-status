@@ -250,8 +250,8 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **199 tests** — 99 in
-the root package, 20 in `internal/printer`, 17 in `internal/render`, 38 in `internal/wled`, 14 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **208 tests** — 102 in
+the root package, 23 in `internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in
 `internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
 or a real controller:
 the light and the printer are both faked in the tests that need one, and the ones about a minute-long

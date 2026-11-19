@@ -484,7 +484,7 @@ ten-byte DDP header, written from `docker exec prusa_connect bash` to `/dev/udp/
 ```console
 $ curl -s http://10.0.0.136/json/info | jq -c '{live}'                      # 23:36Z
 {"live":false}
-$ docker exec prusa_connect bash -c 'printf "@      ÿ ÿ"     > /dev/udp/10.0.0.136/4048'
+$ docker exec prusa_connect bash -c 'printf "@\x00\x0b\x01\x00\x00\x00\x00\x00\x03\xc3\xbf\x00\xc3\xbf"     > /dev/udp/10.0.0.136/4048'
 $ curl -s http://10.0.0.136/json/info | jq -c '{live}'
 {"live":true}
 ```
