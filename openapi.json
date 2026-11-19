@@ -312,6 +312,452 @@
         }
       }
     },
+    "/lights/{light}/moments": {
+      "parameters": [
+        {
+          "name": "light",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, which is the name GET /controllers carries and the noun the Events screen's selector holds. http://10.0.0.253 is 10.0.0.253 here. A light is a controller, so there is no second noun with a second naming rule.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "operationId": "list-moments",
+        "summary": "Every moment one light has, and what each printer on it shows",
+        "description": "The Events screen's whole table for one light. A moment is a transition — a print finishing, a print starting, a filament change, a pause, an error, a light lost, a print cancelled, a printer going quiet — and the list of them belongs to the light, so every moment is here whether or not anybody has configured it. What a moment does belongs to the (light, printer) pair, which is also how multi-room works: the same printer on two lights carries two independent sets. One printer on the light is one entry per moment, which is the screen's flat table; several printers are the sub-rows it indents under each moment. Every entry says whether it came from the store or is the default a delete would put back, and the default is stated rather than implied: the finished moment on, showing the word this build already draws for a minute, and every other moment off and showing nothing. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light's moment table.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"type": "string", "description": "The light, by the name the path carried."},
+                    "address": {"type": "string", "description": "The controller's address as the operator wrote it."},
+                    "printers": {
+                      "type": "array",
+                      "description": "Every printer on this light, in the operator's order, in the same shape GET /bindings carries: the segment each entry's printer is on, and whether that segment is the whole light.",
+                      "items": {"$ref": "#/components/schemas/Binding"}
+                    },
+                    "moments": {
+                      "type": "array",
+                      "description": "Every moment the light has, in the order the approved Events screen draws them.",
+                      "items": {"$ref": "#/components/schemas/Moment"}
+                    },
+                    "count": {"type": "integer", "description": "How many moments a light has, which is eight."},
+                    "persisted": {"type": "boolean", "description": "True when this module has a store to keep a change in. False means it was granted no data directory, or its document has not been written yet, and note says which."},
+                    "note": {"type": "string", "description": "Why a change here could not be kept, absent when it could."},
+                    "unknown_moments": {
+                      "type": "array",
+                      "description": "Stored rows about moments this build does not have, as light/printer/moment. Absent when there are none; they are reported rather than dropped, because a row a person wrote is not this route's to delete.",
+                      "items": {"type": "string"}
+                    }
+                  },
+                  "required": ["light", "address", "printers", "moments", "count", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store cannot be read, or the document holds a row this build cannot act on (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/lights/{light}/moments/{moment}": {
+      "parameters": [
+        {
+          "name": "light",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, which is the name GET /controllers carries.",
+          "schema": {"type": "string"}
+        },
+        {
+          "name": "moment",
+          "in": "path",
+          "required": true,
+          "description": "The moment: print-finished, print-started, filament-change, paused, error-or-attention, light-lost, print-cancelled or printer-went-quiet. Any other name is refused (MOMENT_NOT_FOUND) and the refusal lists the eight.",
+          "schema": {"type": "string", "enum": ["print-finished", "print-started", "filament-change", "paused", "error-or-attention", "light-lost", "print-cancelled", "printer-went-quiet"]}
+        }
+      ],
+      "get": {
+        "operationId": "read-moment",
+        "summary": "One moment, and what each printer on the light shows for it",
+        "description": "One row of the Events screen: the moment, and one entry per printer on the light. An entry nobody has edited is the default, and its origin says so — the finished moment is on with the word this build already draws and a hold of a minute, and every other moment is off and shows nothing. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The moment, with one entry per printer on the light.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"type": "string", "description": "The light, by the name the path carried."},
+                    "moment": {"$ref": "#/components/schemas/Moment"},
+                    "persisted": {"type": "boolean", "description": "True when this module has a store to keep a change in."},
+                    "note": {"type": "string", "description": "Why a change here could not be kept, absent when it could."}
+                  },
+                  "required": ["light", "moment", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND), or the light has no moment of that name (MOMENT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "change-moment",
+        "summary": "Set what one printer on one light shows for one moment",
+        "description": "Writes one entry of the (light, printer) moment table and replaces the entry that pair had. Nothing is sent to the light: a write here is a record the screen edits, and a lamp that is unplugged is exactly when somebody is standing in front of it with a phone, so an edit is kept even when the light is not answering. For the same reason a preset name in which is stored as written and is not checked against the light — a write that failed because a lamp was off would be the worse defect. shows and which are judged together: a Colour names a state from the state table, a Word is the text to draw, a Preset names one of the light's own presets, and Nothing names nothing, and a which that does not belong to its shows is refused with the reason rather than coerced. Nothing else reads this table yet: this build fires one moment, the finished word, so the entry is the record the Events screen edits and not yet a change on the light. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/MomentRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The entry was written and is in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"type": "string", "description": "The light the entry belongs to."},
+                    "moment": {"$ref": "#/components/schemas/MomentEntry"},
+                    "applied": {"type": "boolean", "description": "True when the entry is the one in force."},
+                    "persisted": {"type": "boolean", "description": "Always true here: the entry was written into this module's own store, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
+                    "note": {"type": "string", "description": "What was written, and what it does not yet change."}
+                  },
+                  "required": ["light", "moment", "applied", "persisted"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not an entry: not JSON, a key this module does not read, no enabled, or no shows (MOMENT_BODY_INVALID). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND), or the light has no moment of that name (MOMENT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The entry breaks one of the table's own rules: a shows this build does not have, a which that does not belong to it, a length that is not a length, or a printer that is not on the light (MOMENT_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete-moment",
+        "summary": "Put one printer's entry for one moment back to its default",
+        "description": "Removes the stored entry for one (light, printer) moment, so that moment goes back to the default for that printer on that light: the finished moment on with this build's word and a minute's hold, every other moment off and showing nothing. The answer carries the entry now in force and removed: false when there was nothing stored, which is not an error — a row already at its default has nothing to reset. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "query",
+            "required": false,
+            "description": "The printer the entry belongs to, by the device id GET /printers carries. Required when the light carries more than one printer and refused with the ones it carries; absent on a light carrying one, where there is nothing to choose.",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry is gone and the moment is at its default for that printer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "light": {"type": "string", "description": "The light the entry belonged to."},
+                    "moment": {"$ref": "#/components/schemas/MomentEntry"},
+                    "removed": {"type": "boolean", "description": "True when there was a stored entry and it was taken away. False means this pairing was already at the default."},
+                    "persisted": {"type": "boolean", "description": "Always true here: the store was written."},
+                    "note": {"type": "string", "description": "What was written, and what a restart does with it."}
+                  },
+                  "required": ["light", "moment", "removed", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND), or the light has no moment of that name (MOMENT_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "The printer named is not one on that light, or none was named and the light carries several (MOMENT_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no store to write to (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/states": {
+      "get": {
+        "operationId": "list-states",
+        "summary": "Every state, with the colour, word and hold in force",
+        "description": "The Colours screen's whole table. The ten states are the words the host reports, and their default colours are the ones internal/render draws and docs/product-requirements.md Appendix A states — one statement in three places, held together by a test. Beside them are the two conditions this module computes for itself, Disconnected and Stale, because the host has no word for a printer it has lost or one that has gone quiet, and the approved screen gives each a row of its own; kind says which is which, and conditions counts them so that a caller reading twelve rows can tell why the heading says ten. Every value carries its origin: store when somebody wrote it, default when it is the table's own, which is what lets a screen offer a reset only where there is something to reset. An unedited state has no word and a hold of forever. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The whole table.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "states": {
+                      "type": "array",
+                      "description": "Every row, in Appendix A's order: the ten states the host reports, then the two conditions.",
+                      "items": {"$ref": "#/components/schemas/State"}
+                    },
+                    "count": {"type": "integer", "description": "How many rows the table holds: twelve, of which ten are states."},
+                    "conditions": {"type": "integer", "description": "How many of count are conditions rather than states the host reports."},
+                    "persisted": {"type": "boolean", "description": "True when this module has a store to keep a change in. False means it was granted no data directory or its document has not been written yet, and note says which."},
+                    "note": {"type": "string", "description": "Why a change here could not be kept, absent when it could."},
+                    "unknown_states": {
+                      "type": "array",
+                      "description": "Stored rows about states this build does not have, reported rather than dropped. Absent when there are none.",
+                      "items": {"type": "string"}
+                    }
+                  },
+                  "required": ["states", "count", "conditions", "persisted"]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store cannot be read, or the document holds a row this build cannot act on (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/states/{state}": {
+      "parameters": [
+        {
+          "name": "state",
+          "in": "path",
+          "required": true,
+          "description": "The state's name, in any case: IDLE, BUSY, READY, PRINTING, PAUSED, FINISHED, STOPPED, ATTENTION, ERROR, UNKNOWN, or one of the two conditions Disconnected and Stale. Any other name is refused (STATE_NOT_FOUND) and the refusal lists the twelve.",
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "operationId": "read-state",
+        "summary": "One state, with the value in force and where it came from",
+        "description": "One row of the Colours screen. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {"$ref": "#/components/schemas/State"},
+                    "persisted": {"type": "boolean", "description": "True when this module has a store to keep a change in."},
+                    "note": {"type": "string", "description": "Why a change here could not be kept, absent when it could."}
+                  },
+                  "required": ["state", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module has no state of that name (STATE_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module's configuration store cannot be read (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "change-state",
+        "summary": "Set the colour, the word and the hold one state is drawn with",
+        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. Nothing is sent to the light, and this build still draws each state with the colour internal/render holds, so the write is the record the Colours screen edits. The host takes operate_resource on the module's instance before this is called.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/StateRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The row was written and is in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {"$ref": "#/components/schemas/State"},
+                    "applied": {"type": "boolean", "description": "True when the row is the one in force."},
+                    "persisted": {"type": "boolean", "description": "Always true here: the row was written into this module's own store, so it survives a restart and an upgrade, and a module purge or a fresh install loses it."},
+                    "note": {"type": "string", "description": "What was written, and what it does not yet change."}
+                  },
+                  "required": ["state", "applied", "persisted"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a state's row: not JSON, a key this module does not read, or none of colour, word and holds (STATE_BODY_INVALID). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "404": {
+            "description": "This module has no state of that name (STATE_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "409": {
+            "description": "A colour channel outside 0-255, or a hold that is not one of the four (STATE_REFUSED). Nothing was changed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete-state",
+        "summary": "Put one state back to the colour, word and hold it has by default",
+        "description": "Removes the stored row for one state, so it goes back to the colour Appendix A gives it, no word, and a hold of forever. A state with no override is not an error: the answer says removed: false beside the default it was already showing, because a screen distinguishing \"already at the default\" from \"no such state\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The row is gone and the state is at its default.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {"$ref": "#/components/schemas/State"},
+                    "removed": {"type": "boolean", "description": "True when there was a stored row and it was taken away. False means the state was already at its default."},
+                    "persisted": {"type": "boolean", "description": "Always true here: the store was written."},
+                    "note": {"type": "string", "description": "What was written, and what a restart does with it."}
+                  },
+                  "required": ["state", "removed", "persisted"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module has no state of that name (STATE_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "This module has no store to write to (STORE_UNAVAILABLE).",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/printers": {
       "get": {
         "operationId": "list-printers",
@@ -695,6 +1141,94 @@
   },
   "components": {
     "schemas": {
+      "State": {
+        "type": "object",
+        "description": "One row of the state table: a state, the colour it is drawn in, the word that replaces the state's own picture while it holds, and where each of the three came from. The ten states that are kind state are the words the host reports; the two that are kind condition are Disconnected and Stale, which this module computes from the reading because the host has no word for either.",
+        "properties": {
+          "state": {"type": "string", "description": "The state's name: IDLE, BUSY, READY, PRINTING, PAUSED, FINISHED, STOPPED, ATTENTION, ERROR or UNKNOWN, or one of the conditions Disconnected and Stale."},
+          "kind": {"type": "string", "enum": ["state", "condition"], "description": "state for a word the host reports, condition for one of the two this module computes from the reading."},
+          "colour": {
+            "type": "object",
+            "description": "The colour the state is drawn in, one byte per channel.",
+            "properties": {
+              "r": {"type": "integer", "minimum": 0, "maximum": 255},
+              "g": {"type": "integer", "minimum": 0, "maximum": 255},
+              "b": {"type": "integer", "minimum": 0, "maximum": 255}
+            },
+            "required": ["r", "g", "b"]
+          },
+          "colour_origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody set this colour and it was kept, default when it is the colour Appendix A gives the state and internal/render draws."},
+          "word": {"type": "string", "description": "The text the panel draws for this state while it holds, and empty for no word, which is the default. A word beats the layout composer: a light showing PRINTING shows that word and not the bar and digits. A strip cannot carry one."},
+          "word_origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody wrote this word, default when the state carries none."},
+          "holds": {"type": "string", "enum": ["forever", "30s", "60s", "5m"], "description": "How long the word holds before the state's own picture comes back. forever is one of the four accepted values and not the absence of one; it is the default."},
+          "holds_origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody chose this hold, default when it is forever because nobody did."},
+          "overridden": {"type": "boolean", "description": "True when any of the three came from the store, which is what decides whether a screen offers a reset."},
+          "meaning": {"type": "string", "description": "What the state means, in one line, so that a screen does not have to hold its own copy of Appendix A's prose."}
+        },
+        "required": ["state", "kind", "colour", "colour_origin", "word", "word_origin", "holds", "holds_origin", "overridden", "meaning"]
+      },
+      "StateRequest": {
+        "type": "object",
+        "description": "One state's row as a caller writes it. At least one of the three is required: a body carrying none of them is refused, because clearing a row is what DELETE is for and a mistyped key must not reset one in silence.",
+        "properties": {
+          "colour": {
+            "type": "object",
+            "description": "The colour to draw the state in: three channels of 0-255, refused with the number in it when a channel is outside that.",
+            "properties": {
+              "r": {"type": "integer", "minimum": 0, "maximum": 255},
+              "g": {"type": "integer", "minimum": 0, "maximum": 255},
+              "b": {"type": "integer", "minimum": 0, "maximum": 255}
+            },
+            "required": ["r", "g", "b"]
+          },
+          "word": {"type": "string", "description": "The text the panel draws for this state. Free text, trimmed of surrounding spaces, and an empty word means the state carries none. The limit is the font rather than this route: a character the panel cannot draw is a gap on the light, and the screen warns about it rather than the write refusing it."},
+          "holds": {"type": "string", "enum": ["forever", "30s", "60s", "5m"], "description": "How long the word holds: forever by default, with 30 s, 60 s and 5 min available. Anything else is refused by name rather than rounded."}
+        }
+      },
+      "Moment": {
+        "type": "object",
+        "description": "One moment a light has, with one entry per printer on that light. The moment belongs to the light and the entry to the (light, printer) pair, which is what lets the same printer show one thing in the office and another in the workshop.",
+        "properties": {
+          "moment": {"type": "string", "description": "The moment's name: print-finished, print-started, filament-change, paused, error-or-attention, light-lost, print-cancelled or printer-went-quiet."},
+          "label": {"type": "string", "description": "The words the approved Events screen prints for it, such as Print finished."},
+          "meaning": {"type": "string", "description": "What the moment is, in one line."},
+          "entries": {
+            "type": "array",
+            "description": "One entry per printer on the light, in the operator's order. One printer is one entry, which is the flat table the screen draws.",
+            "items": {"$ref": "#/components/schemas/MomentEntry"}
+          },
+          "printer_count": {"type": "integer", "description": "How many printers this moment carries an entry for on this light, which is how the screen knows to indent sub-rows."}
+        },
+        "required": ["moment", "label", "meaning", "entries", "printer_count"]
+      },
+      "MomentEntry": {
+        "type": "object",
+        "description": "What one moment does on one printer on one light: whether it is on, what it shows, which of those it shows, for how long — and where that answer came from.",
+        "properties": {
+          "printer": {"type": "string", "description": "The host's device id for the printer this entry is about."},
+          "printer_name": {"type": "string", "description": "The name an operator gave the machine, absent when the host could not be read."},
+          "segment": {"type": "integer", "description": "The segment that printer is on, on this light, and -1 for the whole light."},
+          "whole": {"type": "boolean", "description": "True when that printer drives the whole light."},
+          "enabled": {"type": "boolean", "description": "Whether the moment is shown at all."},
+          "shows": {"type": "string", "enum": ["Preset", "Word", "Colour", "Nothing"], "description": "What the moment shows: one of the light's own presets, a word on a panel, one of the state table's colours, or nothing."},
+          "which": {"type": "string", "description": "Which one of those: a preset's name as WLED spells it, the text to draw for a Word, a state's name for a Colour, and empty for Nothing."},
+          "for": {"type": "string", "description": "How long the moment is shown: forever, meaning until the light's own state changes, or a duration such as 60s or 5m."},
+          "origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody edited this entry, default when it is what a delete would put back: for the finished moment on, showing this build's word for a minute; for every other moment, off and showing nothing."}
+        },
+        "required": ["printer", "segment", "whole", "enabled", "shows", "which", "for", "origin"]
+      },
+      "MomentRequest": {
+        "type": "object",
+        "description": "One moment's entry for one printer, as a caller writes it. enabled and shows are required, because a body that forgets them would switch a moment off in silence.",
+        "properties": {
+          "printer": {"type": "string", "description": "The printer this entry is for, by the device id GET /printers carries. Required when the light carries more than one printer and refused with the ones it carries; absent on a light carrying one, where there is nothing to choose."},
+          "enabled": {"type": "boolean", "description": "Whether the moment is shown. Required: an absent value is refused rather than read as off."},
+          "shows": {"type": "string", "enum": ["Preset", "Word", "Colour", "Nothing"], "description": "What the moment shows. Required. A Word is panel only: a strip shows the moment's colour instead."},
+          "which": {"type": "string", "description": "A preset's name as WLED spells it, stored as written and never checked against the light, because a write must not fail because a lamp is unplugged; the text to draw for a Word; a state's name for a Colour; and empty for Nothing, where a which is refused rather than dropped."},
+          "for": {"type": "string", "description": "How long the moment is shown: forever, meaning until the light's own state changes, or a positive duration such as 60s or 5m. Absent is forever."}
+        },
+        "required": ["enabled", "shows"]
+      },
       "Binding": {
         "type": "object",
         "description": "One printer, shown on one segment of one controller.",

@@ -425,8 +425,9 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
 for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
 follow that printer's event stream as itself, with nobody behind the call, and for one writable
-directory — its own configuration store, one versioned JSON document holding the bindings, which is what
-lets a change made through its routes survive a restart and an upgrade. It declares **two** outbound
+directory — its own configuration store, one versioned JSON document holding the bindings and the two
+tables the Colours and Events screens edit, which is what lets a change made through its routes survive a
+restart and an upgrade. It declares **two** outbound
 connections, both to the controller named in `controller_address` and both from this process: port 80,
 where the status colour and the progress are written as JSON state, and **UDP port 4048**, where the pixels
 of the finished word go over DDP once a second for the minute the word holds.

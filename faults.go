@@ -169,6 +169,80 @@ var (
 		fault.ShowDetail,
 		"controller",
 	))
+
+	// StoreUnavailable is a table read or write where this module has no configuration store to
+	// read or write: the operator granted it no data directory, the document has not been written
+	// yet, or the document is one this build cannot act on. It is a 503 and not a 404 because the
+	// route exists and the table exists — what is missing is the place an edit would be kept.
+	StoreUnavailable = fault.Register(faultDomain, "STORE_UNAVAILABLE", http.StatusServiceUnavailable, fault.Document(
+		"This module has no configuration store it can read or write",
+		"This module keeps the tables a screen edits in one JSON document in the data directory the operator approves when the module is installed, and it writes that document itself at start-up. If the module was granted no directory, nothing on this surface can be saved. Send the same request again after the module has been configured, or reinstall it granting a data directory.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+	))
+
+	// StateNotFound is a read, a change or a delete of a state the table does not hold. The table
+	// is not this module's invention — it is the ten states the host reports plus the two
+	// conditions the host has no word for — so the refusal lists the names it does hold.
+	StateNotFound = fault.Register(faultDomain, "STATE_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module has no state of that name",
+		"Read GET /states for the table. A state is named by the word the host reports — PRINTING, PAUSED, ERROR and the rest — or by one of the two conditions this module computes for itself, Disconnected and Stale.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"state",
+	))
+
+	// StateRefused is a well-formed body that breaks one of the table's own rules: a colour
+	// channel outside 0-255, or a hold that is not one of the four the screen offers. It is a 409
+	// and not a 400 because the body parsed: what is wrong is the value, and the sentence names it.
+	StateRefused = fault.Register(faultDomain, "STATE_REFUSED", http.StatusConflict, fault.Document(
+		"The value is not one this module can act on",
+		"A colour is three channels of 0-255. A word's hold is one of forever, 30s, 60s and 5m, and it is refused rather than rounded because the length is the whole content of the field. The detail names the value that was sent and the values that are accepted. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"state", "holds",
+	))
+
+	// StateBodyInvalid is a body that is not a state's row at all: not JSON, a key this module does
+	// not read, or none of colour, word and holds. A body carrying none of the three is refused
+	// rather than read as "clear the row", because clearing is what DELETE is for.
+	StateBodyInvalid = fault.Register(faultDomain, "STATE_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a state's row",
+		"Write a JSON object carrying at least one of colour (three channels of 0-255), word (the text the panel draws) and holds (forever, 30s, 60s or 5m). Every other key is refused rather than ignored, so a misspelt one is reported instead of silently doing nothing. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
+
+	// MomentNotFound is a read, a change or a delete of a moment every light has and this build
+	// does not. The eight are the approved Events screen's own list.
+	MomentNotFound = fault.Register(faultDomain, "MOMENT_NOT_FOUND", http.StatusNotFound, fault.Document(
+		"This module has no moment of that name",
+		"Read GET /lights/{light}/moments for every moment a light has. A moment is a transition — print-finished, print-started, filament-change, paused, error-or-attention, light-lost, print-cancelled, printer-went-quiet — and the list belongs to the light.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"moment",
+	))
+
+	// MomentRefused is a well-formed entry that breaks one of the moment table's own rules: a
+	// shows this module does not have, a which that does not belong to its shows, a length that is
+	// not a length, or a printer that is not on the light it was asked about. It is a 409 and not a
+	// 400 because the body parsed; what is wrong is the entry, and the sentence says what.
+	MomentRefused = fault.Register(faultDomain, "MOMENT_REFUSED", http.StatusConflict, fault.Document(
+		"The entry is not one this module can act on",
+		"shows is Preset, Word, Colour or Nothing, and which has to belong to it: a Colour names a state from the state table, a Preset names one of the light's own presets as written, a Word is the text to draw, and Nothing names nothing. A length is forever, or a duration such as 60s. The printer has to be one on that light. Nothing was changed — and nothing was sent to the light either.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"moment", "printer",
+	))
+
+	// MomentBodyInvalid is a body that is not a moment's entry at all: not JSON, a key this module
+	// does not read, or a body that does not say whether the moment is on or what it shows.
+	MomentBodyInvalid = fault.Register(faultDomain, "MOMENT_BODY_INVALID", http.StatusBadRequest, fault.Document(
+		"The body is not a moment's entry",
+		"Write a JSON object carrying enabled (true or false), shows (Preset, Word, Colour or Nothing), which (a preset name, a word, or a state's name), for (forever or a duration such as 60s), and printer when the light carries more than one printer. Every other key is refused rather than ignored. Nothing was changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

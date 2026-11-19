@@ -346,6 +346,24 @@ func ruleFor(state string, known bool) rule {
 	return rule{colour: ColourUnknown}
 }
 
+// ColourOf is the colour this build draws one state word in, and false for a word it has no
+// reading of.
+//
+// It exists for the editor's routes rather than for Decide: the state table a person edits
+// (statetable.go) reports each state's effective colour beside whether that colour is the store's
+// or this package's, and a second table of colours written out in the route would be a second
+// statement of Appendix A that could disagree with this one. The table and this code are the same
+// statement — docs/product-requirements.md Appendix A says so — so the route asks this package.
+//
+// The two conditions the host has no word for are not here: they are ColourDisconnected and
+// ColourStale, and they are computed from a reading rather than from a state word, so a caller
+// that wants them names them.
+func ColourOf(state string) (wled.RGB, bool) {
+	held := ruleFor(state, true)
+
+	return held.colour, held.named
+}
+
 // staleAt reports whether the newest fact in the snapshot is older than
 // printer.StaleAfter at the moment asked about, or whether it never had one.
 //

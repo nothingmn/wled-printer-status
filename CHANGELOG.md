@@ -24,6 +24,26 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - A configuration document written by an older release is upgraded to the current schema version and
   written back stamped, rather than being refused or read as though it were current. One written by a
   newer release is refused, naming both versions.
+- `GET /states` answers the state table the Colours screen draws: one row per state with the colour, the
+  word and the `holds` value in force, and — beside each of the three — whether it is yours or the
+  built-in default, so a screen can offer a reset only where there is something to reset. The ten states
+  the printer reports are there, and so are the two conditions it has no word for, `Disconnected` and
+  `Stale`, marked as conditions and counted separately.
+- `PUT /states/{state}` sets a state's colour, word and hold, and `DELETE /states/{state}` puts it back to
+  the colour, no word and `holds: forever`. A `holds` that is not `forever`, `30s`, `60s` or `5m` is
+  refused by name rather than rounded, and a colour channel outside 0-255 is refused with the number.
+- `GET /lights/{light}/moments` answers one light's whole moment table: every moment it has, with one
+  entry per printer on it — the same rows the screen draws as sub-rows when a light carries several
+  printers, and the flat table when it carries one. `PUT /lights/{light}/moments/{moment}` sets one
+  printer's entry and `DELETE …?printer=` puts it back to the default. A `which` that does not belong to
+  its `shows` is refused with the reason. Only the finished moment is on by default, showing the word
+  this build already draws for a minute.
+- A moment can be edited while the light is not answering: a preset name is taken as written and the light
+  is never asked. Editing a moment, or a state, does not repaint the light yet — what a moment shows and
+  what colour a state is drawn in are still the built-in ones until a later release reads the table.
+- The configuration document is at schema version 2. A version 1 document is stepped up in place, bindings
+  and all, with both new tables empty; one written before the version was stamped is stepped through both
+  shapes rather than skipping to the current one.
 
 ## 0.1.0 - 2026-11-18
 

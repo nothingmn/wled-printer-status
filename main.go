@@ -16,6 +16,9 @@
 //	GET /bindings/{id}         one of them, and POST, PUT and DELETE on the same names to change it
 //	GET /printers              the host's printers, which is where a device id comes from
 //	GET /controllers           the same set grouped by controller, read-only. See bindingsapi.go
+//	GET /states                the state table: a colour, a word and a hold per state, and where each came from
+//	GET /lights/{light}/moments the moment table: every moment that light has, per printer on it
+//	                           PUT and DELETE on both to edit one row. See tablesapi.go
 //
 // The paths are relative to the mount, so a caller reaches them under
 // /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/. The host decides who may call
@@ -364,6 +367,12 @@ var (
 		newLight: func(address string) (strip, error) { return wled.New(address) },
 		logf:     logf,
 	}
+
+	// tables is this module's own configuration as the state and moment tables reach it: the
+	// directory the host granted on configure, and the lock a write takes. It holds no copy of the
+	// document — the file is the record — so there is nothing here to keep in step. See
+	// tablesapi.go.
+	tables = &configTables{}
 )
 
 // settings is what this module is running on: what the host sent, or the
@@ -545,6 +554,12 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 	}
 
 	live.setLayout(shape)
+
+	// The directory the host granted, recorded for the two tables the screens edit. A module
+	// granted none records an empty one, and the tables' routes then read the defaults and refuse
+	// to write — which is the same behaviour this module had before the store existed, said out
+	// loud rather than discovered.
+	tables.grant(grants.Data)
 
 	listing, cancel := context.WithTimeout(ctx, resolveTimeout)
 	wanted, origin, err := configurationFor(listing, fleet, sent, grants.Data, logf)
@@ -754,19 +769,31 @@ func resolvePrinter(ctx context.Context, fleet devices, setting string) (string,
 func routes() http.Handler {
 	mux := http.NewServeMux()
 
-	// The editor's routes. They are mounted with the fleet as a function rather than a value:
+	// The host's printer list, as the routes read it. It is a function rather than a value because
 	// this process has no connection to the host when this handler is built in a test, and the
 	// honest answer then is that the printer list cannot be read.
-	bindingAPI{
-		live: live,
-		fleet: func() devices {
-			if fleet == nil {
-				return nil
-			}
+	held := func() devices {
+		if fleet == nil {
+			return nil
+		}
 
-			return fleet
-		},
+		return fleet
+	}
+
+	// The editor's routes: the bindings this module drives, the printers the host holds, and the
+	// controllers the set runs on.
+	bindingAPI{
+		live:   live,
+		fleet:  held,
 		parent: func() context.Context { return sessionCtx },
+	}.mount(mux)
+
+	// The two tables the screens edit, on the same terms: the same watch, the same host list, and
+	// this module's own store beside them. See tablesapi.go.
+	tableAPI{
+		live:   live,
+		fleet:  held,
+		tables: tables,
 	}.mount(mux)
 
 	mux.HandleFunc("GET /wled-printer-status", func(w http.ResponseWriter, r *http.Request) {

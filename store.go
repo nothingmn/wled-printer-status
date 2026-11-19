@@ -51,7 +51,12 @@ const (
 	// storeVersion is the schema version this build writes. It goes up by one when the shape of
 	// the document changes, and every version below it needs an entry in storeUpgrades so that a
 	// document from an older release is stepped up rather than refused.
-	storeVersion = 1
+	//
+	// Version 1 is the document with the schema version stamped and the bindings list, which is
+	// what the release that introduced this store wrote. Version 2 adds the state table and the
+	// moment table beside the bindings — the two tables the Colours and Events screens edit — and
+	// a version-1 document is stepped up to it by an entry in storeUpgrades that adds both, empty.
+	storeVersion = 2
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -76,6 +81,29 @@ type storedConfig struct {
 	// It is raw JSON for the reason the setting is: a strict decode of a slice cannot say which
 	// line a misspelt key was in, and parseBindingEntries decodes one line at a time so that a
 	// refusal reads `bindings[1]: ...` rather than making a person count lines in a file.
+	Bindings []json.RawMessage `json:"bindings"`
+
+	// States is the state table the Colours screen edits: one row per state somebody has
+	// changed, carrying only the fields that were changed. A state with no row here is drawn
+	// exactly as internal/render draws it — docs/product-requirements.md Appendix A — and that
+	// silence is the whole point: an override is written when a person changes something, and a
+	// default is never copied into the document to be kept in step with the code by hand.
+	States []storedState `json:"states"`
+
+	// Moments is the moment table the Events screen edits, keyed on the (light, printer) pair:
+	// one row per moment somebody has changed on one printer on one light. A moment with no row
+	// here behaves as momentDefault says, for the reason the state table has none: absent is a
+	// default and not a zero.
+	//
+	// The key is the pair because that is what multi-room means — the same printer on two lights
+	// carries two independent sets — and because the moment list itself belongs to the light.
+	Moments []storedMoment `json:"moments"`
+}
+
+// storedConfigV1 is the document at schema version 1: the version and the bindings list, and
+// nothing else. Only the upgrade from it reads it; nothing writes it.
+type storedConfigV1 struct {
+	Version  int               `json:"version"`
 	Bindings []json.RawMessage `json:"bindings"`
 }
 
@@ -131,7 +159,37 @@ var storeUpgrades = []storeUpgrade{
 				return nil, err
 			}
 
-			return json.Marshal(storedConfig{Version: storeVersionUnstamped + 1, Bindings: unstamped.Bindings})
+			// Version 1 and not the current version: a step answers the document exactly one
+			// version later, and the shape at 1 is the one above. Stepping straight to 2 here
+			// would leave the upgrade from 1 untrodden and untested, which is the one thing a
+			// versioned document exists to prevent.
+			return json.Marshal(storedConfigV1{
+				Version:  storeVersionUnstamped + 1,
+				Bindings: unstamped.Bindings,
+			})
+		},
+	},
+	{
+		from: 1,
+		why:  "the document gained the state table and the moment table, both empty",
+		step: func(raw []byte) ([]byte, error) {
+			var first storedConfigV1
+			if err := decodeStrictly(raw, &first); err != nil {
+				return nil, err
+			}
+
+			// Both tables arrive empty, and empty is the whole document that version 1 already
+			// described: every state keeps the colour internal/render holds for it and every
+			// moment behaves as its default says, so the light this document was written for
+			// goes on showing exactly what it showed before the upgrade. Nothing is invented
+			// for a table nobody has edited yet — a default copied in here would be a second
+			// copy of the code's own table, drifting from it one release later.
+			return json.Marshal(storedConfig{
+				Version:  2,
+				Bindings: first.Bindings,
+				States:   []storedState{},
+				Moments:  []storedMoment{},
+			})
 		},
 	},
 }
@@ -302,6 +360,18 @@ func decodeStrictly(raw []byte, into any) error {
 // in it is worth handing to them.
 func saveStore(dir string, config storedConfig) (string, error) {
 	path := storePath(dir)
+
+	// Both tables are written as empty arrays when they hold nothing, never as null: a null
+	// reads as "this build does not know the field", and a person opening config.json to see
+	// what the state table holds deserves a list rather than an absence. It is also what makes
+	// an upgraded document and a fresh one the same document on disk.
+	if config.States == nil {
+		config.States = []storedState{}
+	}
+
+	if config.Moments == nil {
+		config.Moments = []storedMoment{}
+	}
 
 	document, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

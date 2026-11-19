@@ -226,16 +226,20 @@ func (api bindingAPI) timeout() time.Duration {
 // printerNames is every printer the host holds, by device id, and why the read failed when it
 // did. It is one host read with the same bound as the one configure makes: a list that never
 // came back must not leave a route hanging.
-func (api bindingAPI) printerNames(ctx context.Context) (map[string]string, string) {
-	held := api.fleet()
-	if held == nil {
+//
+// It is a function rather than a method because two surfaces need it — the binding editor, to put
+// a name beside a device id, and the moment table, to label the sub-rows an Events screen draws —
+// and a second copy of this read would be a second place for the bound and the failure sentence to
+// drift.
+func printerNames(ctx context.Context, fleet devices, bound time.Duration) (map[string]string, string) {
+	if fleet == nil {
 		return nil, "this process has no connection to the host yet"
 	}
 
-	reading, cancel := context.WithTimeout(ctx, api.timeout())
+	reading, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
-	page, err := held.List(reading, deviceapi.ListParams{Limit: deviceapi.MaxPageLimit})
+	page, err := fleet.List(reading, deviceapi.ListParams{Limit: deviceapi.MaxPageLimit})
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -247,6 +251,12 @@ func (api bindingAPI) printerNames(ctx context.Context) (map[string]string, stri
 	}
 
 	return names, ""
+}
+
+// printerNames is the same read on the binding editor's own route, with the bound this value
+// carries.
+func (api bindingAPI) printerNames(ctx context.Context) (map[string]string, string) {
+	return printerNames(ctx, api.fleet(), api.timeout())
 }
 
 // listBindings is GET /bindings: the set this module is driving.

@@ -220,8 +220,8 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 	}{
 		{
 			name:    "a document from a newer release",
-			fixture: `{"version": 2, "bindings": [], "moments": []}`,
-			want:    []string{"schema version 2", "version 1"},
+			fixture: `{"version": 3, "bindings": [], "states": [], "moments": []}`,
+			want:    []string{"schema version 3", "version 2"},
 		},
 		{
 			name:    "a negative version, which no release wrote",
@@ -230,8 +230,16 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 		},
 		{
 			name:    "a key this build does not know",
-			fixture: `{"version": 1, "bindings": [], "moments": []}`,
+			fixture: `{"version": 2, "bindings": [], "moments": [], "layouts": []}`,
 			want:    []string{"unknown field"},
+		},
+		{
+			// The two tables do not exist at version 1, and the upgrade from it reads the version-1
+			// shape. A document that claims version 1 and carries them is refused rather than
+			// stepped up, which is what makes the steps separate shapes rather than one lenient read.
+			name:    "a version 1 document carrying a table version 1 does not have",
+			fixture: `{"version": 1, "bindings": [], "moments": []}`,
+			want:    []string{"schema version 1", "unknown field"},
 		},
 		{
 			name:    "a document that is not JSON",
@@ -453,5 +461,198 @@ func TestAStoreNamingAPrinterTheHostDoesNotHoldIsRefusedNamingTheFile(t *testing
 
 	if !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("the refusal %q does not name the printer that missed", err)
+	}
+}
+
+// TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings is the upgrade this wave exists to
+// prove: the document the first release wrote is read, stepped up once, and written back stamped —
+// with the bindings it held untouched and both new tables arriving empty rather than filled with
+// a copy of the code's own defaults.
+func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
+	dir := writeStoreFile(t, `{"version": 1, "bindings": [{"printer": "printer-a", "controller": "http://10.0.0.136", "segment": 3}]}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 1 document was refused: %v", err)
+	}
+
+	if found.Version != 1 {
+		t.Fatalf("the read says the document carried version %d, want 1", found.Version)
+	}
+
+	if !found.Upgraded {
+		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
+	}
+
+	if found.Config.Version != storeVersion || storeVersion != 2 {
+		t.Fatalf("the upgraded document is at version %d, want 2", found.Config.Version)
+	}
+
+	// The bindings are the previous release's own record and must cross the upgrade unchanged: a
+	// step that dropped them would leave a light that stopped showing a printer at the next start,
+	// for a reason nothing on the instance could explain.
+	if len(found.Config.Bindings) != 1 {
+		t.Fatalf("the upgraded document holds %d bindings, want the one it had", len(found.Config.Bindings))
+	}
+
+	var kept storedEntry
+	if err := json.Unmarshal(found.Config.Bindings[0], &kept); err != nil {
+		t.Fatalf("read the binding the upgrade kept: %v", err)
+	}
+
+	if kept.Printer != "printer-a" || kept.Segment == nil || *kept.Segment != 3 {
+		t.Fatalf("the binding the upgrade kept reads %+v, want printer-a on segment 3", kept)
+	}
+
+	// Empty and not defaulted: a row copied in here would be a second statement of Appendix A,
+	// drifting from internal/render one release later.
+	if found.Config.States == nil || len(found.Config.States) != 0 {
+		t.Fatalf("the upgraded document holds %d state rows, want none copied in", len(found.Config.States))
+	}
+
+	if found.Config.Moments == nil || len(found.Config.Moments) != 0 {
+		t.Fatalf("the upgraded document holds %d moment rows, want none copied in", len(found.Config.Moments))
+	}
+
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the upgraded store back: %v", err)
+	}
+
+	onDisk := storedRaw(t, dir)
+	if version, _ := onDisk["version"].(float64); int(version) != 2 {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want 2", onDisk["version"])
+	}
+
+	if lines, _ := onDisk["bindings"].([]any); len(lines) != 1 {
+		t.Fatalf("the store on disk holds %v bindings after the upgrade, want 1", onDisk["bindings"])
+	}
+
+	// Both tables are written as empty lists rather than as null, so that an upgraded document and
+	// one this build wrote from scratch are the same document on disk.
+	for _, name := range []string{"states", "moments"} {
+		held, present := onDisk[name].([]any)
+		if !present || len(held) != 0 {
+			t.Fatalf("the store on disk carries %q as %v, want an empty list", name, onDisk[name])
+		}
+	}
+
+	again, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("read the upgraded store back: %v", err)
+	}
+
+	if again.Upgraded || again.Version != storeVersion {
+		t.Fatalf("the store reads at version %d with upgraded %v after being written back, want 2 and false",
+			again.Version, again.Upgraded)
+	}
+}
+
+// TestAStoreFromBeforeTheVersionStepsThroughEveryShapeToTheCurrentOne is the other half: a
+// document written before the version was stamped does not jump to the current shape, it is
+// stepped one version at a time — which is the whole reason the version is stamped.
+func TestAStoreFromBeforeTheVersionStepsThroughEveryShapeToTheCurrentOne(t *testing.T) {
+	cases := []struct {
+		name    string
+		fixture string
+	}{
+		{
+			name:    "a document with a binding and no version",
+			fixture: `{"bindings": [{"printer": "printer-b", "controller": "http://10.0.0.253", "brightness": 128}]}`,
+		},
+		{
+			name:    "an empty object",
+			fixture: `{}`,
+		},
+	}
+
+	for _, one := range cases {
+		t.Run(one.name, func(t *testing.T) {
+			dir := writeStoreFile(t, one.fixture)
+
+			found, err := loadStore(dir)
+			if err != nil {
+				t.Fatalf("a document written before the version was stamped was refused: %v", err)
+			}
+
+			if found.Version != storeVersionUnstamped {
+				t.Fatalf("the read says the document carried version %d, want 0", found.Version)
+			}
+
+			if !found.Upgraded {
+				t.Fatal("the read does not say the document was upgraded, and it carried no version")
+			}
+
+			if found.Config.Version != storeVersion {
+				t.Fatalf("the document reached version %d, want 2", found.Config.Version)
+			}
+
+			// Both steps ran: the version was stamped, and then the two tables were added. A step
+			// that jumped from 0 straight to 2 would answer here with the bindings intact and the
+			// tables still nil.
+			if found.Config.States == nil || found.Config.Moments == nil {
+				t.Fatalf("the stepped document has states %v and moments %v, want both present and empty",
+					found.Config.States, found.Config.Moments)
+			}
+		})
+	}
+}
+
+// TestAStoreAtVersionTwoCarriesBothTablesThroughARoundTrip is the tables' half of the store's
+// contract: what this build writes, this build reads, with only the fields a person changed — and
+// with the moment rows keyed by the pair, so that one printer on one light is not the same row as
+// the same printer on another.
+func TestAStoreAtVersionTwoCarriesBothTablesThroughARoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	word := "PAUSE"
+	holds := hold60s
+
+	written := storedConfig{
+		Version: storeVersion,
+		States: []storedState{
+			{State: "PAUSED", Colour: &storedColour{R: 1, G: 2, B: 3}, Word: &word, Holds: &holds},
+			{State: disconnectedState, Word: &word},
+		},
+		Moments: []storedMoment{
+			{Light: "10.0.0.253", Printer: "printer-a", Moment: momentPrintStarted,
+				momentEntry: momentEntry{Enabled: true, Shows: showsPreset, Which: "Snow Fall", For: hold30s}},
+			{Light: "10.0.0.253", Printer: "printer-b", Moment: momentPrintStarted,
+				momentEntry: momentEntry{Enabled: false, Shows: showsNothing, Which: "", For: durationForever}},
+		},
+	}
+
+	if _, err := saveStore(dir, written); err != nil {
+		t.Fatalf("save the store: %v", err)
+	}
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("load the store: %v", err)
+	}
+
+	if len(found.Config.States) != 2 {
+		t.Fatalf("the read holds %d state rows, want 2", len(found.Config.States))
+	}
+
+	if len(found.Config.Moments) != 2 {
+		t.Fatalf("the read holds %d moment rows, want 2", len(found.Config.Moments))
+	}
+
+	// The two moment rows are one moment on one light for two different printers, and they carry
+	// different entries: that pair is the key, and a store that collapsed them would be a
+	// multi-room light showing one room's choice in both.
+	first, ok := storedMomentFor(found.Config, "10.0.0.253", "printer-a", momentPrintStarted)
+	if !ok || first.Shows != showsPreset || first.Which != "Snow Fall" {
+		t.Fatalf("the first stored moment reads %+v, want the print-started preset on printer-a", first)
+	}
+
+	second, ok := storedMomentFor(found.Config, "10.0.0.253", "printer-b", momentPrintStarted)
+	if !ok || second.Enabled || second.Shows != showsNothing {
+		t.Fatalf("the second stored moment reads %+v, want it off and showing nothing on printer-b", second)
+	}
+
+	// The same printer on another light is another row: nothing here keys on the printer alone.
+	if _, ok := storedMomentFor(found.Config, "10.0.0.136", "printer-a", momentPrintStarted); ok {
+		t.Fatal("a moment stored on one light was found on another, and the key is the pair")
 	}
 }
