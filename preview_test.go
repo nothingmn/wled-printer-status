@@ -315,6 +315,11 @@ func runTwoLightWatch(t *testing.T, lights map[string]strip) map[string]strip {
 		// the route says so rather than guessing. The wait below is for that turn.
 		tick:  20 * time.Millisecond,
 		grace: 2 * time.Second,
+		// The picture a composed preview reports is drawn at the arrangement this writer composes
+		// with, and a runner built without one has no bands, so the route answers with an empty
+		// name and no halves for a picture it did draw. What the instance composes with when
+		// nobody has written a layout is defaultLayout, so that is what this watch runs with.
+		layout: defaultLayout(),
 	}
 
 	start := bindings{
@@ -552,5 +557,56 @@ func TestAWordPreviewPaintsThePanelsAndSaysWhichLightCannotCarryIt(t *testing.T)
 
 	if strip.Why == "" {
 		t.Fatal("the strip's refusal carries no sentence saying why")
+	}
+}
+
+// TestTheComposedPreviewNamesWhatEachLightWillDraw is the fourth route on two lights: the picture goes
+// to both, and each entry says the name that light will cut and the halves its rotation shows —
+// which are per light, because a name that fits one panel is cut differently on another.
+func TestTheComposedPreviewNamesWhatEachLightWillDraw(t *testing.T) {
+	runTwoLightWatch(t, map[string]strip{
+		"http://127.0.0.1:9":  newPanelStrip(),
+		"http://127.0.0.1:10": newPanelStrip(),
+	})
+
+	recorder := httptest.NewRecorder()
+	routes().ServeHTTP(recorder,
+		httptest.NewRequest(http.MethodPost, "/preview-frame?percent=41&name=MK4IS&hold=8", nil))
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("the composed picture answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+
+	var answer struct {
+		Count      int              `json:"count"`
+		Lights     []map[string]any `json:"lights"`
+		Controller string           `json:"controller"`
+		Percent    int              `json:"percent"`
+	}
+
+	if err := json.Unmarshal(recorder.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the answer is not JSON: %v: %s", err, recorder.Body.String())
+	}
+
+	if answer.Count != 2 || len(answer.Lights) != 2 || answer.Percent != 41 {
+		t.Fatalf("the answer is %+v, want 41%% drawn on 2 lights", answer)
+	}
+
+	if answer.Controller != "" {
+		t.Fatalf("the answer names one controller %q for a two-light picture", answer.Controller)
+	}
+
+	for _, one := range answer.Lights {
+		if refused, _ := one["refused"].(string); refused != "" {
+			t.Fatalf("the light at %v refused the composed picture: %v", one["controller"], one["why"])
+		}
+
+		if halves, _ := one["halves"].([]any); len(halves) == 0 {
+			t.Fatalf("the light at %v was told nothing about its rotation: %v", one["controller"], one)
+		}
+
+		if name, _ := one["name"].(string); name != "MK4IS" {
+			t.Fatalf("the light at %v will draw the name %q, want MK4IS", one["controller"], name)
+		}
 	}
 }
