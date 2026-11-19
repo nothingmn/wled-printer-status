@@ -7,3 +7,10 @@
 # to ../prusa-connect. Either way it is someone else's tree, not this one, so
 # it is never committed.
 /.core
+
+# The browser bundle's own build, made again from the files beside it. `dist/`
+# above is the release the module's install reads on the host; this is Vite's,
+# inside the bundle's project, and it never travels: the marketplace builder
+# builds it from these sources and copies the result into the release itself.
+/ui/dist/
+/ui/node_modules/

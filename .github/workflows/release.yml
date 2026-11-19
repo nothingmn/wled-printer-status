@@ -27,8 +27,25 @@ jobs:
     with:
       path: .
       core-ref: sdk/v0.1.0-beta.1
-      # No bundle-command: module.yaml has no ui: line, so the builder's bundle
-      # job is skipped by design and there is nothing for it to build.
+      # module.yaml carries a ui block, so the builder's bundle job runs: it
+      # installs and builds ui/, then takes only ui/dist/ui out of that job and
+      # puts it in the release as ui/. Both values are the builder's defaults,
+      # written out so that the contract is visible here rather than inferred.
+      #
+      #   bundle-command  run in the extension's folder, with Node and pnpm from
+      #                   the runner and no secret and no token, because it runs
+      #                   this repository's own code
+      #   bundle-output   where that command leaves module.yaml and the entry,
+      #                   relative to the folder: ui/dist, holding dist/ui/index.js,
+      #                   which module.yaml's `ui.entry: ui/index.js` names
+      #
+      # --frozen-lockfile is why ui/pnpm-lock.yaml is committed. A bundle that
+      # does not build fails the release; the program job is untouched either
+      # way, so a module whose bundle breaks can still be published as a
+      # process-only module by deleting the ui block.
+      bundle-command: cd ui && pnpm install --frozen-lockfile && pnpm run build
+      bundle-output: ui/dist
+      node-version: '22'
     # The environment `release` holds PRUSA_CONNECT_EXTENSION_SIGNING_KEY, and
     # the builder runs the publish job in it. This job does not name the
     # environment itself, because the builder sets it.

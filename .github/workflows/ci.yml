@@ -48,6 +48,32 @@ jobs:
       - run: go vet ./...
       - run: go test ./... -count=1
 
+      # The browser half. Node lives here and nowhere else: the host this
+      # module is installed on has no Node, no pnpm and no network to fetch
+      # them, and needs none of it — the bundle is built once, here, and the
+      # host only serves the file.
+      #
+      # The commands are the marketplace builder's own defaults, so a bundle
+      # that builds here is the bundle it builds: `cd ui && pnpm install
+      # --frozen-lockfile && pnpm run build`, leaving the release layout in
+      # ui/dist. `--frozen-lockfile` is why ui/pnpm-lock.yaml is committed.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Build the browser bundle
+        run: |
+          set -eu
+          cd ui
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm run check
+          pnpm run build
+          # The name module.yaml's ui.entry carries, relative to the bundle root.
+          test -f dist/ui/index.js
+          ls -l dist/ui/index.js
+
       # The release directory the marketplace takes: module.yaml at its root
       # and one binary per platform module.yaml declares, named
       # <name>_<goos>_<goarch>. The platform list is read out of module.yaml, so
@@ -68,8 +94,13 @@ jobs:
             GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath \
               -o "dist/${name}_${platform}${exe}" .
           done
+          # The browser half goes beside them, at the path module.yaml's
+          # ui.entry names. The manifest is already at dist/module.yaml, and the
+          # host reads the ui block out of the bundle it installs, so the two
+          # have to travel together.
+          if [ -d ui/dist/ui ]; then cp -R ui/dist/ui dist/ui; fi
           ls -l dist
-
+          find dist/ui -type f | sort
       # A key generated here, used once, discarded with the runner. Its public
       # half is in no author console and it signs nothing that is published,
       # which is what makes a dry run safe to run on every push.

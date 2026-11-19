@@ -1,0 +1,18 @@
+# This package alone. Every JavaScript package in the core's tree is its own
+# pnpm project, and a module's is too: without this file pnpm walks upwards and
+# joins whatever workspace it finds above the module.
+packages:
+  - .
+
+# Written versions stay exact, so the lockfile is the only record of what was
+# resolved and the marketplace builder's --frozen-lockfile is meaningful.
+savePrefix: ''
+
+# The four packages below are peer dependencies rather than installed ones.
+# pnpm would fetch them from the public registry by itself; naming them here
+# means the module's own package.json says what it builds against.
+autoInstallPeers: false
+
+# pnpm turns the global virtual store off when CI is set and on when it is
+# not. Pinned, an install with CI=true is the one a dev server starts on.
+enableGlobalVirtualStore: false

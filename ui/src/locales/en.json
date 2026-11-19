@@ -1,0 +1,31 @@
+{
+  "bindings": {
+    "title": "Bindings",
+    "intro": "Each line is one printer drawn on one segment of one light. A change here applies at once, in the running module.",
+    "not_saved": "Nothing here is written to the module's settings, so a restart starts again from the bindings setting. Copy a working list into that setting to keep it.",
+    "printer": "Printer",
+    "controller": "Controller",
+    "segment": "Segment",
+    "whole": "Whole light",
+    "brightness": "Brightness",
+    "light": "Light",
+    "actions": "Actions",
+    "add": "Add a printer",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "other_controller": "Another address\u2026",
+    "known_controller": "A controller this module already drives\u2026",
+    "empty_heading": "No printer is shown yet",
+    "empty_body": "Add one and it appears on the light the moment it is saved.",
+    "reachable": "Answering",
+    "unreachable": "Not answering",
+    "no_send_yet": "Not written yet",
+    "loading": "Reading the bindings…",
+    "load_failed": "The bindings could not be read",
+    "save_failed": "That was not accepted",
+    "position": "Order",
+    "printer_gone": "A printer the host no longer holds"
+  }
+}

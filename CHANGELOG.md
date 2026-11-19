@@ -70,6 +70,14 @@ holds the whole light, and keeps holding it.
 - `GET /printers` answers the host's printers with the binding that already shows each one, which is where
   a device id comes from: nobody types one. `GET /controllers` answers the same set grouped by controller,
   with the segments each gives up for it.
+- **A settings tab that lists the bindings, and edits them.** The module now ships a browser half: one tab
+  on its own page under Settings, Extensions, beside the settings it already had. It lists every printer
+  with the light it is drawn on, the segment, and whether that light is answering; it adds a printer,
+  changes where one is shown, and removes one, with the printers and controllers offered as the choices
+  `GET /printers` and `GET /controllers` report rather than as ids typed in. It is additive: the nine
+  settings are still the whole configuration, and a module with no bundle loaded — the bundle refused, its
+  library range outside the app's — drives the light exactly as before. It writes through the same routes,
+  so it saves nothing either, and the tab says so on every screen.
 - The binding routes refuse with codes of their own — `BINDING_NOT_FOUND`, `BINDING_REFUSED`,
   `BINDING_BODY_INVALID`, `CONTROLLER_NOT_FOUND` and `PRINTERS_UNAVAILABLE` — and a refusal leaves the set
   that was running running.
@@ -98,8 +106,8 @@ holds the whole light, and keeps holding it.
 - **No animations.** No pulse, no fade, no movement: a state is one colour and a fill, and the one word
   that is drawn sits still.
 - **No layout composer.** The picture is the module's; the operator does not arrange it.
-- **No screen, and no picker.** The routes an editor would call exist and answer; nothing in the host draws
-  a form from a module's routes, and this module ships no browser half, so the printer and segment are
-  still written by hand — as one line of `bindings` each.
+- **No screen beyond the bindings tab.** The bundle is that one tab: no page of its own in the sidebar, no
+  section on a printer's card, and no animation editor. The printer and the segment are still written by
+  hand in `bindings` when nobody wants to open the tab, and that remains the only durable shape.
 - **No saving through the API.** A binding changed through the routes lives until the process restarts.
   The durable shape is the `bindings` setting.

@@ -1,5 +1,6 @@
-# The manifest for wled-printer-status, a module that is the Go process in main.go and
-# nothing else. There is no ui block, so it draws nothing in the app.
+# The manifest for wled-printer-status: the Go process in main.go, and the browser
+# bundle under ui/. The process is the whole of what runs; the bundle is a settings
+# tab that lists and edits the bindings, and the module runs without it.
 #
 # `prusa-connect module add` reads it out of the release and writes one
 # declaration from it.
@@ -202,3 +203,41 @@ permissions:
 # endpoint, and nothing in this tree does: no file names the type outside this
 # manifest, and no code in this module emits one. The key comes back with the
 # publisher, the same way `observe` came back with the reader that uses it.
+
+# The browser half: one tab on this module's own page under Settings, Extensions.
+#
+# It is a convenience and not a requirement. The nine settings above are the
+# module's whole configuration, the host applies them, and every one of them can
+# be written without this bundle; a person who never opens the tab loses nothing.
+# What the tab adds is the one setting a text area cannot express: `bindings` is a
+# list of objects, and the tab lists those objects as rows, offers the printers and
+# controllers as the choices this module's own routes already report, and writes
+# through POST/PUT/DELETE /bindings instead of asking anybody to hand-edit JSON.
+#
+# Three keys and one rule between them:
+#
+#   entry      the file the app imports as an ES module, relative to the bundle
+#              root. The release layout is module.yaml at its root and the entry
+#              under ui/, which is what `ui/dist/ui/index.js` becomes once the
+#              marketplace builder copies it to release/ui/. It has to equal the
+#              tail of the built file or the app asks for a name the host does not
+#              serve.
+#   library    the range of @prusa/connect-ui the bundle was compiled against. The
+#              app compares it with its own version before importing, and a bundle
+#              built against a library outside the range is refused rather than
+#              run. 0.1.0 is the library the running instance is built from.
+#   contributes.settings
+#              the tab's id and its title. A registration the block does not
+#              declare is refused at run time and the app drops the module, so
+#              `register.settings('bindings', ...)` in ui/src/index.ts and this
+#              id have to be the same string.
+#
+# Nothing here adds a permission. The tab speaks only to this module's own routes,
+# on the session the operator already holds, and reads no printer itself.
+ui:
+  entry: ui/index.js
+  library: ">=0.1.0 <1.0.0"
+  contributes:
+    settings:
+      - id: bindings
+        title: Bindings
