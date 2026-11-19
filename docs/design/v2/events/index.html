@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Events — what each moment shows</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  header.app .right{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:11.5px;color:#8b93a1}
+  .wrap{padding:20px 22px 80px;max-width:1040px}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted);margin-bottom:2px}
+  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fafbfc;white-space:nowrap}
+  td{padding:7px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  /* the moment row, and the indented per-printer sub rows beneath it */
+  tr.ev td{background:#fff;border-bottom:1px solid #eef1f4}
+  tr.ev td.m{font-weight:600}
+  tr.ev:hover td{background:#fcfcfd}
+  tr.sub td{background:#fbfcfd;padding-top:6px;padding-bottom:6px}
+  tr.sub:last-child td{border-bottom:1px solid #f1f3f5}
+  tr.sub td.ind{padding-left:34px;position:relative;color:var(--muted)}
+  tr.sub td.ind::before{content:"↳";position:absolute;left:16px;color:#c3c9d2}
+  .seglabel{font-family:var(--mono);font-size:10.5px;color:var(--muted);display:block;line-height:1.2}
+  .prn{font-weight:560}
+  select,input[type=text],input[type=number]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+  select:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
+  select:focus,input:focus{outline:2px solid var(--accent2);border-color:var(--accent)}
+  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+  button{font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#c6ccd4;background:#fafbfc}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
+  .sw-dot{width:9px;height:9px;border-radius:2px;display:inline-block;vertical-align:-1px;margin-right:4px}
+  .foot{padding:10px 14px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .pill{font-size:10.5px;padding:1px 7px;border-radius:99px;background:#f1f2f4;color:var(--muted);border:1px solid var(--line);font-weight:600}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Events <i>›</i> what each moment shows</span>
+  <div class="right">
+    <span>light</span>
+    <select id="lightSel" style="background:#1e222a;border-color:#2a2f39;color:#e9ecf1"></select>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="sub" id="pageSub"></div>
+  <h1>What each moment shows</h1>
+
+  <div class="note" id="note"></div>
+
+  <div class="card">
+    <h2 id="tableHead">Moments</h2>
+    <table>
+      <thead id="thead"></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="foot">A preset takes the whole light for its moment — capture, run, put it back — and is refused on a borrowed zone. While a preset runs the progress bar is gone.</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- the lights, and who is on them ---------- */
+const LIGHTS=[
+ {id:'cyberdesk', name:'CyberDesk', addr:'10.0.0.253', dims:'48 LEDs · 6 zones', kind:'strip',
+  bindings:[{printer:'Hermes MK4', segment:'Front 1'},{printer:'Mini', segment:'Back 1'}]},
+ {id:'morpheus', name:'morpheus', addr:'10.0.0.136', dims:'256×64 panel', kind:'panel',
+  bindings:[{printer:'Hermes MK4', segment:'Whole light'}]}
+];
+const MOMENTS=[
+ {m:'Print finished',     live:'word built'}, {m:'Print started'}, {m:'Filament change'},
+ {m:'Paused'}, {m:'Error or attention'}, {m:'Light lost'}, {m:'Print cancelled'}, {m:'Printer went quiet'}
+];
+const PRESETS=['Matrix','Snow Fall','PS Ballpit','PS GEQ 2D','Alien Force Clock'];
+const COLOURS=['waiting colour','printing colour','finished colour','error colour','can not reach'];
+
+/* ---------- settings, per binding per moment ---------- */
+const DEFAULTS={
+  'Print finished':      {on:true,  shows:'Colour', value:'finished colour', for:'60 s'},
+  'Print started':       {on:true,  shows:'Preset', value:'Snow Fall',       for:'10 s'},
+  'Filament change':     {on:true,  shows:'Preset', value:'PS Ballpit',      for:'30 s'},
+  'Paused':              {on:true,  shows:'Colour', value:'waiting colour',  for:'until it resumes'},
+  'Error or attention':  {on:true,  shows:'Preset', value:'Alien Force Clock', for:'until cleared'},
+  'Light lost':          {on:true,  shows:'Colour', value:'can not reach',   for:'until it answers'},
+  'Print cancelled':     {on:false, shows:'Preset', value:'Matrix',          for:'30 s'},
+  'Printer went quiet':  {on:false, shows:'Nothing',value:'',                for:'after 30 s'}
+};
+let SETTINGS={};   // key: lightId|printer  ->  { moment -> settings }
+const key=(lid,printer)=>lid+'|'+printer;
+function seed(){
+  LIGHTS.forEach(L=>L.bindings.forEach(b=>{
+    const k=key(L.id,b.printer); if(SETTINGS[k])return;
+    SETTINGS[k]={};
+    MOMENTS.forEach(mo=>{
+      const d=Object.assign({},DEFAULTS[mo.m]);
+      // the panel is the only one that can carry a word; a strip shows the colour instead
+      if(L.kind!=='panel' && d.shows==='Word'){d.shows='Colour';d.value='finished colour';}
+      SETTINGS[k][mo.m]=d;
+    });
+    // a little variation on the second printer so the sub rows are visibly their own
+    if(b.printer==='Mini'){SETTINGS[k]['Print started']={on:true,shows:'Preset',value:'Matrix',for:'10 s'};}
+  }));
+}
+seed();
+
+let current=LIGHTS[0].id;
+
+/* ---------- rendering ---------- */
+function opts(list,sel){return list.map(o=>'<option'+(o===sel?' selected':'')+'>'+o+'</option>').join('');}
+
+function whichControl(L,b,mo,st){
+  const cls='which';
+  if(st.shows==='Preset') return '<select class="'+cls+'">'+opts(PRESETS,st.value)+'</select>';
+  if(st.shows==='Colour') return '<span style="font-size:12px"><span class="sw-dot" style="background:#d2a500"></span>'+st.value+'</span>';
+  if(st.shows==='Word')   return '<input type="text" value="'+st.value+'" style="width:104px"> <span class="hint">panel only</span>';
+  return '<span class="hint">—</span>';
+}
+function showsList(L){ return L.kind==='panel' ? ['Preset','Word','Colour','Nothing'] : ['Preset','Colour','Nothing']; }
+
+function render(){
+  const L=LIGHTS.find(l=>l.id===current);
+  const multi=L.bindings.length>1;
+
+  document.getElementById('pageSub').textContent=
+    L.name+' · '+L.dims+' · '+L.bindings.length+(L.bindings.length>1?' printers':' printer');
+  document.getElementById('note').innerHTML=
+    '<div class="ico">i</div><div>'+
+    (multi
+      ? '<b>Two printers share this light</b>, each on its own segment — so every moment carries a setting per printer, indented under it.'
+      : '<b>One printer on this light</b>, so each moment is one row.')+
+    ' Presets are the light\u2019s own: build them in WLED, this page only names one.'+(L.kind==='strip'?' A strip has no second dimension, so a word is not offered here.':'')+
+    '</div>';
+
+  document.getElementById('tableHead').innerHTML='Moments <span class="right">'+
+    (multi?'each moment, then a line per printer':'one row per moment')+'</span>';
+
+  document.getElementById('thead').innerHTML = multi
+    ? '<tr><th>Moment</th><th>Printer · segment</th><th>Shows</th><th>Which</th><th>For</th><th></th></tr>'
+    : '<tr><th style="width:28px"></th><th>Moment</th><th>Shows</th><th>Which</th><th>For</th><th></th></tr>';
+
+  const tbody=document.getElementById('rows');tbody.innerHTML='';
+
+  MOMENTS.forEach(mo=>{
+    if(!multi){
+      const b=L.bindings[0], st=SETTINGS[key(L.id,b.printer)][mo.m];
+      const tr=document.createElement('tr');tr.className='ev';
+      tr.innerHTML='<td><input type="checkbox" '+(st.on?'checked':'')+'></td>'+
+        '<td class="m">'+mo.m+' '+((mo.live&&L.kind==='panel')?'<span class="pill">'+mo.live+'</span>':'')+'</td>'+
+        '<td><select>'+opts(showsList(L),st.shows)+'</select></td>'+
+        '<td>'+whichControl(L,b,mo,st)+'</td>'+
+        '<td class="hint">'+st.for+'</td>'+
+        '<td style="text-align:right"><button>test</button></td>';
+      wire(tr,b,mo,st,L,false);
+      tbody.appendChild(tr);
+    } else {
+      const head=document.createElement('tr');head.className='ev';
+      head.innerHTML='<td class="m" colspan="2" style="padding-left:14px"><b>'+mo.m+'</b></td>'+
+        '<td colspan="4" class="hint">'+(mo.live&&L.kind==='panel'?mo.live+' · ':'')+L.bindings.length+' printers</td>';
+      tbody.appendChild(head);
+      L.bindings.forEach(b=>{
+        const st=SETTINGS[key(L.id,b.printer)][mo.m];
+        const tr=document.createElement('tr');tr.className='sub';
+        tr.innerHTML='<td class="ind"><span class="prn">'+b.printer+'</span><span class="seglabel">'+b.segment+'</span></td>'+
+          '<td><input type="checkbox" '+(st.on?'checked':'')+'></td>'+
+          '<td><select>'+opts(showsList(L),st.shows)+'</select></td>'+
+          '<td>'+whichControl(L,b,mo,st)+'</td>'+
+          '<td class="hint">'+st.for+'</td>'+
+          '<td style="text-align:right"><button>test</button></td>';
+        wire(tr,b,mo,st,L,true);
+        tbody.appendChild(tr);
+      });
+    }
+  });
+}
+
+function wire(tr,b,mo,st,L,nested){
+  const cb=tr.querySelector('input[type=checkbox]');
+  const sh=tr.querySelector('td:nth-child('+(nested?3:3)+') select');
+  const btn=tr.querySelector('button');
+  // in nested layout the moment row has no controls; only sub rows are wired
+  if(!cb) return;
+  cb.onchange=e=>{st.on=e.target.checked;toast((e.target.checked?'On':'Off')+' — '+mo.m+' for '+b.printer);};
+  if(sh) sh.onchange=e=>{st.shows=e.target.value;
+    if(st.shows==='Preset'&&PRESETS.indexOf(st.value)<0)st.value=PRESETS[0];
+    if(st.shows==='Colour'&&COLOURS.indexOf(st.value)<0)st.value=COLOURS[0];
+    if(st.shows==='Word'&&(PRESETS.indexOf(st.value)>=0||COLOURS.indexOf(st.value)>=0))st.value='FINISHED';
+    render();};
+  if(btn) btn.onclick=()=>{
+    if(st.shows==='Preset')toast('Runs “'+st.value+'” on '+b.segment+' for 15 s, then gives it back');
+    else if(st.shows==='Colour')toast('Paints '+st.value+' on '+b.segment+' for 15 s');
+    else if(st.shows==='Word')toast('Draws “'+st.value+'” for 15 s');
+    else toast('This moment shows nothing');
+  };
+}
+
+/* ---------- the light selector ---------- */
+const sel=document.getElementById('lightSel');
+LIGHTS.forEach(L=>{const o=document.createElement('option');o.value=L.id;
+  o.textContent=L.name+' · '+(L.bindings.length>1?L.bindings.length+' printers':'1 printer');sel.appendChild(o);});
+sel.value=current;
+sel.onchange=e=>{current=e.target.value;render();};
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),2000);}
+render();
+</script>
+</body>
+</html>

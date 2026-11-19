@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Layout — a panel and a strip</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  header.app .right{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:11.5px;color:#8b93a1}
+  header.app select{font:inherit;font-size:11.5px;padding:3px 7px;border-radius:6px;background:#1e222a;border:1px solid #2a2f39;color:#e9ecf1}
+  .wrap{padding:20px 22px 80px;max-width:1080px}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .defs{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .def{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:11.5px;color:#3b4250}
+  .def b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:2px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
+  .stage{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;padding:14px}
+  .left{flex:none}.right{flex:1;min-width:320px}
+  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block}
+  .cap{font-size:11px;color:var(--muted);margin-top:7px}
+  .widget{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .widget:last-child{border-bottom:none}
+  .widget .nm{width:140px;color:#3b4250}
+  .widget .ctl{margin-left:auto;display:flex;gap:7px;align-items:center}
+  .widget.off .nm{color:#a8aeb8}
+  .widget.na .nm{color:#a8aeb8}
+  select,input[type=number]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+  select:disabled,input:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
+  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+  button{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#c6ccd4;background:#fafbfc}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
+  .build{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:#8a5a00;background:#fdf3e3;border:1px solid #f0dcb4;padding:1px 5px;border-radius:4px;font-weight:700}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .fit{font-size:11.5px;padding:5px 9px;border-radius:7px;background:var(--okbg);color:var(--ok);border:1px solid #cdead8;display:inline-block}
+  .fit.bad{background:#fdecec;color:#b91c1c;border-color:#f2cece}
+  pre{font-family:var(--mono);font-size:11px;background:#0f1115;color:#c8ccd4;padding:11px 13px;border-radius:8px;overflow:auto;margin:0}
+  .foot{padding:10px 14px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Layout <i>›</i> what the light draws while a job runs</span>
+  <div class="right"><span>light</span>
+    <select id="lightSel">
+      <option value="panel">morpheus · 256×64 panel</option>
+      <option value="strip">CyberDesk · 48 LED strip</option>
+    </select></div>
+</header>
+
+<div class="wrap">
+  <div class="defs">
+    <div class="def"><b>Panel</b>a 2D matrix — rows × columns of pixels. morpheus is 256 × 64 = 16,384. Words and bars both fit.</div>
+    <div class="def"><b>Strip</b>1D — one run of pixels, no rows. CyberDesk is 48 LEDs. A bar fits; a word cannot.</div>
+  </div>
+  <div class="sub" style="margin-top:10px">Either way, only a job in progress composes. Idle, finished, stopped and error keep the plain colour.</div>
+  <h1 id="title" style="margin-top:2px">What it draws while printing</h1>
+
+  <!-- ================= 2D PANEL ================= -->
+  <div id="panelUI">
+    <div class="card">
+      <div class="stage">
+        <div class="left">
+          <canvas id="panel" width="256" height="64" style="width:512px;height:128px"></canvas>
+          <div class="cap" id="cap">morpheus · 256 × 64 · printing 41%</div>
+          <div style="margin-top:12px"><span class="fit" id="fit">fits</span></div>
+        </div>
+        <div class="right">
+          <div class="widget">
+            <input type="checkbox" id="bar" checked onchange="draw()">
+            <span class="nm">Progress bar</span>
+            <div class="ctl">
+              <select id="band" onchange="draw()"><option value="bottom">bottom</option><option value="top">top</option></select>
+              <input type="number" id="rows" value="12" min="1" max="48" style="width:56px" oninput="draw()"><span class="hint">rows</span>
+            </div>
+          </div>
+          <div class="widget">
+            <input type="checkbox" id="percent" checked onchange="draw()">
+            <span class="nm">Percentage</span>
+            <div class="ctl"><select id="pctsize" onchange="draw()">
+              <option value="5" selected>large — scale 5</option><option value="4">medium — scale 4</option><option value="3">small — scale 3</option>
+            </select></div>
+          </div>
+          <div class="widget">
+            <input type="checkbox" id="name" checked onchange="draw()">
+            <span class="nm">Job name</span>
+            <div class="ctl"><span class="hint">length cut to fit</span></div>
+          </div>
+          <div class="widget">
+            <span class="nm">Percentage and name</span>
+            <div class="ctl">
+              <select id="rotmode" onchange="draw()">
+                <option value="turns" selected>take turns</option>
+                <option value="side">side by side</option>
+              </select>
+              <input type="number" id="rotate" value="15" min="2" max="120" style="width:56px" oninput="draw()"><span class="hint">s</span>
+              <span class="build" id="sideNote" style="display:none">needs build</span>
+            </div>
+          </div>
+          <div class="widget na">
+            <input type="checkbox" disabled>
+            <span class="nm">Time remaining</span>
+            <div class="ctl"><span class="need">needs API</span><span class="hint">this build refuses it</span></div>
+          </div>
+          <div class="widget na">
+            <input type="checkbox" disabled>
+            <span class="nm">Layer</span>
+            <div class="ctl"><span class="need">needs API</span></div>
+          </div>
+
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="primary" onclick="toast('Draws this layout on morpheus for 60 s')">Preview on morpheus</button>
+            <button onclick="toggleHalf()" id="halfBtn">show the other half</button>
+            <button onclick="reset()">Reset</button>
+          </div>
+          <div class="hint" style="margin-top:10px" id="ruleNote">Taking turns: one half at a time, swapped every 15 s. A name longer than the panel is cut at its last whole word — <b>MK4IS 0.4N 0.2MM PLA</b>.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>What gets saved <span class="right">the module's own <span class="mono">layout</span> setting</span></h2>
+      <div style="padding:13px 14px"><pre id="json"></pre></div>
+      <div class="foot">These are the keys the module reads today. Absent means the defaults — which is why an install that never writes a layout now composes.</div>
+    </div>
+  </div>
+
+  <!-- ================= 1D STRIP ================= -->
+  <div id="stripUI" style="display:none">
+    <div class="card">
+      <div class="stage">
+        <div class="left">
+          <canvas id="strip" width="48" height="8" style="width:520px;height:104px"></canvas>
+          <div class="cap">CyberDesk · 48 LEDs · printing 41% → 20 lit</div>
+          <div style="margin-top:12px"><span class="fit" id="stripFit">20 of 48 lit</span></div>
+        </div>
+        <div class="right">
+          <div class="widget">
+            <span class="nm">Fills from</span>
+            <div class="ctl"><select id="direction" onchange="drawStrip()"><option value="left">the left</option><option value="right">the right</option></select></div>
+          </div>
+          <div class="widget">
+            <span class="nm">At 0%</span>
+            <div class="ctl"><select id="zero" onchange="drawStrip()"><option value="wait">the waiting colour, whole strip</option><option value="empty">empty</option></select></div>
+          </div>
+          <div class="widget">
+            <span class="nm">At 100%</span>
+            <div class="ctl"><select id="full" onchange="drawStrip()"><option value="solid">full, in the state colour</option><option value="flash">flash briefly, then full</option></select></div>
+          </div>
+          <div class="widget">
+            <span class="nm">Brightness</span>
+            <div class="ctl">
+              <select id="bri" onchange="drawStrip()">
+                <option value="128" selected>fixed 128</option><option value="day">follow the day</option><option value="none" disabled>never written — borrowed zone</option>
+              </select>
+            </div>
+          </div>
+          <div class="widget na">
+            <span class="nm">Anything else</span>
+            <div class="ctl"><span class="hint">a strip is one dimension: no bar band, no words, no layers</span></div>
+          </div>
+
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="primary" onclick="toast('Paints 41% on CyberDesk for 60 s')">Preview on CyberDesk</button>
+            <button onclick="drawStrip()">Redraw</button>
+          </div>
+          <div class="hint" style="margin-top:10px">This is the whole Layout tab for a strip. There is nothing to compose — it shows the colour and the fill, and both of those live in <b>Colours</b>. An idle strip is the plain colour here too.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Why so little <span class="right">not a limitation we chose</span></h2>
+      <div style="padding:6px 14px 12px">
+        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+          <span>Text</span><span class="hint">needs a second dimension — impossible on a strip</span></div>
+        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+          <span>A bar band</span><span class="hint">the whole strip is the bar; there is nowhere else to put it</span></div>
+        <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
+          <span>Brightness</span><span class="hint">only if the whole strip is taken; a borrowed zone never gets it</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const F={A:[0x0E,0x11,0x11,0x1F,0x11,0x11,0x11],B:[0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],C:[0x0F,0x10,0x10,0x10,0x10,0x10,0x0F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],G:[0x0F,0x10,0x10,0x17,0x11,0x11,0x0F],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],J:[0x01,0x01,0x01,0x01,0x01,0x11,0x0E],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],L:[0x10,0x10,0x10,0x10,0x10,0x10,0x1F],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],O:[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],P:[0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],Q:[0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],R:[0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],T:[0x1F,0x04,0x04,0x04,0x04,0x04,0x04],U:[0x11,0x11,0x11,0x11,0x11,0x11,0x0E],V:[0x11,0x11,0x11,0x11,0x11,0x0A,0x04],W:[0x11,0x11,0x11,0x15,0x15,0x1B,0x11],X:[0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],Y:[0x11,0x11,0x0A,0x04,0x04,0x04,0x04],Z:[0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'2':[0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],'3':[0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'5':[0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E],'6':[0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],'7':[0x1F,0x01,0x02,0x04,0x08,0x08,0x08],'8':[0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],'9':[0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],'.':[0,0,0,0,0,0x06,0x06],'-':[0,0,0,0x1F,0,0,0],' ':[0,0,0,0,0,0,0]};
+const COLOUR=[0,170,0], W=256, H=64, PCT=41;
+const SHORTNAME='0.4N 0.2MM PLA';
+let showName=false;
+
+const tw=(s,sc)=>s.length*6*sc;
+function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
+  for(const ch of s){const gl=F[ch]||F[' '];for(let r=0;r<7;r++)for(let c=0;c<5;c++)if(gl[r]&(0x10>>c))g.fillRect(x+c*sc,y+r*sc,sc,sc);x+=6*sc;}}
+const val=id=>{const e=document.getElementById(id);return e?e.value:'';};
+const on=id=>{const e=document.getElementById(id);return e?e.checked:false;};
+
+function draw(){
+  const c=document.getElementById('panel');if(!c)return;
+  const g=c.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,W,H);
+
+  const barOn=on('bar'), rows=Math.max(1,Math.min(48,parseInt(val('rows'))||12)), band=val('band');
+  const barH=barOn?rows:0, barY=band==='top'?0:H-barH;
+  const top=barOn?(band==='top'?barH:0):0, bot=barOn?(band==='top'?H:barY):H, freeH=bot-top;
+  if(barOn){g.fillStyle='rgb('+COLOUR.join(',')+')';g.fillRect(0,barY,Math.round(PCT/100*W),barH);}
+
+  const side=val('rotmode')==='side';
+  const pctScale=parseInt(val('pctsize'))||5;
+  const digits=PCT+'%';
+  let usedH=0;
+
+  if(side){
+    // both at once: digits on the left, name on the right, name cut to what is left
+    const dScale=Math.min(pctScale, freeH>=28?4:3);
+    const dH=7*dScale;
+    const nScale=2, nH=7*nScale;
+    const avail=W-tw(digits,dScale)-30;
+    const chars=Math.max(0,Math.floor(avail/(6*nScale)));
+    const nm=SHORTNAME.slice(0,chars);
+    const h=Math.max(dH,nH);
+    if(h<=freeH){
+      const y=top+Math.round((freeH-h)/2);
+      if(on('percent'))word(g,digits,10,y+(h-dH),dScale,COLOUR);
+      if(on('name')&&chars>2)word(g,nm,10+tw(digits,dScale)+16,y+(h-nH),nScale,COLOUR);
+      usedH=h;
+    } else {usedH=h;}
+  } else {
+    if(!showName && on('percent')){
+      const h=7*pctScale;if(h<=freeH){const s=digits;word(g,s,Math.round((W-tw(s,pctScale))/2),top+Math.round((freeH-h)/2),pctScale,COLOUR);usedH=h;}
+    }
+    if(showName && on('name')){
+      const sc=2,h=7*sc,avail=Math.floor((W-20)/(6*sc)),s=SHORTNAME.slice(0,avail);
+      if(h<=freeH){word(g,s,Math.round((W-tw(s,sc))/2),top+Math.round((freeH-h)/2),sc,COLOUR);usedH=h;}
+    }
+  }
+
+  const fit=document.getElementById('fit');
+  const ok=usedH<=freeH;
+  fit.textContent=ok?'fits — '+Math.max(0,freeH-usedH)+' of '+freeH+' rows left'
+                   :'does not fit — '+usedH+' rows needed, '+freeH+' free';
+  fit.className='fit'+(ok?'':' bad');
+
+  document.getElementById('cap').textContent='morpheus · 256 × 64 · printing '+PCT+'% · '+
+    (side?'both at once':(showName?'the name':'the percentage'));
+  document.getElementById('sideNote').style.display=side?'inline-block':'none';
+  document.getElementById('ruleNote').innerHTML = side
+    ? 'Side by side: the digits on the left, the name on the right, the name cut to whatever room is left. <span class="build">needs build</span> — the module alternates today.'
+    : 'Taking turns: one half at a time, swapped every '+ (parseInt(val('rotate'))||15) +' s. A name longer than the panel is cut at its last whole word — <b>MK4IS 0.4N 0.2MM PLA</b>.';
+
+  document.getElementById('json').textContent=JSON.stringify({
+    bar:on('bar'), bar_band:val('band'), bar_rows:rows,
+    percent:on('percent'), name:on('name'),
+    rotation:(side?'side-by-side':'take-turns'),
+    remaining:false, rotate_seconds:parseInt(val('rotate'))||15
+  },null,2);
+}
+
+function drawStrip(){
+  const c=document.getElementById('strip');if(!c)return;
+  const g=c.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,48,8);
+  const lit=Math.round(PCT/100*48), dir=val('direction');
+  g.fillStyle='rgb('+COLOUR.join(',')+')';
+  for(let i=0;i<lit;i++){const x=dir==='right'?(48-1-i):i;g.fillRect(x,1,1,6);}
+  // separators so individual LEDs read as discrete pixels
+  g.fillStyle='rgba(255,255,255,.06)';
+  for(let x=1;x<48;x++)g.fillRect(x,0,0.08,8);
+  document.getElementById('stripFit').textContent=lit+' of 48 lit';
+}
+
+document.getElementById('lightSel').onchange=e=>{
+  const strip=e.target.value==='strip';
+  document.getElementById('panelUI').style.display=strip?'none':'block';
+  document.getElementById('stripUI').style.display=strip?'block':'none';
+  document.getElementById('title').textContent=strip?'What it draws while printing — a strip':'What it draws while printing — a panel';
+  if(strip)drawStrip(); else draw();
+};
+function toggleHalf(){showName=!showName;document.getElementById('halfBtn').textContent=showName?'show the percentage':'show the name';draw();}
+function reset(){
+  document.getElementById('bar').checked=true;document.getElementById('band').value='bottom';
+  document.getElementById('rows').value=12;document.getElementById('percent').checked=true;
+  document.getElementById('name').checked=true;document.getElementById('pctsize').value='5';
+  document.getElementById('rotate').value=15;document.getElementById('rotmode').value='turns';
+  showName=false;document.getElementById('halfBtn').textContent='show the other half';draw();toast('Back to the defaults');}
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),1900);}
+draw();drawStrip();
+</script>
+</body>
+</html>

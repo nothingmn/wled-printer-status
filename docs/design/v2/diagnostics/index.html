@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Diagnostics — why the light is doing that</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
+    --blue:#1d4ed8;--bluebg:#eaefff;--purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  .wrap{padding:20px 22px 80px;max-width:1060px}
+  .top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .top .spacer{flex:1}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .chips button{font:inherit;font-size:12px;padding:5px 11px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer}
+  .chips button:hover{border-color:#c6ccd4}
+  .chips button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:14px}
+  .tile{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+  .tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650}
+  .tile .v{font-size:17px;font-weight:640;margin-top:3px;letter-spacing:-.3px}
+  .tile .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
+  .body{padding:13px 15px}
+  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block}
+  .cap{font-size:11px;color:var(--muted);margin-top:7px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fafbfc}
+  td{padding:7px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr.this td{background:var(--accent2)}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600}
+  .chip.amber{background:var(--warnbg);color:var(--warn)}
+  .chip.red{background:var(--badbg);color:var(--bad)}
+  .chip.grey{background:#f1f2f4;color:var(--muted)}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
+  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  button.act{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer}
+  /* the merged timeline */
+  .feed{max-height:340px;overflow:auto}
+  .ev{display:grid;grid-template-columns:64px 74px 1fr;gap:10px;align-items:start;padding:7px 15px;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .ev:last-child{border-bottom:none}
+  .ev .t{font-family:var(--mono);font-size:11px;color:var(--muted);padding-top:2px}
+  .ev .src{font-size:9px;letter-spacing:.35px;text-transform:uppercase;font-weight:700;padding:2px 6px;border-radius:4px;text-align:center;white-space:nowrap}
+  .ev .src.printer{color:var(--ok);background:var(--okbg);border:1px solid #cdead8}
+  .ev .src.module{color:var(--blue);background:var(--bluebg);border:1px solid #d5ddfb}
+  .ev .src.light{color:var(--warn);background:var(--warnbg);border:1px solid #f0dcb4}
+  .ev .src.settings{color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff}
+  .ev .what b{font-weight:600}
+  .ev .what .who{color:var(--muted)}
+  .ev .what .bad{color:var(--bad)}
+  .ev.dim{opacity:.45}
+  .filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px 15px;border-bottom:1px solid var(--line);background:#fafbfc}
+  .filters button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer;color:var(--muted)}
+  .filters button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Diagnostics <i>›</i> what it knows, what it wrote, and who changed what</span>
+</header>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="sub">The present tense is <span class="mono">/status</span>. The history is one timeline, mirrored from the log.</div>
+      <h1>Why the light is doing that</h1>
+    </div>
+    <div class="spacer"></div>
+    <button class="act" onclick="toast('Gathers status, the last log lines and the settings, key redacted')">Copy a diagnostic bundle <span class="need">needs API</span></button>
+  </div>
+
+  <div class="chips" id="scenarios"></div>
+  <div class="grid" id="tiles"></div>
+
+  <div class="card">
+    <h2>What it is drawing <span class="right">the module's own frame, <span class="mono">GET /status</span></span></h2>
+    <div class="body">
+      <canvas id="frame" width="256" height="64" style="width:100%;max-width:512px;height:auto"></canvas>
+      <div class="cap mono" id="frameCap"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Everything that happened <span class="right">the printer, and what we wrote to the light</span></h2>
+    <div class="filters" id="filters"></div>
+    <div class="feed" id="feed"></div>
+    <div class="body" style="border-top:1px solid var(--line);background:#fafbfc">
+      <span class="hint"><b>Only what this module did.</b> Every line is either something the printer reported that made us act, or something we wrote to the light — a frame, a word, a brightness, a failure and its widening retries. Changes made elsewhere are not followed: this is a record of our own actions, not a general audit. Progress is never logged — a printing job is one line at its start and none during it.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The reasons it can give <span class="right">one of these is on every frame</span></h2>
+    <div class="body" style="padding:0">
+      <table><thead><tr><th>Reason</th><th>Means</th></tr></thead><tbody id="reasons"></tbody></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The honest limits <span class="right">read these before doubting the light</span></h2>
+    <div class="body" style="padding:6px 14px 12px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>A word on a strip</span><span class="hint">impossible — no second dimension</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>A printer that goes quiet mid-job</span><span class="hint">shown as "don't trust this", never as progress</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>A light-side change</span><span class="hint">seen at the next read, so up to one poll late</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
+        <span>The controller's own pixels</span><span class="hint">cannot be read back on this firmware — a picture is checked by eye</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const F={F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],' ':[0,0,0,0,0,0,0]};
+function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
+  for(const ch of s){const gl=F[ch]||F[' '];for(let r=0;r<7;r++)for(let c=0;c<5;c++)if(gl[r]&(0x10>>c))g.fillRect(x+c*sc,y+r*sc,sc,sc);x+=6*sc;}}
+
+const REASONS=[
+ ['progress','a live job with a known percentage — the bar is the truth'],
+ ['paused-frozen','the job is paused, so the fill is frozen rather than moving'],
+ ['progress-unknown','a live job whose percentage cannot be read — colour only'],
+ ['not-a-live-job','finished, stopped or idle — nothing to fill'],
+ ['stale','the reading is older than the horizon and the job is live, so do not trust the fill'],
+ ['disconnected','the host has no session with the printer'],
+ ['unknown-state','a state word this build does not recognise']
+];
+
+/* feed entries: [time, source, html] */
+const SCENARIOS=[
+ {k:'printing', n:'printing, all well', state:'PRINTING', pct:41, age:2, stale:false,
+  colour:[0,170,0], lit:6717, reason:'progress', wrote:'2 s ago', ok:true, ms:'28 ms', transport:'DDP · 1 frame a second',
+  cap:'colour 0,170,0 · lit 6717 / 16384 · reason "progress"',
+  feed:[['05:12:03','printer','the printer Hermes MK4 went from <b>FINISHED</b> to <b>PRINTING</b>'],
+        ['05:12:03','module','began writing the progress frame to <b>Front 1</b>'],
+        ['05:12:44','module','brightness resolved to <b>128</b> from the day\u2019s window in America/Denver'],
+        ['05:19:10','printer','the reading from the printer Hermes MK4 went <i>stale</i>'],
+        ['05:20:02','printer','the reading from the printer Hermes MK4 is <i>live again</i>']]},
+ {k:'finished', n:'finished, then quiet', state:'FINISHED', pct:100, age:242, stale:true,
+  colour:[0,170,0], lit:0, reason:'not-a-live-job', wrote:'12 s ago', ok:true, ms:'31 ms', transport:'JSON · one write per change',
+  cap:'colour 0,170,0 · lit 0 / 16384 · reason "not-a-live-job" · reading 242 s old, stale — and the picture holds',
+  feed:[['05:31:00','printer','the printer Hermes MK4 went from <b>PRINTING</b> to <b>FINISHED</b>'],
+        ['05:31:00','module','the <b>FINISHED</b> word went up on the panel for 60 s'],
+        ['05:32:00','module','the word is off the panel and the light reports <span class="who">live=false</span> — it is back on its own segments'],
+        ['05:32:01','module','steady frame: whole panel in <b>0,170,0</b>, reason <b>not-a-live-job</b>'],
+        ['05:35:22','printer','the reading from the printer Hermes MK4 is <i>stale</i>'],
+        ['05:35:22','module','the picture <b>holds its green</b> — a finish cannot be retracted by silence'],
+        ['\u2014','printer','and nothing else, however long the silence lasts']]},
+ {k:'lost', n:'printing, light not answering', state:'PRINTING', pct:41, age:3, stale:false,
+  colour:[0,170,0], lit:6717, reason:'progress', wrote:'retrying', ok:false, ms:'no route to host', transport:'DDP failing · retries widening',
+  cap:'colour 0,170,0 · lit 6717 / 16384 · reason "progress" — the frame is right, the wire is not',
+  feed:[['05:44:09','module','a write was attempted and <span class="bad">did not land</span> — a ping took 3 ms, the write took nothing'],
+        ['05:44:10','module','the light did not take the frame: <span class="bad">dial tcp 10.0.0.136:80: connect: no route to host</span>'],
+        ['05:44:11','module','retrying in <b>1 s</b>'],
+        ['05:44:13','module','retrying in <b>2 s</b>'],
+        ['05:44:17','module','retrying in <b>4 s</b>'],
+        ['05:44:25','module','retrying in <b>8 s</b>'],
+        ['05:44:41','module','retrying in <b>16 s</b> — and the frame it would write is still the right one'],
+        ['05:46:02','module','the retry landed — frame accepted in <b>27 ms</b>, backoff cleared']]}
+];
+let current='printing', filter='all';
+
+function render(){
+  const S=SCENARIOS.find(s=>s.k===current);
+
+  const chips=document.getElementById('scenarios');chips.innerHTML='';
+  SCENARIOS.forEach(s=>{
+    const b=document.createElement('button');b.textContent=s.n;if(s.k===current)b.className='on';
+    b.onclick=()=>{current=s.k;render();};chips.appendChild(b);
+  });
+
+  document.getElementById('tiles').innerHTML=
+    '<div class="tile"><div class="k">Printer</div><div class="v" style="font-size:14px">'+S.state+'</div>'+
+      '<div class="s">'+(S.pct!=null?S.pct+'% · ':'')+'reading '+S.age+' s old '+(S.stale?'<span class="chip amber">stale</span>':'<span class="chip">live</span>')+'</div></div>'+
+    '<div class="tile"><div class="k">Last write</div><div class="v" style="font-size:14px">'+S.wrote+'</div>'+
+      '<div class="s">'+(S.ok?'<span class="chip">landed</span> '+S.ms:'<span class="chip red">failed</span> '+S.ms)+'</div></div>'+
+    '<div class="tile"><div class="k">Why this picture</div><div class="v" style="font-size:14px">'+S.reason+'</div>'+
+      '<div class="s">'+REASONS.find(r=>r[0]===S.reason)[1]+'</div></div>'+
+    '<div class="tile"><div class="k">Transport</div><div class="v" style="font-size:14px">'+S.transport.split(' · ')[0]+'</div>'+
+      '<div class="s">'+S.transport.split(' · ')[1]+'</div></div>';
+
+  const c=document.getElementById('frame'), g=c.getContext('2d');
+  g.fillStyle='#000';g.fillRect(0,0,256,64);
+  const rgb=S.colour;
+  if(S.reason==='progress'){
+    g.fillStyle='rgb('+rgb.join(',')+')';g.fillRect(0,52,Math.round(S.pct/100*256),12);
+    word(g,S.pct+'%',190,8,4,rgb);word(g,'MK4IS',24,26,2,[0,90,0]);
+  } else {g.fillStyle='rgb('+rgb.join(',')+')';g.fillRect(0,0,256,64);}
+  document.getElementById('frameCap').textContent=S.cap;
+
+  const srcs=['all','printer','module'];
+  const f=document.getElementById('filters');f.innerHTML='';
+  srcs.forEach(s=>{
+    const b=document.createElement('button');b.textContent=(s==='all'?'everything':s);
+    if(s===filter)b.className='on';
+    b.onclick=()=>{filter=s;render();};f.appendChild(b);
+  });
+
+  document.getElementById('feed').innerHTML=S.feed.map(e=>{
+    const dim=(filter!=='all'&&filter!==e[1])?' dim':'';
+    return '<div class="ev'+dim+'"><span class="t">'+e[0]+'</span>'+
+           '<span class="src '+e[1]+'">'+e[1]+'</span>'+
+           '<span class="what">'+e[2]+'</span></div>';
+  }).join('');
+
+  document.getElementById('reasons').innerHTML=REASONS.map(r=>
+    '<tr'+(r[0]===S.reason?' class="this"':'')+'><td class="mono" style="font-size:11.5px;color:var(--ink)">'+r[0]+'</td><td class="hint">'+r[1]+(r[0]===S.reason?' <span class="live">this one</span>':'')+'</td></tr>').join('');
+}
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),2600);}
+render();
+</script>
+</body>
+</html>

@@ -76,8 +76,26 @@ product. One event is here and the mechanism for the rest is; the brightness fol
 zone the operator names, and a schedule has never yet moved a live panel's brightness at a window's edge
 — the install that carried it ran a window that reproduces the value already in force. What is still open
 is the rest of the animations — a print starting and a filament change are both wanted and neither is
-designed — the panel's richer display, and the composer. The open ones are written down in
-[`docs/product-requirements.md`](docs/product-requirements.md).
+designed — the panel's richer display, and the composer. What has not been built is written down
+in [`docs/product-requirements.md`](docs/product-requirements.md).
+
+## How it is driven, and where its configuration lives
+
+Three things here are not what a Connect module usually does.
+
+- **The module is driven by its own UI.** Its screens are served by the module and are the only editing
+  surface, so the host's settings pane is not where a binding, a colour, a layout or a pause is changed.
+- **Its configuration lives in the module's own store**, beside the installed module on Prusa Connect's
+  writable config volume: bindings, moments, the state table, layout, schedule, pause state and per-light
+  snapshots.
+- **That store survives a restart and an upgrade, but not a `module purge` or a fresh install**, which
+  wipes it — for which the per-light **`download a backup`** is the answer, writing that light's own
+  configuration to a file you keep outside the module.
+
+The host's settings, which used to carry this configuration, are read once at the first start as a
+migration source and never again. What the light is meant to become is specified in the locked
+[`docs/product-requirements.md`](docs/product-requirements.md); the eight screens it describes are design
+mockups, not the product, in [`docs/design/v2/`](docs/design/v2/README.md).
 
 ## What it is meant to do
 
@@ -105,8 +123,8 @@ Both halves of that are built:
 The 1D strip's share of the decision is made: the state's colour, and a fill for the job's progress. What
 is missing is the rest of the decision layer: which tier to use on a controller that can do more than
 colour, what animations play at the events the operator named, and what to do when two things want the
-light at once. Those are product decisions, not coding ones, and the ones still open are written down
-as open questions in [`docs/product-requirements.md`](docs/product-requirements.md).
+light at once. Those are product decisions, not coding ones, and what the module is still waiting on is written
+down in [`docs/product-requirements.md`](docs/product-requirements.md).
 
 ## Rendering
 
@@ -710,6 +728,8 @@ sees exactly what it saw before this feature existed.
 
 MIT — see [`LICENSE`](LICENSE), and `module.yaml` declares the same.
 
-The product requirements are a draft at [`docs/product-requirements.md`](docs/product-requirements.md).
-Nothing in it is locked; every decision the operator has not made is marked open. That file, not this
-README, is the place to argue with what the light should show.
+The product requirements are **locked** at
+[`docs/product-requirements.md`](docs/product-requirements.md): the operator approved them, and the
+eight screens they specify, on 2026-11-19, and that file — not this README — is the place to argue
+with what the light should show. The screens themselves are design mockups in
+[`docs/design/v2/`](docs/design/v2/README.md).

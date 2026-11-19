@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings — the module itself</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
+    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  .wrap{padding:20px 22px 80px;max-width:900px}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
+  .body{padding:6px 14px 12px}
+  .f{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .f:last-child{border-bottom:none}
+  .f .k{color:#3b4250}
+  .f .v{color:var(--ink);font-weight:560}
+  .mono{font-family:var(--mono);font-size:11.5px}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
+  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  input[type=text]{font:inherit;font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+  input[type=text]:focus{outline:2px solid var(--accent2);border-color:var(--accent)}
+  select{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff}
+  select:disabled{color:#a8aeb8;background:#f7f8fa;border-color:#eceff3}
+  button{font:inherit;font-size:12px;padding:4px 10px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .bad{margin-top:8px;background:var(--badbg);border:1px solid #f2cece;color:#8a1f1f;border-radius:8px;padding:9px 11px;font-size:12px;display:none}
+  .bad.on{display:block}
+  .good{margin-top:8px;background:var(--okbg);border:1px solid #cdead8;color:#14532d;border-radius:8px;padding:9px 11px;font-size:12px;display:none}
+  .good.on{display:block}
+  pre{font-family:var(--mono);font-size:11px;background:#0f1115;color:#c8ccd4;padding:10px 12px;border-radius:8px;overflow:auto;margin:8px 0 0}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Settings <i>›</i> the module itself</span>
+</header>
+
+<div class="wrap">
+  <div class="sub">Six tabs change what the light does. This one is about the thing doing it.</div>
+  <h1>This module</h1>
+
+  <div class="card">
+    <h2>What it is <span class="right">read from the manifest and the process</span></h2>
+    <div class="body">
+      <div class="f"><span class="k">Version</span><span class="v mono">0.2.0</span></div>
+      <div class="f"><span class="k">Kind</span><span class="v">sink — it writes to lights, it does not read them</span></div>
+      <div class="f"><span class="k">Memory budget</span><span class="v">32 MiB <span class="hint">— 16 MB measured in use</span></span></div>
+      <div class="f"><span class="k">Permissions asked</span><span class="v">observe <span class="hint">— it reads the printer as itself</span></span></div>
+      <div class="f"><span class="k">Egress declared</span><span class="v">HTTP 80, and UDP 4048 for pixels</span></div>
+      <div class="f"><span class="k">Platforms built</span><span class="v mono">linux_amd64 · linux_arm64 · darwin_arm64 · windows_amd64</span></div>
+      <div class="f"><span class="k">Lifecycle</span><span class="v">experimental <span class="hint">— it says so in the marketplace</span></span></div>
+    </div>
+    <div class="body" style="border-top:1px solid var(--line);background:#fafbfc">
+      <span class="hint">The budget is 32 MiB rather than 16 on purpose: the Go runtime is given 85% of it as a soft limit, and at 16 the ceiling lands inside normal use. <span class="live">measured</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Yours to set</h2>
+    <div class="body">
+      <div class="f">
+        <span class="k">Timezone <span class="hint">— the zone the brightness schedule is judged in</span></span>
+        <input type="text" id="tz" value="America/Denver" style="width:190px" oninput="checkTz()">
+      </div>
+      <div class="bad" id="tzBad"></div>
+      <div class="good" id="tzGood">a zone this build can load — the schedule is judged here, not on the container's clock</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>One thing to know before saving anything</h2>
+    <div class="body">
+      <p class="hint" style="font-size:12.5px"><b>A settings save restarts the module.</b> The host owns the configuration and the process reads it once at start, so nothing here may depend on memory surviving — a save is a restart, and the light blinks once on the way through.</p>
+      <div style="margin-top:10px"><button class="primary" onclick="save()">Save</button> <button onclick="toast('Nothing changed')">Discard</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* a stand-in for the real zone database: these load, anything else is refused the way the module refuses it */
+const ZONES=['UTC','America/Denver','America/New_York','America/Los_Angeles','America/Chicago',
+  'Europe/London','Europe/Berlin','Europe/Paris','Asia/Tokyo','Australia/Sydney'];
+
+function checkTz(){
+  const v=document.getElementById('tz').value.trim();
+  const bad=document.getElementById('tzBad'), good=document.getElementById('tzGood');
+  const ok=ZONES.indexOf(v)>=0;
+  bad.classList.toggle('on',!ok);
+  good.classList.toggle('on',ok);
+  if(!ok){
+    bad.textContent='timezone is "'+v+'", which is not a zone this build can load: write an IANA name such as America/Denver, because the schedule is judged in the zone you name and not in this process\u2019s own clock';
+  }
+}
+function save(){
+  const v=document.getElementById('tz').value.trim();
+  if(ZONES.indexOf(v)<0){toast('Refused — fix the timezone first');return;}
+  toast('Saved — the module restarts, and the light blinks once');
+}
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),2600);}
+checkTz();
+</script>
+</body>
+</html>

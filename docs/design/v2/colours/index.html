@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colours — what each state looks like</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
+    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  .wrap{padding:20px 22px 80px;max-width:1080px}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .card>h2{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650;display:flex;gap:8px;align-items:center}
+  .card>h2 .right{margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;font-size:11px}
+  .st{padding:12px 14px 13px}
+  .st .top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .st .top b{font-size:13px}
+  .st .top .hex{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-left:auto}
+  input[type=color]{width:26px;height:24px;padding:0;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
+  .prev{display:flex;gap:10px;align-items:flex-start}
+  canvas{background:#000;border-radius:4px;image-rendering:pixelated;display:block}
+  .prev .lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;text-align:center}
+  .row2{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12px;flex-wrap:wrap}
+  .row2 label{color:#3b4250;min-width:40px}
+  select,input[type=text],input[type=number]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .warnline{font-size:11px;color:var(--bad);margin-top:6px}
+  .foot{padding:10px 14px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .beh{padding:6px 14px 12px}
+  .beh div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px;align-items:center}
+  .beh div:last-child{border-bottom:none}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Colours <i>›</i> what each state looks like on a light</span>
+</header>
+
+<div class="wrap">
+  <div class="sub">One row per condition the printer can be in. A state is not a moment — it lasts until something else happens.</div>
+  <h1>What each state looks like</h1>
+
+  <div class="note">
+    <div class="ico">i</div>
+    <div><b>Every state can carry a word.</b> It holds until something changes — by default forever, or for a timeout you set — and the word is <b>yours to edit</b>, which is also how this becomes other languages. What limits that is the font, not the text: see the note at the bottom.</div>
+  </div>
+
+  <div class="grid" id="states"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Fill behaviour <span class="right">the same on a panel and a strip</span></h2>
+    <div class="beh">
+      <div><span>Progress shown as</span><select><option>a fill, growing</option><option>an emptiness, shrinking</option></select></div>
+      <div><span>Rounding of the boundary</span><select><option>round</option><option>floor</option><option>ceiling</option></select></div>
+      <div><span>At 0%, before the first percent</span><select><option>the waiting colour, whole light</option><option>empty</option></select></div>
+      <div><span>At 100%</span><select><option>full, in the state colour</option><option>flash briefly, then full</option></select></div>
+      <div><span>A job that stops reporting</span><select><option>hold the colour for finished or stopped</option><option>always dim to "can't reach"</option></select></div>
+      <div><span>The colour of what is not lit</span><input type="color" value="#000000"></div>
+    </div>
+    <div class="foot">Only <b>a job that stops reporting</b> differs from what ships today: a finished job keeps its green through a silence, a printing one dims to "can't reach".</div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>The limit on changeable words <span class="right">why languages are not free</span></h2>
+    <div style="padding:6px 14px 12px">
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>What the font draws today</span><span class="hint">43 glyphs — A–Z, 0–9, <span class="mono">% . - _ /</span> and space</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>Accented Latin — É, Ü, Å, Ø</span><span class="hint">feasible: about thirty more 5×7 glyphs</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px">
+        <span>Greek, Cyrillic</span><span class="hint">feasible, but a second alphabet rather than a tweak</span></div>
+      <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:12.5px">
+        <span>Chinese, Japanese, Korean</span><span class="hint">not at 5×7 — a legible glyph needs 12×12 and up</span></div>
+    </div>
+    <div class="foot">Type a character the font does not have and the preview leaves a gap and says so, because that is exactly what the panel would do. <b>Any word made of A–Z and digits works today</b>; accented characters are a small piece of work; CJK needs a different font and a much wider glyph budget.</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const F={A:[0x0E,0x11,0x11,0x1F,0x11,0x11,0x11],B:[0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],C:[0x0F,0x10,0x10,0x10,0x10,0x10,0x0F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],G:[0x0F,0x10,0x10,0x17,0x11,0x11,0x0F],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],J:[0x01,0x01,0x01,0x01,0x01,0x11,0x0E],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],L:[0x10,0x10,0x10,0x10,0x10,0x10,0x1F],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],O:[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],P:[0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],Q:[0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],R:[0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],T:[0x1F,0x04,0x04,0x04,0x04,0x04,0x04],U:[0x11,0x11,0x11,0x11,0x11,0x11,0x0E],V:[0x11,0x11,0x11,0x11,0x11,0x0A,0x04],W:[0x11,0x11,0x11,0x15,0x15,0x1B,0x11],X:[0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],Y:[0x11,0x11,0x0A,0x04,0x04,0x04,0x04],Z:[0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'2':[0x0E,0x11,0x01,0x06,0x08,0x10,0x1F],'3':[0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'5':[0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E],'6':[0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],'7':[0x1F,0x01,0x02,0x04,0x08,0x08,0x08],'8':[0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],'9':[0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],'.':[0,0,0,0,0,0x06,0x06],'-':[0,0,0,0x1F,0,0,0],'_':[0,0,0,0,0,0,0x1F],'/':[0x01,0x02,0x04,0x08,0x10,0,0],' ':[0,0,0,0,0,0,0]};
+function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
+  for(const ch of s){const gl=F[ch]||null;
+    if(gl){for(let r=0;r<7;r++)for(let c=0;c<5;c++)if(gl[r]&(0x10>>c))g.fillRect(x+c*sc,y+r*sc,sc,sc);}
+    x+=6*sc;}}
+const tw=(s,sc)=>s.length*6*sc;
+const missing=s=>[...new Set([...s.toUpperCase()].filter(ch=>!F[ch]))];
+
+let STATES=[
+ {k:'printing',    n:'printing',          c:'#00aa00', word:'PRINTING', won:true, hold:'forever', fill:0.41, note:'a job running — the word replaces the bar and digits'},
+ {k:'paused',      n:'paused',            c:'#d2a500', word:'PAUSED',   won:true, hold:'forever', fill:0,    note:'a job on the bed, frozen'},
+ {k:'attention',   n:'attention',         c:'#d2a500', word:'CHECK',    won:true, hold:'forever', fill:0,    note:'needs a person: filament, first layer'},
+ {k:'finished',    n:'finished',          c:'#00aa00', word:'FINISHED', won:true, hold:'forever', fill:1,    note:'holds until the next job starts'},
+ {k:'idle',        n:'idle',              c:'#d2a500', word:'IDLE',     won:true, hold:'forever', fill:0,    note:'nothing on the bed'},
+ {k:'error',       n:'error',             c:'#c80000', word:'ERROR',    won:true, hold:'forever', fill:0,    note:'until it is cleared'},
+ {k:'stopped',     n:'stopped',           c:'#505050', word:'STOPPED',  won:true, hold:'forever', fill:0,    note:'a job that ended badly'},
+ {k:'unreachable', n:'light unreachable', c:'#460000', word:'OFFLINE',  won:true, hold:'forever', fill:0,    note:'the module cannot reach the light'},
+ {k:'lost',        n:'printer lost',      c:'#460000', word:'NO PRINT', won:true, hold:'forever', fill:0,    note:'no reading from the printer'},
+ {k:'unknown',     n:'unknown',           c:'#001546', word:'UNKNOWN',  won:true, hold:'forever', fill:0,    note:'a value this build cannot read'}
+];
+const hexRGB=h=>[parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)];
+
+function render(){
+  const host=document.getElementById('states');host.innerHTML='';
+  STATES.forEach((s,i)=>{
+    const card=document.createElement('div');card.className='card';
+    card.innerHTML=
+      '<div class="st">'+
+        '<div class="top"><input type="color" value="'+s.c+'"><b>'+s.n+'</b><span class="hex">'+hexRGB(s.c).join(',')+'</span></div>'+
+        '<div class="prev">'+
+          '<div><canvas class="pv" width="128" height="32" style="width:256px;height:64px"></canvas><div class="lbl">panel · 256×64</div></div>'+
+          '<div><canvas class="sv" width="48" height="4" style="width:126px;height:10px"></canvas><div class="lbl">strip · 48</div></div>'+
+        '</div>'+
+        '<div class="row2"><input type="checkbox" data-word '+(s.won?'checked':'')+'><label>word</label>'+
+          '<input type="text" data-wtext value="'+s.word+'" style="width:110px" '+(s.won?'':'disabled')+'>'+
+          '<span class="hint">holds</span>'+
+          '<select data-hold '+(s.won?'':'disabled')+'>'+
+            ['forever','30 s','60 s','5 min'].map(o=>'<option'+(o===s.hold?' selected':'')+'>'+o+'</option>').join('')+
+          '</select></div>'+
+        '<div class="warnline" data-warn style="display:none"></div>'+
+        '<div class="hint" style="margin-top:7px">'+s.note+'</div>'+
+      '</div>';
+    host.appendChild(card);
+    card.querySelector('input[type=color]').oninput=e=>{s.c=e.target.value;card.querySelector('.hex').textContent=hexRGB(s.c).join(',');paint(card,s);};
+    const cb=card.querySelector('input[data-word]');
+    cb.onchange=e=>{s.won=e.target.checked;
+      card.querySelector('input[data-wtext]').disabled=!s.won;
+      card.querySelector('select[data-hold]').disabled=!s.won;
+      paint(card,s);};
+    card.querySelector('input[data-wtext]').oninput=e=>{s.word=e.target.value;paint(card,s);};
+    card.querySelector('select[data-hold]').onchange=e=>{s.hold=e.target.value;};
+    paint(card,s);
+  });
+}
+function paint(card,s){
+  const rgb=hexRGB(s.c);
+  const p=card.querySelector('.pv'), g=p.getContext('2d');
+  g.fillStyle='#000';g.fillRect(0,0,128,32);
+  const warn=card.querySelector('[data-warn]');
+
+  if(s.won && s.word){
+    let size=1;
+    for(let sc=4;sc>=1;sc--){ if(tw(s.word,sc)<=122 && 7*sc<=30){ size=sc; break; } }
+    const w=tw(s.word,size);
+    word(g,s.word.toUpperCase(),Math.round(Math.max(2,(128-w)/2)),Math.round((32-7*size)/2),size,rgb);
+    const miss=missing(s.word);
+    if(miss.length){warn.style.display='block';
+      warn.textContent='not drawable by this font: '+miss.join(' ')+' — the panel would leave a gap there';}
+    else warn.style.display='none';
+  } else {
+    g.fillStyle='rgb('+rgb.join(',')+')';g.fillRect(0,0,128,32);
+    if(s.fill>0 && s.fill<1){ g.fillStyle='#000';g.fillRect(Math.round(s.fill*128),0,128,32); }
+    warn.style.display='none';
+  }
+
+  const st=card.querySelector('.sv'), sg=st.getContext('2d');
+  sg.fillStyle='#000';sg.fillRect(0,0,48,4);
+  sg.fillStyle='rgb('+rgb.join(',')+')';
+  if(s.fill>0&&s.fill<1) sg.fillRect(0,0,Math.round(s.fill*48),4);
+  else sg.fillRect(0,0,48,4);
+}
+render();
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),1900);}
+</script>
+</body>
+</html>

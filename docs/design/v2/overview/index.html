@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Right now</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
+    --pause:#475569;--pausebg:#eef1f5;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  .wrap{padding:26px 22px 80px;max-width:1000px}
+  .top{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
+  .top .spacer{flex:1}
+  h1{font-size:22px;font-weight:660;letter-spacing:-.4px}
+  h2.sect{font-size:11px;text-transform:uppercase;letter-spacing:.75px;color:var(--muted);font-weight:650;margin:26px 0 10px}
+  .summary{font-size:13.5px;color:var(--muted);margin-top:5px}
+  .summary b{color:var(--ink);font-weight:600}
+  .summary .bad{color:var(--bad);font-weight:600}
+  .summary .paused{color:var(--pause);font-weight:600}
+  .btn{font:inherit;font-size:12px;padding:5px 11px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;white-space:nowrap}
+  .btn:hover{border-color:#c6ccd4}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.small{font-size:11.5px;padding:3px 9px}
+  .menu{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 6px 18px rgba(0,0,0,.06)}
+  .menu .lbl{font-size:11.5px;color:var(--muted);align-self:center;margin-right:2px}
+  .menu button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer}
+  .menu button:hover{border-color:var(--accent);color:var(--accent);background:var(--accent2)}
+  .menu button.cancel{border-color:transparent;color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .row{display:grid;grid-template-columns:176px 1fr auto;gap:18px;align-items:center;padding:16px 18px;border-bottom:1px solid #f1f3f5}
+  .row:last-child{border-bottom:none}
+  .row.isPaused{background:#fbfbfc}
+  canvas{background:#000;border-radius:5px;image-rendering:pixelated;display:block;transition:filter .2s}
+  .isPaused canvas{filter:grayscale(.85) brightness(.55)}
+  .what{font-size:12.5px;color:#3b4250}
+  .what .prn{font-weight:600}
+  .what .seg{color:var(--muted)}
+  .what .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600;white-space:nowrap}
+  .chip.amber{background:var(--warnbg);color:var(--warn)}
+  .chip.red{background:var(--badbg);color:var(--bad)}
+  .chip.pause{background:var(--pausebg);color:var(--pause)}
+  .chip.grey{background:#f1f2f4;color:var(--muted)}
+  .meta{text-align:right;font-size:11.5px;color:var(--muted);white-space:nowrap}
+  .meta .nm{font-size:13px;font-weight:620;color:var(--ink)}
+  .meta .acts{margin-top:7px;display:flex;gap:6px;justify-content:flex-end}
+  .foot{padding:11px 18px;background:#fafbfc;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .banner{display:none;margin-top:16px;border-radius:9px;padding:11px 14px;font-size:12.5px;background:var(--pausebg);border:1px solid #d8dee7;color:#334155}
+  .banner.on{display:flex;align-items:center;gap:10px}
+  .banner .spacer{flex:1}
+  .toggles{display:flex;gap:7px;margin-top:14px}
+  .toggles button{font:inherit;font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:99px;cursor:pointer;color:var(--muted)}
+  .toggles button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  /* quick bind */
+  .bind{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  .col{background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .col .h{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:650;padding:9px 13px;border-bottom:1px solid var(--line);background:#fafbfc;display:flex;gap:8px;align-items:center}
+  .col .h .right{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11px;font-weight:500}
+  .item{display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:1px solid #f1f3f5;font-size:12.5px;cursor:pointer}
+  .item:last-child{border-bottom:none}
+  .item:hover{background:#fcfcfd}
+  .item.sel{background:var(--accent2);box-shadow:inset 3px 0 0 var(--accent)}
+  .item .nm{font-weight:600}
+  .item .sub{font-size:11px;color:var(--muted)}
+  .item .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .defaults{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;font-size:12px;color:#3b4250}
+  .defaults b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);margin-bottom:6px}
+  .defaults ul{margin:0 0 0 16px}
+  .defaults li{padding:2px 0}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:60}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Right now</span>
+</header>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>Right now</h1>
+      <div class="summary" id="summary"></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="globalBtn" onclick="toggleMenu('global')">Pause everything</button>
+  </div>
+
+  <div class="menu" id="menu-global" style="display:none"></div>
+  <div class="banner" id="banner"></div>
+  <div class="toggles" id="toggles"></div>
+
+  <div class="card" id="lights"></div>
+
+  <h2 class="sect">Put a printer on a light</h2>
+  <div class="bind">
+    <div class="col"><div class="h">Printers <span class="right" id="pCount"></span></div><div id="printers"></div></div>
+    <div class="col"><div class="h">Lights found <span class="right" id="lCount"></span></div><div id="discovered"></div></div>
+  </div>
+
+  <div class="defaults">
+    <b>What a one-click bind does</b>
+    <ul>
+      <li><b>the whole light</b> — no segment, unless the light has several and you pick one later</li>
+      <li><b>brightness</b> follows your day schedule if you have one, otherwise 128</li>
+      <li><b>colours</b> from your table, untouched — printing green, waiting amber, error red</li>
+      <li><b>a panel</b> gets the bar, the percentage and the job name; <b>a strip</b> gets the fill</li>
+      <li><b>events</b> — the finished word on a panel, its colour on a strip; the rest off until you turn them on</li>
+    </ul>
+  </div>
+
+  <div class="foot">Pick a printer, then press bind on a light — or <b>bind in order</b> to pair everything still unbound. The same printer may sit on several lights; a second room is the same one click.</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const F={F:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],I:[0x1F,0x04,0x04,0x04,0x04,0x04,0x1F],N:[0x11,0x19,0x15,0x13,0x11,0x11,0x11],S:[0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E],H:[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],E:[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],D:[0x1E,0x11,0x11,0x11,0x11,0x11,0x1E],M:[0x11,0x1B,0x15,0x15,0x11,0x11,0x11],K:[0x11,0x12,0x14,0x18,0x14,0x12,0x11],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'0':[0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],'%':[0x18,0x19,0x02,0x04,0x08,0x13,0x03],' ':[0,0,0,0,0,0,0]};
+function word(g,s,x,y,sc,rgb){g.fillStyle='rgb('+rgb.join(',')+')';
+  for(const ch of s){const gl=F[ch]||F[' '];for(let r=0;r<7;r++)for(let c=0;c<5;c++)if(gl[r]&(0x10>>c))g.fillRect(x+c*sc,y+r*sc,sc,sc);x+=6*sc;}}
+
+const GREEN=[0,170,0], AMBER=[210,165,0], LOST=[70,0,0];
+const DURATIONS=[['10 minutes',10],['1 hour',60],['6 hours',360],['1 day',1440],['3 days',4320],['forever',Infinity]];
+
+/* the lights the module has, and what is on them */
+let BINDINGS=[
+ {id:'b1', light:'morpheus', addr:'10.0.0.136', dims:'256 × 64 panel', kind:'panel', printer:'Hermes MK4', seg:'whole light',
+  colour:GREEN, pct:41, state:'printing', wrote:'wrote 2 s ago', pausedFor:null},
+ {id:'b2', light:'CyberDesk', addr:'10.0.0.253', dims:'48 LEDs · 6 zones', kind:'strip', printer:'Mini', seg:'Front 1',
+  colour:AMBER, pct:0, state:'idle', wrote:'wrote 3 m ago', zone:[14,24], pausedFor:null}
+];
+const PRINTERS=['Hermes MK4','Mini','XL','Core One'];
+let DISCOVERED=[
+ {name:'WLED-8F2A', addr:'10.0.0.87', px:'60 LEDs', kind:'strip', dims:'60 LEDs'},
+ {name:'WLED-3C11', addr:'10.0.0.142', px:'144 LEDs · 3 zones', kind:'strip', dims:'144 LEDs · 3 zones'}
+];
+let globalPausedFor=null, scenario='fine', menuOpen=null, pickedPrinter=null;
+
+const human=m=>{
+  if(m==null||m===Infinity) return 'forever';
+  if(m<60) return m+' minute'+(m===1?'':'s');
+  if(m<1440){const h=Math.round(m/60);return h+' hour'+(h===1?'':'s');}
+  const d=Math.round(m/1440);return d+' day'+(d===1?'':'s');
+};
+const isPaused=L=>globalPausedFor!==null||L.pausedFor!==null;
+
+function summary(){
+  const el=document.getElementById('summary');
+  if(globalPausedFor!==null){
+    el.innerHTML='<span class="paused">Everything is paused</span> — no writes, no log lines. '+human(globalPausedFor)+'.';return;
+  }
+  const bits=['<b>'+BINDINGS.length+' light'+(BINDINGS.length===1?'':'s')+'</b> showing <b>'+BINDINGS.length+' printer'+(BINDINGS.length===1?'':'s')+'</b>'];
+  if(scenario==='quiet') bits.push('<span class="bad">CyberDesk has not answered for 3 minutes</span>');
+  else bits.push('nothing needs you');
+  const paused=BINDINGS.filter(l=>l.pausedFor!==null).length;
+  if(paused) bits.push('<span class="paused">'+paused+' paused</span>');
+  if(DISCOVERED.length) bits.push(DISCOVERED.length+' light'+(DISCOVERED.length===1?'':'s')+' still to set up');
+  el.innerHTML=bits.join(' · ');
+}
+
+function banner(){
+  const b=document.getElementById('banner');
+  if(globalPausedFor===null){b.classList.remove('on');b.innerHTML='';document.getElementById('globalBtn').textContent='Pause everything';return;}
+  b.classList.add('on');
+  b.innerHTML='<b>All updates paused</b> <span>— nothing written, nothing logged for '+human(globalPausedFor)+'.</span><span class="spacer"></span><button class="btn small" onclick="resumeAll()">Resume now</button>';
+  document.getElementById('globalBtn').textContent='Paused';
+}
+
+function drawPanel(cv,L){
+  const g=cv.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,256,64);
+  if(L.lost){g.fillStyle='rgb('+LOST.join(',')+')';g.fillRect(0,0,256,64);return;}
+  if(L.state==='printing'){
+    g.fillStyle='rgb('+L.colour.join(',')+')';g.fillRect(0,52,Math.round(L.pct/100*256),12);
+    word(g,L.pct+'%',190,8,4,L.colour);word(g,'MK4IS',24,26,2,[0,90,0]);
+  } else {g.fillStyle='rgb('+L.colour.join(',')+')';g.fillRect(0,0,256,64);}
+}
+function drawStrip(cv,L){
+  const g=cv.getContext('2d');g.fillStyle='#000';g.fillRect(0,0,48,8);
+  const col=L.lost?LOST:L.colour,[a,b]=L.zone||[0,48];
+  g.fillStyle='rgb('+col.join(',')+')';
+  for(let i=a;i<b;i++)g.fillRect(i,1,1,6);
+  g.fillStyle='rgba(255,255,255,.05)';
+  for(let x=1;x<48;x++)g.fillRect(x,0,0.08,8);
+}
+
+function drawOff(cv,L){
+  // paused means the light is off. Nothing is drawn on it, because nothing is on it.
+  const g=cv.getContext('2d');
+  g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);
+  if(L.kind!=='panel'){
+    // a borrowed zone was handed back: the rest of the strip belongs to its owner, so it is not drawn here
+    g.fillStyle='rgba(255,255,255,.06)';
+    for(let x=1;x<cv.width;x++)g.fillRect(x,0,0.08,cv.height);
+  }
+}
+function menuHTML(scope){
+  return '<span class="lbl">stop writing for</span>'+
+    DURATIONS.map(([n,m])=>'<button onclick="applyPause(\''+scope+'\','+m+')">'+n+'</button>').join('')+
+    '<button class="cancel" onclick="toggleMenu(null)">cancel</button>';
+}
+function toggleMenu(scope){
+  menuOpen=(menuOpen===scope)?null:scope;
+  const g=document.getElementById('menu-global');
+  g.style.display=(menuOpen==='global')?'flex':'none';g.innerHTML=menuHTML('global');render();
+}
+function applyPause(scope,minutes){
+  if(scope==='global'){globalPausedFor=minutes;toast('Everything paused for '+human(minutes)+' — the lights are switched off, then nothing is written or logged');}
+  else{
+    const L=BINDINGS.find(l=>l.id===scope);
+    L.pausedFor=minutes;
+    toast(L.seg==='whole light'
+      ? L.light+' paused for '+human(minutes)+' — the light is switched off, then nothing is written'
+      : L.light+' paused for '+human(minutes)+' — '+L.seg+' is handed back to its owner, then nothing is written');
+  }
+  menuOpen=null;document.getElementById('menu-global').style.display='none';render();
+}
+function resumeAll(){globalPausedFor=null;BINDINGS.forEach(l=>l.pausedFor=null);render();toast('Resumed — every light repainted immediately');}
+function resumeOne(id){const L=BINDINGS.find(l=>l.id===id);L.pausedFor=null;render();toast(L.light+' resumed — repainted immediately');}
+
+/* ---------- quick bind ---------- */
+function pickPrinter(name){pickedPrinter=(pickedPrinter===name)?null:name;render();}
+
+function createBinding(lightName,printer){
+  const d=DISCOVERED.find(x=>x.name===lightName);if(!d)return false;
+  BINDINGS.push({id:'b'+(BINDINGS.length+1), light:d.name, addr:d.addr, dims:d.dims, kind:d.kind,
+    printer:printer, seg:'whole light', colour:AMBER, pct:0, state:'idle', wrote:'wrote just now', pausedFor:null});
+  DISCOVERED=DISCOVERED.filter(x=>x.name!==lightName);
+  return true;
+}
+function bind(lightName){
+  if(!pickedPrinter){toast('Pick a printer first');return;}
+  const p=pickedPrinter;
+  if(createBinding(lightName,p)){
+    pickedPrinter=null;render();
+    toast(p+' → '+lightName+' · whole light, brightness to the day, colours unchanged');
+  }
+}
+function bulkBind(){
+  if(!pickedPrinter){toast('Pick a printer first');return;}
+  const p=pickedPrinter;let n=0;
+  [...DISCOVERED].forEach(d=>{ if(createBinding(d.name,p)) n++; });
+  pickedPrinter=null;render();
+  toast(n?(n+' light'+(n===1?'':'s')+' bound to '+p+' with the defaults'):'Nothing left to bind');
+}
+
+function render(){
+  summary();banner();
+  const host=document.getElementById('lights');host.innerHTML='';
+  document.getElementById('globalBtn').onclick=()=>toggleMenu('global');
+
+  const tg=document.getElementById('toggles');tg.innerHTML='';
+  [['fine','everything answering'],['quiet','as if one light went quiet']].forEach(([k,n])=>{
+    const b=document.createElement('button');b.textContent=n;if(k===scenario)b.className='on';
+    b.onclick=()=>{scenario=k;render();};tg.appendChild(b);
+  });
+
+  if(!BINDINGS.length){
+    host.innerHTML='<div style="padding:20px 18px" class="hint">No lights are bound yet. Pick a printer below and bind it to one of the lights found on your network.</div>';
+  }
+
+  BINDINGS.forEach(L=>{
+    const lost = scenario==='quiet' && L.id==='b2';
+    const view={...L, lost};
+    const paused=isPaused(L);
+    const inMenu = menuOpen===L.id;
+
+    const row=document.createElement('div');row.className='row'+(paused?' isPaused':'');
+    const cv=document.createElement('canvas');
+    if(L.kind==='panel'){cv.width=256;cv.height=64;cv.style.cssText='width:176px;height:44px';}
+    else{cv.width=48;cv.height=8;cv.style.cssText='width:176px;height:30px';}
+
+    let chip;
+    if(globalPausedFor!==null) chip='<span class="chip pause">paused with everything</span>';
+    else if(L.pausedFor!==null) chip='<span class="chip pause">paused · '+human(L.pausedFor)+'</span>';
+    else if(lost) chip='<span class="chip red">not answering</span>';
+    else if(L.state==='printing') chip='<span class="chip">printing · '+L.pct+'%</span>';
+    else chip='<span class="chip amber">idle</span>';
+
+    let sub;
+    if(paused) sub = L.seg==='whole light'
+      ? 'switched off — nothing written or logged until it resumes'
+      : L.seg+' handed back to its owner — nothing written until it resumes';
+    else if(lost) sub='could not be reached — the picture is what it would show once it answers';
+    else sub=L.state==='printing'?'the percentage and the job name, swapping every fifteen seconds':'nothing on the bed since 05:31';
+
+    const act = L.pausedFor!==null
+      ? '<button class="btn small" onclick="resumeOne(\''+L.id+'\')">Resume</button>'
+      : '<button class="btn small" onclick="toggleMenu(\''+L.id+'\')"'+(globalPausedFor!==null?' disabled':'')+'>Pause</button>';
+
+    row.innerHTML='<div></div>'+
+      '<div class="what"><span class="prn">'+L.printer+'</span> <span class="seg">on '+L.seg+'</span>'+
+        '<div class="sub">'+sub+'</div>'+(inMenu?'<div class="menu" style="margin-top:9px">'+menuHTML(L.id)+'</div>':'')+'</div>'+
+      '<div class="meta"><span class="nm">'+L.light+'</span><div class="mono" style="font-size:11px;color:var(--muted)">'+L.dims+'</div>'+
+        '<div style="margin-top:5px">'+chip+'</div>'+
+        '<div style="margin-top:3px">'+(paused?'last wrote '+L.wrote.replace('wrote ','')+' ago':L.wrote)+'</div>'+
+        '<div class="acts">'+act+'</div></div>';
+    row.firstChild.appendChild(cv);
+    host.appendChild(row);
+    if(paused) drawOff(cv,L);
+    else if(L.kind==='panel') drawPanel(cv,view);
+    else drawStrip(cv,view);
+  });
+
+  /* the printers */
+  const pc=document.getElementById('printers');pc.innerHTML='';
+  document.getElementById('pCount').textContent=PRINTERS.length+' · from Prusa Connect';
+  PRINTERS.forEach(p=>{
+    const on=BINDINGS.filter(b=>b.printer===p).map(b=>b.light);
+    const d=document.createElement('div');d.className='item'+(pickedPrinter===p?' sel':'');
+    d.innerHTML='<span class="nm">'+p+'</span>'+
+      '<span class="sub">'+(on.length?('on '+on.join(', ')):'no light yet')+'</span>'+
+      '<span class="right">'+(pickedPrinter===p?'<span class="hint">picked</span>':'')+'</span>';
+    d.onclick=()=>pickPrinter(p);
+    pc.appendChild(d);
+  });
+
+  /* the discovered lights */
+  const dc=document.getElementById('discovered');dc.innerHTML='';
+  const lc=document.getElementById('lCount');
+  lc.textContent=DISCOVERED.length+' · auto-discovered';
+  const hdr=lc.parentElement;
+  hdr.querySelectorAll('button').forEach(b=>b.remove());
+  if(DISCOVERED.length){
+    const bb=document.createElement('button');
+    bb.className='btn small';bb.textContent='bind them all';bb.style.marginLeft='8px';
+    bb.disabled=!pickedPrinter;bb.onclick=bulkBind;
+    hdr.appendChild(bb);
+  }
+  if(!DISCOVERED.length){
+    dc.innerHTML='<div style="padding:12px 13px" class="hint">Every light that answered is now in the module.</div>';
+  }
+  DISCOVERED.forEach(x=>{
+    const d=document.createElement('div');d.className='item';
+    d.innerHTML='<span class="nm">'+x.name+'</span><span class="sub">'+x.px+' · '+x.addr+'</span>'+
+      '<span class="right"></span>';
+    const b=document.createElement('button');b.className='btn small primary';
+    b.textContent=pickedPrinter?('bind '+pickedPrinter.split(' ')[0]):'bind';
+    b.disabled=!pickedPrinter;
+    b.onclick=e=>{e.stopPropagation();bind(x.name);};
+    d.querySelector('.right').appendChild(b);
+    dc.appendChild(d);
+  });
+}
+
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),3200);}
+render();
+</script>
+</body>
+</html>

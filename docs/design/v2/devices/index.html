@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Devices — the lights themselves</title>
+<style>
+  :root{--bg:#f5f6f8;--panel:#fff;--ink:#15171c;--muted:#6b7280;--line:#e2e5ea;--accent:#f26b21;--accent2:#fff1e8;
+    --ok:#15803d;--okbg:#e9f6ee;--warn:#b45309;--warnbg:#fdf3e3;--bad:#b91c1c;--badbg:#fdecec;
+    --purple:#7c3aed;--purplebg:#f3eeff;--r:10px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased}
+  header.app{background:#14161b;color:#c5cad3;padding:12px 22px;display:flex;align-items:center;gap:14px}
+  header.app b{color:#fff;font-size:13px}
+  header.app .crumb{font-size:12px;color:#8b93a1}
+  header.app .crumb i{color:#4b5563;font-style:normal;padding:0 4px}
+  .wrap{padding:20px 22px 80px;max-width:1040px}
+  .top{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .top .spacer{flex:1}
+  h1{font-size:17px;font-weight:640;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .note{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:11px 14px;margin-top:14px;font-size:12.5px;color:#3b4250;display:flex;gap:10px}
+  .note .ico{flex:none;width:18px;height:18px;border-radius:50%;background:var(--accent2);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:1px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-top:14px;overflow:hidden}
+  .card>.lh{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);background:#fbfbfc}
+  .card>.lh b{font-size:13px}
+  .card>.lh .addr{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .card>.lh .right{margin-left:auto;display:flex;gap:7px;align-items:center}
+  .facts{display:flex;gap:26px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid #f1f3f5}
+  .facts div .k{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:650}
+  .facts div .v{font-size:12.5px;font-weight:560}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;padding:7px 14px;border-bottom:1px solid var(--line);background:#fff}
+  td{padding:7px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .sect{padding:11px 14px;border-top:1px solid #f1f3f5}
+  .sect .h{font-size:11px;text-transform:uppercase;letter-spacing:.55px;color:var(--muted);font-weight:650;margin-bottom:6px}
+  button{font:inherit;font-size:12px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#c6ccd4;background:#fafbfc}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.tiny{padding:2px 7px;font-size:11px}
+  button.danger{color:var(--bad);border-color:#f0d6d6}
+  select,input[type=text]{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 7px;border-radius:99px;background:var(--okbg);color:var(--ok);font-weight:600}
+  .chip.amber{background:var(--warnbg);color:var(--warn)}
+  .chip.grey{background:#f1f2f4;color:var(--muted)}
+  .hint{font-size:11.5px;color:var(--muted)}
+  .mono{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .need{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--purple);background:var(--purplebg);border:1px solid #e6dcff;padding:1px 5px;border-radius:4px;font-weight:700}
+  .live{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  .found{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .found:last-child{border-bottom:none}
+  .found .new{font-size:9px;letter-spacing:.35px;text-transform:uppercase;color:var(--ok);background:var(--okbg);border:1px solid #cdead8;padding:1px 5px;border-radius:4px;font-weight:700}
+  .found .right{margin-left:auto}
+  .rules{padding:6px 14px 12px}
+  .rules div{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .rules div:last-child{border-bottom:none}
+  .veil{position:fixed;inset:0;background:rgba(12,14,18,.45);display:none;align-items:center;justify-content:center;z-index:70;padding:20px}
+  .veil.on{display:flex}
+  .modal{background:#fff;border-radius:12px;width:min(680px,100%);max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.28)}
+  .modal header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center}
+  .modal header h3{font-size:14px;font-weight:650}
+  .modal header .x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--muted);cursor:pointer}
+  .mbody{padding:15px 18px}
+  .mrow{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;padding:7px 0;font-size:12.5px}
+  .mrow>label{color:#3b4250}
+  .modal footer{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;background:#fafbfc}
+  .maprow{display:grid;grid-template-columns:1fr 18px 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #f1f3f5;font-size:12.5px}
+  .maprow:last-of-type{border-bottom:none}
+  .maprow .arrow{text-align:center;color:var(--muted)}
+  .warnbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--warnbg);border:1px solid #f0dcb4;color:#7c4a03}
+  .okbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--okbg);border:1px solid #cdead8;color:#14532d}
+  .badbox{margin-top:12px;border-radius:8px;padding:9px 11px;font-size:12px;background:var(--badbg);border:1px solid #f2cece;color:#8a1f1f}
+  .toast{position:fixed;right:20px;bottom:20px;background:#14161b;color:#fff;font-size:12px;padding:8px 12px;border-radius:7px;opacity:0;transform:translateY(6px);transition:.16s;pointer-events:none;z-index:80}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<header class="app">
+  <b>WLED Printer Status</b>
+  <span class="crumb">Devices <i>›</i> the lights themselves</span>
+</header>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="sub">Bindings says which printer is on which light. This says what the light is.</div>
+      <h1>Lights in the module</h1>
+    </div>
+    <div class="spacer"></div>
+    <button onclick="search()">Search the network</button>
+  </div>
+
+  <div class="note">
+    <div class="ico">i</div>
+    <div><b>One screen per light, and nothing about printers on it.</b> Everything here comes from the light itself — version, pixels, segments, presets — so the module never holds a copy that can drift. If a light dies and you replace the hardware, <b>Replace this light</b> moves every printer onto the new one.</div>
+  </div>
+
+  <div id="devices"></div>
+
+  <div class="card">
+    <div class="lh"><b>Found on the network, not added</b><span class="right"><span class="chip grey" id="foundCount">2 found</span></span></div>
+    <div id="found"></div>
+    <div style="padding:9px 14px;border-top:1px solid var(--line);background:#fafbfc" class="hint">Discovery is best effort — a light on another subnet, or a network that blocks multicast, will not answer. Adding by address is always there.</div>
+  </div>
+
+  <div class="card">
+    <div class="lh"><b>What is refused, and why</b></div>
+    <div class="rules">
+      <div><span>A light that does not answer when added</span><span class="hint">refused at the door — not saved and left broken</span></div>
+      <div><span>Removing a light that carries a printer</span><span class="hint">offered, and it names exactly whose light goes away with it</span></div>
+      <div><span>Editing a segment's name or range here</span><span class="hint">not offered — segments belong to WLED, same as presets</span></div>
+      <div><span>Replacing a light with different hardware</span><span class="hint">refused — the panel size and the pixel count must match</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="veil" id="veil" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let DEVICES=[
+ {id:'morpheus', name:'morpheus', addr:'http://10.0.0.136', ver:'14.7.0-mdev', px:'16,384', kind:'panel', shape:'256 × 64 panel',
+  maxseg:'32', ddp:'4048', health:'answered 12s ago', live:true,
+  segments:[{id:0,name:'the panel',range:'0–256 × 0–64',used:'Hermes MK4'}],
+  presets:11, named:['Matrix','Snow Fall','PS Ballpit','PS GEQ 2D','Alien Force Clock'],
+  snap:{at:'3 min ago',cfg:'3.2 KB',presets:'10.6 KB',count:11}},
+ {id:'cyberdesk', name:'CyberDesk', addr:'http://10.0.0.253', ver:'16.0.1', px:'48', kind:'strip', shape:'48 LEDs (1D)',
+  maxseg:'16', ddp:'4048', health:'quiet 3m', live:false,
+  segments:[{id:0,name:'Base 1',range:'0–4',used:''},{id:1,name:'Back 1',range:'4–14',used:''},
+            {id:2,name:'Front 1',range:'14–24',used:'Mini'},{id:3,name:'Back 2',range:'24–34',used:''},
+            {id:4,name:'Base 2',range:'34–44',used:''},{id:5,name:'Front 2',range:'44–48',used:''}],
+  presets:0, named:[], snap:{at:'14 min ago',cfg:'2.6 KB',presets:'12.2 KB',count:0}}
+];
+let FOUND=[
+ {id:'wled4d19', name:'WLED-4D19', addr:'10.0.0.91', px:'48', kind:'strip', shape:'48 LEDs (1D)',
+  segments:[{id:0,name:'Shelf',range:'0–16',used:''},{id:1,name:'Under',range:'16–32',used:''},{id:2,name:'Back',range:'32–48',used:''}]},
+ {id:'wledpanel7', name:'WLED-Panel7', addr:'10.0.0.77', px:'16,384', kind:'panel', shape:'256 × 64 panel',
+  segments:[{id:0,name:'the panel',range:'0–256 × 0–64',used:''}]},
+ {id:'wled8f2a', name:'WLED-8F2A', addr:'10.0.0.87', px:'60', kind:'strip', shape:'60 LEDs (1D)',
+  segments:[{id:0,name:'Strip',range:'0–60',used:''}]}
+];
+
+function render(){
+  const host=document.getElementById('devices');host.innerHTML='';
+  DEVICES.forEach(d=>{
+    const card=document.createElement('div');card.className='card';
+    const segRows=d.segments.map(s=>
+      '<tr><td class="mono">'+s.id+'</td><td>'+s.name+'</td><td class="mono">'+s.range+'</td>'+
+      '<td>'+(s.used?'<span class="chip">'+s.used+'</span>':'<span class="hint">free</span>')+'</td></tr>').join('');
+    const presetBlock = d.presets
+      ? '<div class="hint">'+d.presets+' slots defined · '+d.named.length+' named — '+d.named.join(', ')+'</div>'+
+        '<div class="hint" style="margin-top:4px">Read from the light. Create and tune them in WLED\'s own interface. <span class="live">readable today</span></div>'
+      : '<div class="hint">No presets defined on this light.</div>';
+
+    card.innerHTML=
+      '<div class="lh"><span style="width:7px;height:7px;border-radius:50%;background:'+(d.live?'#15803d':'#b45309')+'"></span>'+
+        '<b>'+d.name+'</b><span class="addr">'+d.addr+'</span>'+
+        '<span class="right"><span class="chip'+(d.live?'':' amber')+'">'+d.health+'</span>'+
+        '<button class="tiny" data-replace="'+d.id+'">Replace this light…</button>'+
+        '<button class="tiny danger" data-remove="'+d.id+'">remove</button></span></div>'+
+      '<div class="facts">'+
+        '<div><div class="k">WLED</div><div class="v">'+d.ver+'</div></div>'+
+        '<div><div class="k">Pixels</div><div class="v">'+d.px+'</div></div>'+
+        '<div><div class="k">Shape</div><div class="v">'+d.shape+'</div></div>'+
+        '<div><div class="k">Max segments</div><div class="v">'+d.maxseg+'</div></div>'+
+        '<div><div class="k">DDP</div><div class="v">'+d.ddp+' <span class="live">proved</span></div></div>'+
+      '</div>'+
+      '<div class="sect"><div class="h">Its own segments <span class="need">needs API</span></div>'+
+        '<table><thead><tr><th>#</th><th>Name</th><th>Range</th><th>Carries</th></tr></thead><tbody>'+segRows+'</tbody></table></div>'+
+      '<div class="sect"><div class="h">Its own presets</div>'+presetBlock+'</div>'+
+      '<div class="sect"><div class="h">Snapshot <span class="live">every 5 minutes</span></div>'+
+        '<div class="hint">taken <b>'+d.snap.at+'</b> · config '+d.snap.cfg+' · presets '+d.snap.presets+
+        ' ('+d.snap.count+' defined) — the copy that survives this light dying</div>'+
+        '<div style="display:flex;gap:6px;margin-top:7px">'+
+          '<button class="tiny" data-snap="'+d.id+'">refresh now</button>'+
+          '<button class="tiny" data-dl="'+d.id+'">download a backup</button>'+
+        '</div></div>'+
+      '<div class="sect"><div class="h">Test the pixels'+(d.live?'':' <span class="hint">— the light is not answering, so a test would fail loudly</span>')+'</div>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">'+
+          ['solid','border','quarters','the word','identify'].map(t=>
+            '<button class="tiny" data-test="'+t+'" '+(d.live?'':'disabled')+'>'+t+'</button>').join('')+
+        '</div></div>';
+    host.appendChild(card);
+
+    card.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{
+      const t=b.dataset.test;
+      toast(t==='identify' ? 'Blinks '+d.name+' five times — on for a second, off for a second' :
+            t==='word'     ? 'Draws FINISHED on '+d.name+' for 60 s' :
+                             'Paints '+t+' on '+d.name+' for 15 s');});
+    card.querySelector('[data-remove]').onclick=()=>confirmRemove(d);
+    card.querySelector('[data-replace]').onclick=()=>openReplace(d);
+    card.querySelector('[data-snap]').onclick=()=>refreshSnapshot(d);
+    card.querySelector('[data-dl]').onclick=()=>downloadBackup(d);
+  });
+
+  const f=document.getElementById('found');f.innerHTML='';
+  document.getElementById('foundCount').textContent=FOUND.length+' found';
+  if(!FOUND.length){f.innerHTML='<div style="padding:14px" class="hint">Every light the network answered for has been added.</div>';}
+  FOUND.forEach(x=>{
+    const row=document.createElement('div');row.className='found';
+    row.innerHTML='<span style="width:7px;height:7px;border-radius:50%;background:#15803d"></span><b>'+x.name+'</b>'+
+      '<span class="mono">'+x.addr+'</span><span class="hint">· '+x.px+' px</span><span class="new">found</span><span class="right"></span>';
+    const btn=document.createElement('button');btn.className='tiny primary';btn.textContent='+ add';
+    btn.onclick=()=>add(x.id);
+    row.querySelector('.right').appendChild(btn);
+    f.appendChild(row);
+  });
+}
+
+function search(){toast('Searching for 5 s — best effort over multicast');render();}
+function add(id){
+  const x=FOUND.find(f=>f.id===id);if(!x)return;
+  DEVICES.push({id:x.id,name:x.name,addr:'http://'+x.addr,ver:'15.1.0',px:x.px,kind:x.kind,shape:x.shape,
+    maxseg:'16',ddp:'4048',health:'answered just now',live:true,segments:x.segments,presets:0,named:[]});
+  FOUND=FOUND.filter(f=>f.id!==id);render();
+  toast(x.name+' asked what it is, then added — version, pixels and segments read from it');
+}
+
+/* ---------- replace a light ---------- */
+let replaceOf=null, replaceWith=null, missing=[], pollTimer=null, countTimer=null, lastCheck=0, swapTimers=[];
+
+const pxCount=d=>parseInt(String(d.px).replace(/[^0-9]/g,''),10)||0;
+const sameHardware=(a,b)=>a.kind===b.kind && pxCount(a)===pxCount(b);
+const segNamesCarrying=d=>d.segments.filter(s=>s.used).map(s=>s.name);
+
+function candidates(){
+  const copy=d=>({...d, segments:d.segments.map(s=>({...s}))});
+  const found=FOUND.map(d=>({...copy(d), where:'found on the network', addr:'http://'+d.addr}));
+  const inModule=DEVICES.filter(d=>d.id!==replaceOf.id).map(d=>({...copy(d), where:'in the module'}));
+  return found.concat(inModule);
+}
+
+function openReplace(d){
+  replaceOf=d; replaceWith=null; missing=[]; lastCheck=0;
+  const c=candidates();
+  document.getElementById('modal').innerHTML=
+    '<header><h3>Replace '+d.name+'</h3><button class="x" onclick="closeModal()">✕</button></header>'+
+    '<div class="mbody">'+
+      '<p class="hint" style="font-size:12.5px;margin-bottom:10px">Every printer on this light moves to the new one. The old light is forgotten; the new light keeps its own presets exactly as they are in WLED.</p>'+
+      '<div class="mrow"><label>Replace with</label><select id="pickNew">'+
+        c.map(x=>{
+          const ok=sameHardware(d,x);
+          return '<option value="'+x.id+'"'+(ok?'':' disabled')+'>'+x.name+' · '+x.shape+
+            (ok?'  ·  same hardware':'  ·  cannot replace '+d.px+' px '+d.kind)+'</option>';
+        }).join('')+
+      '</select></div>'+
+      '<div id="plan"></div>'+
+    '</div>'+
+    '<footer><button onclick="closeModal()">Cancel</button>'+
+    '<button class="primary" id="swapBtn" onclick="doSwap()" disabled>Swap</button></footer>';
+  document.getElementById('veil').classList.add('on');
+
+  const sel=document.getElementById('pickNew');
+  const firstOk=c.find(x=>sameHardware(d,x));
+  replaceWith=firstOk||c[0]||null;
+  if(replaceWith) sel.value=replaceWith.id;
+
+  sel.onchange=()=>{ replaceWith=c.find(x=>x.id===sel.value); plan(); };
+
+  countTimer=setInterval(tickClock,1000);
+  plan();
+}
+
+/* the destination is polled for the segments it is missing, every 23 seconds */
+function tickClock(){
+  const el=document.getElementById('pollStatus');
+  if(!el||!lastCheck){return;}
+  const due=Math.max(0,23-Math.round((Date.now()-lastCheck)/1000));
+  el.textContent='checked '+Math.round((Date.now()-lastCheck)/1000)+' s ago · checking again in '+due+' s';
+  if(due===0){ checkNow(); }
+}
+
+function checkNow(){
+  lastCheck=Date.now();
+  const before=missing.join('|');
+  missing=segNamesCarrying(replaceOf).filter(n=>
+    !replaceWith.segments.some(t=>t.name.toLowerCase()===n.toLowerCase()));
+  if(missing.join('|')!==before||document.getElementById('pollStatus')) plan();
+}
+
+function copyName(name){
+  const done=()=>toast('“'+name+'” copied — paste it into '+replaceWith.name+'\u2019s segment name in WLED, save the preset, then come back');
+  try{ navigator.clipboard.writeText(name).then(done).catch(()=>fallbackCopy(name,done)); }
+  catch(e){ fallbackCopy(name,done); }
+}
+function fallbackCopy(text,done){
+  const t=document.createElement('textarea');t.value=text;t.style.position='fixed';t.style.opacity='0';
+  document.body.appendChild(t);t.select();
+  try{document.execCommand('copy');}catch(e){}
+  document.body.removeChild(t);done();
+}
+
+/* mockup only: stands in for the operator having created the segment in WLED */
+function pretendAdded(){
+  const name=missing[0]; if(!name)return;
+  replaceWith.segments.push({id:replaceWith.segments.length, name:name, range:'—', used:''});
+  checkNow();
+}
+
+function plan(){
+  const from=replaceOf, to=replaceWith;
+  const host=document.getElementById('plan');
+  const btn=document.getElementById('swapBtn');
+  if(!to||!host) return;
+
+  const carriers=segNamesCarrying(from);
+
+  /* 1 — hardware must match before anything else is considered */
+  if(!sameHardware(from,to)){
+    host.innerHTML='<div class="badbox"><b>That is not the same hardware.</b> '+from.name+' is a '+
+      from.shape+' with '+from.px+' pixels; '+to.name+' is a '+to.shape+' with '+to.px+'. '+
+      'A swap keeps the picture identical, so the panel size and the pixel count have to match — otherwise '+
+      'the bar, the name or the fill lands somewhere it was never drawn for.</div>';
+    btn.disabled=true; btn.textContent='Swap'; return;
+  }
+
+  missing=carriers.filter(n=>!to.segments.some(t=>t.name.toLowerCase()===n.toLowerCase()));
+
+  /* 2 — segments the destination does not have yet */
+  if(missing.length){
+    if(!lastCheck) lastCheck=Date.now();
+    const rows=missing.map(n=>{
+      const exists=to.segments.some(t=>t.name.toLowerCase()===n.toLowerCase());
+      return '<div class="maprow" style="grid-template-columns:1fr auto;">'+
+        '<span><b>'+n+'</b>'+(exists
+          ? ' <span class="chip">found on the light</span>'
+          : ' <span class="chip grey">not on '+to.name+' yet</span>')+'</span>'+
+        '<span>'+(exists?'':'<button class="tiny" onclick="copyName(\''+n+'\')">copy the name</button>')+'</span></div>';
+    }).join('');
+
+    host.innerHTML=
+      '<div class="warnbox" style="margin-top:10px"><b>The swap is paused.</b> '+to.name+' does not have '+
+        missing.length+' segment'+(missing.length===1?'':'s')+' that '+from.name+' uses. Copy a name below, '+
+        'create that segment on the new light in WLED and save it, then come back — this page watches the '+
+        'light and ticks each one off as it appears.</div>'+
+      '<div class="sect" style="padding:8px 0 0;border:none"><div class="h">Segments to create</div>'+rows+'</div>'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:10px;font-size:11.5px;color:var(--muted)">'+
+        '<span id="pollStatus">checked 0 s ago · checking again in 23 s</span>'+
+        '<button class="tiny" onclick="checkNow()">check now</button>'+
+        '<span style="margin-left:auto"></span>'+
+        '<button class="tiny" onclick="pretendAdded()" title="stands in for having created the segment in WLED">mockup: as if you had added it</button>'+
+      '</div>';
+    btn.disabled=true;
+    btn.textContent='Waiting for '+missing.length+' segment'+(missing.length===1?'':'s');
+    return;
+  }
+
+  /* 3 — ready */
+  const rows=carriers.map(n=>{
+    const t=to.segments.find(x=>x.name.toLowerCase()===n.toLowerCase());
+    return '<div class="maprow"><span><b>'+n+'</b></span><span class="arrow">→</span>'+
+      '<span><b>'+t.name+'</b> <span class="chip">same name</span></span></div>';
+  }).join('');
+
+  host.innerHTML=
+    (carriers.length?'<div class="sect" style="padding:6px 0 0;border:none"><div class="h">What moves</div>'+rows+'</div>'
+                    :'<div class="hint" style="margin-top:8px">Nothing is on this light, so a swap is just a change of address.</div>')+
+    '<div class="sect" style="padding:10px 0 0;border:none"><div class="h">Restore from the snapshot of '+from.name+
+      ' <span class="hint" style="text-transform:none;letter-spacing:0">— taken '+from.snap.at+' · '+from.snap.cfg+' + '+from.snap.presets+'</span></div>'+
+      '<table style="margin-top:4px"><tbody>'+
+        RESTORE.map(([k,d])=>
+          '<tr><td style="width:74px"><input type="checkbox" checked> <b class="mono" style="font-size:11.5px;color:var(--ink)">'+k+'</b></td>'+
+          '<td class="hint">'+d+'</td></tr>').join('')+
+        NEVER.map(([k,d,why])=>
+          '<tr><td style="width:74px"><input type="checkbox" disabled> <b class="mono" style="font-size:11.5px;color:#a8aeb8">'+k+'</b></td>'+
+          '<td class="hint"><s>'+d+'</s> — '+why+'</td></tr>').join('')+
+      '</tbody></table>'+
+      '<div class="hint" style="margin-top:8px">The wifi section is never written: the new light is already on your network, and '+
+      'that is how we are talking to it. The snapshot holds every SSID it knows and <b>no password</b> — WLED does not put the '+
+      'credential in a config dump.</div></div>'+
+    '<div class="okbox">Same hardware, every segment present by name. The swap writes the snapshot, reboots the light and waits '+
+      'for it to answer — about fifteen seconds when it goes well, and the module says so loudly when it does not.</div>';
+  btn.disabled=false;
+  btn.textContent='Move '+carriers.length+' printer'+(carriers.length===1?'':'s')+' and restore';
+}
+
+/* what a restore may write back, and what it must never touch */
+const RESTORE=[
+ ['light','LED type, count, matrix and colour order — the shape of the panel'],
+ ['def','default brightness, default preset, what it does on power-up'],
+ ['if','MQTT, NTP, sync, live data, Hue — the interfaces it speaks'],
+ ['timers','the light\u2019s own timers'],
+ ['um','usermod settings'],
+ ['ap','the fallback access point it broadcasts when the wifi fails'],
+ ['presets','every preset, by number and name'],
+ ['id','its name and mDNS name — what makes it the same light']
+];
+const NEVER=[
+ ['nw','wifi networks and credentials','it is already on your network — that is how we are talking to it'],
+ ['rev','firmware revision','the new box runs what it runs'],
+ ['vid','hardware revision','idem']
+];
+
+function refreshSnapshot(d){
+  d.snap.at='just now';
+  render();
+  toast(d.name+' snapshot refreshed — config and presets pulled, '+(d.snap.cfg)+' + '+d.snap.presets);
+}
+function downloadBackup(d){
+  const payload={
+    note:'snapshot taken by WLED Printer Status — the wifi password is not in a WLED config dump',
+    device:d.name, address:d.addr, taken:d.snap.at, wifiPasswordIncluded:false,
+    cfg:{/* GET /json/cfg */}, presets:{/* GET /presets.json */}, state:{/* GET /json/state */}
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=d.name.replace(/\W+/g,'-').toLowerCase()+'-snapshot.json';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  toast('Backup of '+d.name+' downloaded — keep it somewhere safe; it names your networks even though it holds no password');
+}
+
+function doSwap(){
+  const from=replaceOf, to=replaceWith;
+  const carriers=segNamesCarrying(from);
+  const host=document.getElementById('plan');
+  const btn=document.getElementById('swapBtn');
+  btn.disabled=true;
+
+  const steps=[
+    ['moving '+carriers.length+' printer'+(carriers.length===1?'':'s')+' to '+to.name,350],
+    ['writing the configuration snapshot of '+from.name+' ('+from.snap.cfg+', '+from.snap.presets+' of presets)',700],
+    ['asking '+to.name+' to reboot to apply it',600],
+    ['waiting for it to answer…',1400],
+    ['answered after 14 s — configuration matches the snapshot',400]
+  ];
+  host.innerHTML='<div class="sect" style="padding:6px 0 0;border:none"><div class="h">Swapping</div><div id="progress"></div></div>';
+  const lines=[];
+  let i=0;
+  const run=()=>{
+    if(i>=steps.length){
+      carriers.forEach(n=>{
+        const t=to.segments.find(x=>x.name.toLowerCase()===n.toLowerCase());
+        const s=from.segments.find(x=>x.name.toLowerCase()===n.toLowerCase());
+        if(t&&s) t.used=s.used;
+      });
+      DEVICES=DEVICES.filter(d=>d.id!==from.id);
+      FOUND=FOUND.filter(f=>f.id!==to.id);
+      if(!DEVICES.find(d=>d.id===to.id)){
+        DEVICES.push({...to, health:'answered 14s ago', live:true, presets:from.presets, named:from.named,
+                      snap:{...from.snap, at:'just now'}});
+      }
+      closeModal();render();
+      toast(from.name+' replaced by '+to.name+' — '+carriers.length+' printer'+(carriers.length===1?'':'s')+
+            ' moved and the configuration restored; the light repaints on the next tick');
+      return;
+    }
+    const [text,delay]=steps[i];
+    lines.push('<div style="display:flex;gap:8px;font-size:12.5px;padding:3px 0">'+
+      '<span style="color:'+(i===steps.length-1?'#15803d':'#6b7280')+'">'+(i===steps.length-1?'✓':'·')+'</span>'+
+      '<span>'+text+'</span></div>');
+    document.getElementById('progress').innerHTML=lines.join('');
+    i++;
+    swapTimers.push(setTimeout(run,delay));
+  };
+  run();
+}
+
+function confirmRemove(d){
+  const used=d.segments.filter(s=>s.used);
+  const list=used.map(s=>'<li><b>'+s.used+'</b> on '+s.name+'</li>').join('');
+  document.getElementById('modal').innerHTML=
+    '<header><h3>Remove '+d.name+'?</h3></header>'+
+    '<div class="mbody">'+
+      (used.length
+        ? '<p style="font-size:12.5px;margin-bottom:9px">'+d.name+' carries '+used.length+' printer'+(used.length>1?'s':'')+
+          '. Removing the light unbinds '+(used.length>1?'them':'it')+' — '+(used.length>1?'they':'it')+' will have no light until you bind another.</p>'+
+          '<ul style="margin:0 0 0 18px;font-size:12.5px;line-height:1.75">'+list+'</ul>'
+        : '<p style="font-size:12.5px">Nothing is bound to '+d.name+'. Removing it only forgets the light.</p>')+
+      '<p class="hint" style="margin-top:12px">The light itself is untouched — no preset, segment or brightness is changed. The module simply stops writing to it.</p>'+
+    '</div>'+
+    '<footer><button onclick="closeModal()">Cancel</button>'+
+    '<button class="danger" onclick="doRemove(\''+d.id+'\')">Remove and unbind</button></footer>';
+  document.getElementById('veil').classList.add('on');
+}
+function doRemove(id){
+  const d=DEVICES.find(x=>x.id===id);if(!d)return;
+  const unbound=d.segments.filter(s=>s.used).map(s=>s.used);
+  DEVICES=DEVICES.filter(x=>x.id!==id);closeModal();render();
+  toast(d.name+' removed'+(unbound.length?' — '+unbound.join(', ')+' now has no light':''));
+}
+function closeModal(){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+  if(countTimer){clearInterval(countTimer);countTimer=null;}
+  swapTimers.forEach(t=>clearTimeout(t));swapTimers=[];
+  lastCheck=0;
+  document.getElementById('veil').classList.remove('on');
+}
+let t;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('on');clearTimeout(t);t=setTimeout(()=>e.classList.remove('on'),3400);}
+render();
+</script>
+</body>
+</html>
