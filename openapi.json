@@ -672,7 +672,7 @@
       "put": {
         "operationId": "change-state",
         "summary": "Set the colour, the word and the hold one state is drawn with",
-        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. Nothing is sent to the light: the painter reads this store on the next pass of its own loop, so a colour reaches the light within a tick, and a word a state carries is what a panel shows for as long as its hold lasts. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. A word's hold is measured from the later of two moments — when the state began, and when the word was written — so a word set on a state that is already being shown is shown for its full length from the write, and a word set before its state begins is shown from the entry. The moment of the write is kept in this module's store and is not a field of the request: nothing a caller sends can move it. Nothing is sent to the light: the painter reads this store on the next pass of its own loop, so a colour reaches the light within a tick. The answer says what the word is doing — showing, expired, or waiting for its state — in state.word_shows and state.word_until, because a bare 200 cannot say that this word was spent before anybody could read it. The host takes operate_resource on the module's instance before this is called.",
         "requestBody": {
           "required": true,
           "content": {
@@ -814,8 +814,29 @@
       "post": {
         "operationId": "preview-finished-word",
         "summary": "Show the finished word now, for its own duration",
-        "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. The word goes out on the module's own writer, in the same order as every other write, and the steady frame takes the light back when the hold ends, so nothing about the light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, or when it is a strip or a panel too small for the word: a preview never puts an animation on a light this module was not given.",
+        "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. It goes to every light this instance drives, or to the one the light parameter names, and each writer paints it in its own place in the same order as every other write; the steady frame takes each light back when the hold ends, so nothing about a light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. A light that cannot carry the word — one borrowed segment of a controller somebody else also drives, or a strip or a panel too small for it — is refused for that light and reported beside the ones that took it; the request is refused as a whole, with that code, only when no light took it. Refused with PREVIEW_NOT_RUNNING only when the instance is driving no light at all.",
         "parameters": [
+          {
+            "name": "light",
+            "in": "query",
+            "required": false,
+            "description": "Which light to fire at, by the name GET /controllers gives it: the controller's address without its scheme, such as 10.0.0.136. Absent, every light this instance drives is fired at and the answer lists them. A name this instance drives nothing on is refused (CONTROLLER_NOT_FOUND) rather than answered with a default light.",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "light",
+            "in": "query",
+            "required": false,
+            "description": "Which light to fire at, by the name GET /controllers gives it: the controller's address without its scheme, such as 10.0.0.136. Absent, every light this instance drives is fired at and the answer lists them. A name this instance drives nothing on is refused (CONTROLLER_NOT_FOUND) rather than answered with a default light.",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "light",
+            "in": "query",
+            "required": false,
+            "description": "Which light to fire at, by the name GET /controllers gives it: the controller's address without its scheme, such as 10.0.0.136. Absent, every light this instance drives is fired at and the answer lists them. A name this instance drives nothing on is refused (CONTROLLER_NOT_FOUND) rather than answered with a default light.",
+            "schema": {"type": "string"}
+          },
           {
             "name": "hold",
             "in": "query",
@@ -833,7 +854,14 @@
                   "type": "object",
                   "properties": {
                     "event": {"type": "string", "description": "The word that will be drawn, such as FINISHED."},
-                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it. Present only when the request resolved to one light; a two-light answer names every light in lights instead of picking one here."},
+                    "lights": {
+                      "type": "array",
+                      "description": "One entry per light this request was about, in the order the settings name them, with what that light did with the picture: no refused member means it took it, and a refused member names the registered code and the sentence why.",
+                      "items": {"$ref": "#/components/schemas/PreviewLight"}
+                    },
+                    "count": {"type": "integer", "description": "How many lights the request was about."},
+
                     "colour": {
                       "type": "object",
                       "description": "The colour the word is drawn in, one byte per channel.",
@@ -847,7 +875,7 @@
                     "scale": {"type": "integer", "description": "How many pixels of the panel one pixel of the glyph becomes."},
                     "holds_seconds": {"type": "integer", "description": "How long the word keeps the light before the steady frame comes back."}
                   },
-                  "required": ["event", "controller", "colour", "scale", "holds_seconds"]
+                  "required": ["event", "colour", "scale", "holds_seconds", "lights", "count"]
                 }
               }
             }
@@ -861,7 +889,7 @@
             }
           },
           "503": {
-            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -875,7 +903,7 @@
       "post": {
         "operationId": "preview-diagnostic-pattern",
         "summary": "Draw one diagnostic picture now, so that one look separates the faults a blank panel hides",
-        "description": "Puts one of three test pictures on the panel for a hold, drawn in pixels over DDP by the same writer, the same repeat and the same hand-back as the finished word. Each picture answers one question and each assumes the answer before it: solid is the whole panel in white and answers whether DDP draws at all (a dark panel means the transport, not the map); border is a white edge two pixels thick around the whole panel and answers whether the LED map is the shape this module assumes, row-major y*width+x, because anything but a closed rectangle means it is not; quarters is four blocks — red top-left, green top-right, blue bottom-left, white bottom-right — and answers which way up and which way round the panel is, because an upside-down or mirrored picture names the corner it is wrong in. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, or when it is a strip: these pictures are a fault-finding tool for the module's own panel, not something it puts on a light somebody else is using.",
+        "description": "Puts one of three test pictures on every light this instance drives, for a hold, drawn in pixels over DDP by the same writer, the same repeat and the same hand-back as the finished word. It is the instrument that says whether anything is lit at all, because this firmware cannot be asked what its pixels are: it goes to all of an instance's lights, or to the one the light parameter names, and that is the point — a diagnostic that refused to run on an install with two lights would stop working exactly when there is more to diagnose. Each picture answers one question and each assumes the answer before it: solid is the whole light in white and answers whether DDP draws at all (a dark light means the transport, not the map); border is a white edge two pixels thick around a panel — white at both ends of a strip — and answers whether the LED map is the shape this module assumes, row-major y*width+x, because anything but a closed rectangle means it is not; quarters is four blocks — red top-left, green top-right, blue bottom-left, white bottom-right, and four bands in the same order along a strip — and answers which way up and which way round the light is, because an upside-down or mirrored picture names the corner it is wrong in. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives is refused for that light, because these are a fault-finding tool for this module's own lights and not something it puts on somebody else's; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all.",
         "parameters": [
           {
             "name": "pattern",
@@ -901,11 +929,17 @@
                   "type": "object",
                   "properties": {
                     "pattern": {"type": "string", "description": "The picture that will be drawn: solid, border or quarters."},
-                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
-                    "answers": {"type": "string", "description": "What the picture answers, in one sentence, so that whoever fires it knows what to look for."},
-                    "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."}
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it. Present only when the request resolved to one light."},
+                    "answers": {"type": "string", "description": "What the picture answers, in one sentence, so that whoever fires it knows what to look for. Present only when the request resolved to one light; a multi-light answer carries each light's own sentence, because a strip answers the same pattern with four bands rather than four quadrants."},
+                    "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."},
+                    "lights": {
+                      "type": "array",
+                      "description": "One entry per light this request was about, in the order the settings name them, with what that light did with the picture: no refused member means it took it, and a refused member names the registered code and the sentence why.",
+                      "items": {"$ref": "#/components/schemas/PreviewLight"}
+                    },
+                    "count": {"type": "integer", "description": "How many lights the request was about."}
                   },
-                  "required": ["pattern", "controller", "answers", "holds_seconds"]
+                  "required": ["pattern", "holds_seconds", "lights", "count"]
                 }
               }
             }
@@ -927,7 +961,7 @@
             }
           },
           "503": {
-            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -941,7 +975,7 @@
       "post": {
         "operationId": "preview-composed-frame",
         "summary": "Draw the panel's own composed picture now, with the progress and name given",
-        "description": "Draws the layout this instance is running — the progress bar in its band, the percentage in digits, the job's name — with the percent and name the caller supplies, so that the composed picture can be looked at without waiting for a print. It is the same machinery every other preview uses: the same writer, the same establishing body, the same once-a-second repeat over DDP, the same bounded hold and the same hand-back. That is the point of it — what it draws is what a printing panel draws, from the same function, at the layout and scales that instance is running; a preview that could drift from the real picture would be a lie about a light. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, when it is a strip or its panel cannot hold the layout's bands, and when percent is missing or is not a whole number from 0 to 100.",
+        "description": "Draws the layout this instance is running — the progress bar in its band, the percentage in digits, the job's name — with the percent and name the caller supplies, so that the composed picture can be looked at without waiting for a print. It is the same machinery every other preview uses: the same writer, the same establishing body, the same once-a-second repeat over DDP, the same bounded hold and the same hand-back. That is the point of it — what it draws is what a printing panel draws, from the same function, at the layout and scales that instance is running; a preview that could drift from the real picture would be a lie about a light. It goes to every light this instance drives, or to the one the light parameter names, each drawn at its own geometry. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives, or that is a strip or a panel whose rows cannot hold the layout's bands, is refused for that light and reported beside the ones that took it; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all. percent is required, and a value that is missing or is not a whole number from 0 to 100 refuses the request before anything is fired.",
         "parameters": [
           {
             "name": "percent",
@@ -973,9 +1007,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it. Present only when the request resolved to one light."},
                     "percent": {"type": "integer", "description": "The progress being drawn, as it was asked for."},
-                    "name": {"type": "string", "description": "The job name as the panel will draw it: upper-cased, without the characters the font does not hold, and cut to what fits. Empty when no name was asked for."},
+                    "name": {"type": "string", "description": "The job name as the panel will draw it: upper-cased, without the characters the font does not hold, and cut to what fits. Empty when no name was asked for. Present only when the request resolved to one light: a second panel of another size cuts the same name differently, so a multi-light answer carries each light's own."},
                     "halves": {
                       "type": "array",
                       "description": "What the rotation shows, in the order it shows them, so that a caller holding the light for two minutes is told what he will see.",
@@ -995,9 +1029,15 @@
                       "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds"]
                     },
                     "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."},
-                    "rotation_seconds": {"type": "integer", "description": "How long each half of the rotation holds the panel while the preview runs."}
+                    "rotation_seconds": {"type": "integer", "description": "How long each half of the rotation holds the panel while the preview runs."},
+                    "lights": {
+                      "type": "array",
+                      "description": "One entry per light this request was about, in the order the settings name them, with what that light did with the picture: no refused member means it took it, and a refused member names the registered code and the sentence why.",
+                      "items": {"$ref": "#/components/schemas/PreviewLight"}
+                    },
+                    "count": {"type": "integer", "description": "How many lights the request was about."}
                   },
-                  "required": ["controller", "percent", "name", "halves", "layout", "holds_seconds", "rotation_seconds"]
+                  "required": ["percent", "holds_seconds", "lights", "count"]
                 }
               }
             }
@@ -1019,7 +1059,7 @@
             }
           },
           "503": {
-            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -1825,6 +1865,24 @@
   },
   "components": {
     "schemas": {
+      "PreviewLight": {
+        "type": "object",
+        "description": "One light's answer to a preview: the controller it went to, the name a caller could have aimed the request at, and — for a light that would not take the picture — the registered code it refused with and the sentence saying why. A preview is two writes on a two-light install and one of them can be refused, so the answer names both rather than reporting one success for two lights.",
+        "properties": {
+          "controller": {"type": "string", "description": "The controller, as the instance's settings name it."},
+          "light": {"type": "string", "description": "The name GET /controllers gives that controller, which is what the light parameter accepts."},
+          "refused": {"type": "string", "description": "Absent when this light took the picture. Otherwise the registered code it refused with: PREVIEW_BORROWED_SEGMENT or PREVIEW_NOT_DRAWABLE."},
+          "why": {"type": "string", "description": "The sentence behind the code: which light, and what about it could not carry the picture."},
+          "name": {"type": "string", "description": "For a composed picture, the job name as this light will draw it."},
+          "halves": {
+            "type": "array",
+            "description": "For a composed picture, what this light's rotation shows, in order.",
+            "items": {"type": "string"}
+          },
+          "answers": {"type": "string", "description": "For a diagnostic pattern, what the picture answers on this light."}
+        },
+        "required": ["controller", "light"]
+      },
       "State": {
         "type": "object",
         "description": "One row of the state table: a state, the colour it is drawn in, the word that replaces the state's own picture while it holds, and where each of the three came from. The ten states that are kind state are the words the host reports; the two that are kind condition are Disconnected and Stale, which this module computes from the reading because the host has no word for either.",
@@ -1846,10 +1904,12 @@
           "word_origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody wrote this word, default when the state carries none."},
           "holds": {"type": "string", "enum": ["forever", "30s", "60s", "5m"], "description": "How long the word holds before the state's own picture comes back. forever is one of the four accepted values and not the absence of one; it is the default."},
           "holds_origin": {"type": "string", "enum": ["store", "default"], "description": "store when somebody chose this hold, default when it is forever because nobody did."},
+          "word_shows": {"type": "string", "enum": ["none", "showing", "expired", "later"], "description": "What the word is doing at the moment this answer was written. none: the state carries no word. showing: a light is showing this state and the word is on it, and word_until says when it stops (empty for a word of forever). expired: a light is showing this state and the hold has run out, so nothing is showing the word and nothing will until it is written again. later: no light is showing this state, and the word runs from the moment one enters it. It exists because a write's 200 was silent about exactly this: a word set on a printer that finished hours ago was accepted and spent before anybody read it."},
+          "word_until": {"type": "string", "description": "The last instant the word is showing on any light, in RFC 3339 UTC. Empty when nothing is counting down: no word, a word of forever, or a word waiting for its state."},
           "overridden": {"type": "boolean", "description": "True when any of the three came from the store, which is what decides whether a screen offers a reset."},
           "meaning": {"type": "string", "description": "What the state means, in one line, so that a screen does not have to hold its own copy of Appendix A's prose."}
         },
-        "required": ["state", "kind", "colour", "colour_origin", "word", "word_origin", "holds", "holds_origin", "overridden", "meaning"]
+        "required": ["state", "kind", "colour", "colour_origin", "word", "word_origin", "holds", "holds_origin", "word_shows", "overridden", "meaning"]
       },
       "StateRequest": {
         "type": "object",

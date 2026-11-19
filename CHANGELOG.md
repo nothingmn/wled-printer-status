@@ -44,7 +44,10 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   `Stale`, marked as conditions and counted separately.
 - `PUT /states/{state}` sets a state's colour, word and hold, and `DELETE /states/{state}` puts it back to
   the colour, no word and `holds: forever`. A `holds` that is not `forever`, `30s`, `60s` or `5m` is
-  refused by name rather than rounded, and a colour channel outside 0-255 is refused with the number.
+  refused by name rather than rounded, and a colour channel outside 0-255 is refused with the number. The
+  answer says what the word is doing — `word_shows` is `showing`, `expired`, `later` or `none`, with
+  `word_until` beside it in RFC 3339 — so a screen can say "on the light until 20:01" rather than showing a
+  200 for a word that will never appear. `GET /states` and `GET /states/{state}` carry the same two fields.
 - `GET /lights/{light}/moments` answers one light's whole moment table: every moment it has, with one
   entry per printer on it — the same rows the screen draws as sub-rows when a light carries several
   printers, and the flat table when it carries one. `PUT /lights/{light}/moments/{moment}` sets one
@@ -94,8 +97,7 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   binding line gains its `id`, and every layout row is re-keyed from the printer to that binding with every
   field it carried unchanged. A version 2 document is stepped through both shapes, with the layout table,
   the windows and the pause arriving empty, and one written before the version was stamped is stepped
-  through every shape rather than skipping to the current one. A version 5 document is refused, naming both
-  versions.
+  through every shape rather than skipping to the current one.
 - `GET /frames` answers one frame per binding for the Overview screen's thumbnails: the frame this module
   decided — colour, fill, total, percent, the job's name and the reason — how old the reading behind it is,
   when the light last took a write, and the picture itself as a PNG. The picture is drawn by the same code
@@ -120,6 +122,24 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - Every snapshot says what it does not hold: the wifi password is not in a configuration dump at all on
   either of the operator's lights, so a literal hundred-per-cent clone including the credentials is
   impossible over the API, and `complete_clone` is false on every answer rather than implied.
+- The four preview routes fire at **every light the instance drives** rather than only at an install holding
+  one: `POST /preview-finished`, `POST /preview-frame` and `POST /preview-pattern` answer one entry per light
+  in `lights`, and `?light=<name>` aims a request at one of them by the name `GET /controllers` gives it. A
+  light that cannot take the picture is refused for that light and named beside the ones that did, and the
+  request is refused as a whole only when no light took it. `PREVIEW_NOT_RUNNING` now means one thing —
+  the instance is driving no light at all — instead of describing a two-light install the message did not
+  fit. This is what a two-light install was missing: the firmware cannot be asked what its pixels are, so
+  these routes are the only instrument that says whether anything is lit, and they refused on the one
+  deployment with more than one light to look at.
+- The diagnostic ladder runs on a strip. A controller that reports no matrix is one run of LEDs, so
+  `solid` lights the whole run, `border` puts white at its two ends, and `quarters` becomes four bands in
+  the same order — twelve pixels each on a 48-LED strip — instead of the route refusing the light outright.
+  A word and a composed frame still need a panel and are still refused on a strip.
+- The configuration document is at schema version 5. A state's row now carries the moment its word was
+  written, and a version 4 document is stepped up in place with every table unchanged: no row gains a
+  moment, because version 4 never recorded one. A version 6 document is refused, naming both versions, and
+  one written before the version was stamped is stepped through every shape rather than skipping to the
+  current one.
 - `POST /devices/{name}/restore` puts a snapshot's configuration back on the light it was taken from. It
   requires `confirm: true`, refuses a snapshot from another light and one from a display of another shape
   or pixel count, takes a safety snapshot of the light as it is now and keeps it before writing anything,
@@ -132,6 +152,12 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 
 ### Fixed
 
+- A word set on a state that is already being shown is now shown for its full length, counted from the
+  write instead of from the moment the state began. Before this, `PUT /states/FINISHED` with
+  `{"word":"SWEEP","holds":"60s"}` answered `200` and changed nothing on a light: the printer had finished
+  hours earlier, so the sixty seconds had run out before the word existed. A word still written before its
+  state begins holds from the entry, which is what it always did, and a word whose hold has run out is now
+  reported as `expired` in the answer rather than as an ordinary success.
 - The Bindings tab offers a printer that is already shown on another light, and says which light it is on
   beside the name — `Hermes MK4 — already on 10.0.0.136` — so a second light can be given to a printer from
   the screen and not only by `POST /bindings`. A printer already shown on the light being edited is still

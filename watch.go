@@ -255,14 +255,22 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			name, r.binding.DeviceID, r.binding.Address, c.schedule.zoneName, r.binding.Brightness)
 	}
 
-	// One light, one preview. A watch with several bindings offers none: the route names no
-	// binding, and firing one of several would be picking a light on the operator's behalf. See
-	// previewHeld.
-	var offered *previewTarget
+	// Every light, so that a preview can be fired at all of them and a request that wants one names
+	// it. See previewHeld for why this is no longer one light.
+	targets := make([]*previewTarget, 0, len(runners))
 
-	if len(runners) == 1 {
-		offered = &previewTarget{pen: runners[0].pen, where: runners[0].binding.Address}
-		offerPreview(offered)
+	for _, r := range runners {
+		targets = append(targets, &previewTarget{
+			pen:   r.pen,
+			where: r.binding.Address,
+			light: lightName(r.binding.Address),
+		})
+	}
+
+	var offered *previewSet
+
+	if len(targets) > 0 {
+		offered = offerPreviews(targets)
 	}
 
 	var group sync.WaitGroup
@@ -453,6 +461,14 @@ type bindingShape struct {
 	wordColour wled.RGB
 	plain      *render.Frame
 	preset     string
+
+	// state is the state this binding's light is showing, and since is the moment it began showing
+	// it. They are the two facts a word's hold is measured against, published here for the state
+	// table's routes: whether a word somebody just set is on the light, has expired, or is waiting
+	// for its state cannot be answered without knowing whether the state is being shown, and the
+	// painter is the only thing that knows. See stateStarts.
+	state string
+	since time.Time
 }
 
 // kind is panel or strip, in the words the routes use.
@@ -547,39 +563,112 @@ func shapeOf(controller string, segment int) bindingShape {
 	return bindingShapes[shapeKey(controller, segment)]
 }
 
-// previewTarget is the writer POST /preview-finished fires the finished word at, and the
-// controller it writes, for the sentences the route and the log need.
+// stateStarts is the moment each binding's light began showing one state, and nothing for a state
+// no light is showing.
+//
+// It is what lets the state table's routes answer whether a word is on a light without asking a
+// light: a hold is measured from when a state began, and only the writer that painted it knows
+// that. A binding that has published no state yet contributes nothing, which reads as "no light is
+// showing it" — the honest answer, and the one that makes the route say the word is waiting for
+// its state rather than claiming it is up.
+func stateStarts(state string) []time.Time {
+	bindingShapeMu.Lock()
+	defer bindingShapeMu.Unlock()
+
+	starts := make([]time.Time, 0, len(bindingShapes))
+
+	for _, shape := range bindingShapes {
+		if shape.state == "" || !strings.EqualFold(shape.state, state) {
+			continue
+		}
+
+		starts = append(starts, shape.since)
+	}
+
+	return starts
+}
+
+// previewTarget is one light POST /preview-* may fire a picture at: the writer that paints it,
+// the controller it writes, and the name a request targets it by, for the sentences the route and
+// the log need.
 type previewTarget struct {
 	pen   *writer
 	where string
+
+	// light is the name this light answers to on the routes beside these — the controller's
+	// address without its scheme, which is what /lights/{light}/… is keyed on. It is what a
+	// preview's `light` parameter names, because a person reading GET /controllers is reading
+	// these names and should not have to translate.
+	light string
 }
 
-// previewHeld is the one light a preview may be fired at, and nothing when there is no such
-// light.
+// named reports whether one request's `light` parameter asks for this light. The three spellings a
+// caller may reasonably use are accepted — the name the other routes carry, the address as the
+// operator wrote it in the setting, and that address with its scheme — because all three name the
+// same controller and a refusal over a spelling would be a refusal about the caller's typing.
+func (t *previewTarget) named(wanted string) bool {
+	asked := strings.TrimRight(strings.TrimSpace(wanted), "/")
+
+	for _, held := range []string{t.light, t.where} {
+		if strings.EqualFold(asked, strings.TrimRight(strings.TrimSpace(held), "/")) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// previewSet is every light a preview may be fired at, as one value. A request reads the set the
+// watch offered in one go, so a second configuration replacing the watch cannot have a route
+// halfway through the lights of the first.
+type previewSet struct {
+	targets []*previewTarget
+}
+
+// previewHeld is every light a preview may be fired at, and nothing when the watch drives none.
 //
 // The route cannot reach a writer any other way: a writer is built inside start and owned by its
 // own goroutine, and the whole point of that ownership is that nothing else touches the
-// controller. So the one writer a single-binding watch builds is offered here, and taken back
-// when that watch's goroutines have all returned — because a route that answered after the
-// writer had returned would be promising a picture nothing was left to paint, and the pixels it
-// stored would sit in a slot nobody reads.
+// controller. So the writers the watch builds are offered here, and taken back when that watch's
+// goroutines have all returned — because a route that answered after the writers had returned
+// would be promising a picture nothing was left to paint, and the pixels it stored would sit in a
+// slot nobody reads.
 //
-// A watch holding several bindings offers nothing. The route names no binding, so firing one of
-// several would be picking a light on the operator's behalf, and picking wrong would put the
-// word on somebody's desk light.
+// Every binding is offered, not one. A diagnostic that refused to run because the install holds
+// two lights would be a diagnostic that stops working exactly when there is more to diagnose, and
+// the question the pattern ladder answers — is anything lit, and where — is a question about all
+// of them. A request that wants one light names it, and picks it rather than being given a
+// default.
 //
-//nolint:gochecknoglobals // the one thing the preview route reads out of the watch.
-var previewHeld atomic.Pointer[previewTarget]
+//nolint:gochecknoglobals // the one thing the preview routes read out of the watch.
+var previewHeld atomic.Pointer[previewSet]
 
-// offerPreview publishes the one writer a preview may be fired at.
-func offerPreview(target *previewTarget) { previewHeld.Store(target) }
+// offerPreview publishes one writer as the only light a preview may be fired at. A test uses it
+// for the single-light case; a watch publishes its whole set with offerPreviews.
+func offerPreview(target *previewTarget) { offerPreviews([]*previewTarget{target}) }
+
+// offerPreviews publishes every light a preview may be fired at, and answers the set so that the
+// watch that offered it can take back exactly this one.
+func offerPreviews(targets []*previewTarget) *previewSet {
+	offered := &previewSet{targets: targets}
+	previewHeld.Store(offered)
+
+	return offered
+}
 
 // withdrawPreview takes that offer away, and only when it is this watch's own: a second
 // configuration replaces the watch, and the newer offer must survive the older watch stopping.
-func withdrawPreview(target *previewTarget) { previewHeld.CompareAndSwap(target, nil) }
+func withdrawPreview(offered *previewSet) { previewHeld.CompareAndSwap(offered, nil) }
 
-// previewNow is the offered writer, or nil when no single light is being driven.
-func previewNow() *previewTarget { return previewHeld.Load() }
+// previewsNow is every light a preview may be fired at, in the order the settings name them, and
+// nil when no light is being driven.
+func previewsNow() []*previewTarget {
+	if held := previewHeld.Load(); held != nil {
+		return held.targets
+	}
+
+	return nil
+}
 
 // forgetPreview takes the offer away. A test uses it between watches; the process never needs
 // it, because a process that starts begins with nothing offered.

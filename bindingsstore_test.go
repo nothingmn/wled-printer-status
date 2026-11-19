@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,14 +308,17 @@ func TestAStoreThatCannotBeWrittenRefusesTheChangeAndLeavesTheSetRunning(t *test
 			store: func(t *testing.T) *configTables {
 				t.Helper()
 
-				dir := writeStoreFile(t, `{"version": 5, "bindings": []}`)
+				dir := writeStoreFile(t, fmt.Sprintf(`{"version": %d, "bindings": []}`, storeVersion+1))
 
 				tables := &configTables{}
 				tables.grant(dir)
 
 				return tables
 			},
-			want: []string{"schema version 5", "version 4"},
+			want: []string{
+				fmt.Sprintf("schema version %d", storeVersion+1),
+				fmt.Sprintf("version %d", storeVersion),
+			},
 		},
 	}
 

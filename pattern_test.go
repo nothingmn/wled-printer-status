@@ -698,9 +698,134 @@ func TestThePatternRouteRefusesWhereTheLightCannotTakeIt(t *testing.T) {
 				t.Fatalf("a refused pattern wrote %d requests to the controller, want none", shape.controller.wrote())
 			}
 
-			if target := previewNow(); target != nil && target.pen.fired.Load() != nil {
-				t.Fatalf("a refused pattern stored the %q event in the writer's slot", target.pen.fired.Load().label())
+			if what, waiting := anyFired(); waiting {
+				t.Fatalf("a refused pattern stored the %q event in a writer's slot", what)
 			}
 		})
+	}
+}
+
+// stripUnderAPattern is the operator's second light as the ladder has to treat it: a controller that
+// reported no matrix and said it drives forty-eight LEDs.
+//
+// It is built the way the watch builds one — a writer, and setPanel with what Info answered — because
+// the length a strip is drawn against comes from that call and nowhere else. A strip the module has
+// measured nothing of is a light with no geometry, and a picture asked of it is still refused.
+func stripUnderAPattern(t *testing.T) (*fakeStrip, *pushedFrames) {
+	t.Helper()
+
+	strip := newFakeStrip() // forty-eight LEDs and no matrix, which is the strip on the desk
+
+	info, err := strip.Info(context.Background())
+	if err != nil {
+		t.Fatalf("read the strip's geometry: %v", err)
+	}
+
+	pen := newWriter(strip, 128, quiet)
+	pen.setPanel(info)
+
+	pushed := pushInto(pen)
+
+	forgetPreview()
+	t.Cleanup(forgetPreview)
+
+	offerPreview(&previewTarget{pen: pen, where: "http://10.0.0.253", light: "10.0.0.253"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go pen.run(ctx)
+
+	return strip, pushed
+}
+
+// TestQuartersOnAStripIsFourBandsOfTwelve is the degradation the ladder has to have: a strip is one
+// run of pixels, so four quadrants are not a picture it can show, and four bands along the run are
+// the same question asked of it.
+//
+// Before this, the route refused a strip outright with PREVIEW_NOT_DRAWABLE — so on an install with
+// a panel and a strip, the light that is hardest to diagnose was the one the diagnostic could not
+// reach. What it must not do now is fault, and what it must draw is twelve pixels of each colour in
+// the panel's own order: red at the start, then green, then blue, then white at the far end.
+func TestQuartersOnAStripIsFourBandsOfTwelve(t *testing.T) {
+	_, pushed := stripUnderAPattern(t)
+
+	recorder := postPattern(t, "?pattern=quarters&hold=8")
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("the pattern answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
+	}
+
+	var answer patternAnswer
+	if err := json.Unmarshal(recorder.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the answer is not JSON: %v: %s", err, recorder.Body.String())
+	}
+
+	// The sentence is the strip's own: a run has two ends, not four corners, and telling a person to
+	// look at the corners of his strip would be a sentence about a picture that is not on it.
+	if !strings.Contains(answer.Answers, "start") || strings.Contains(answer.Answers, "top-left") {
+		t.Fatalf("the answer describes the run rather than a panel's corners: %q", answer.Answers)
+	}
+
+	want, err := patternFrame("quarters", panel{width: 48, height: 1, run: true})
+	if err != nil {
+		t.Fatalf("lay out the quarters pattern on the run: %v", err)
+	}
+
+	if len(want) != 48 {
+		t.Fatalf("the run's picture is %d pixels, want 48", len(want))
+	}
+
+	waitFor(t, "the strip's picture to reach the transport", func() bool { return pushed.pushed() >= 1 })
+
+	got := pushed.last()
+
+	if len(got) != 48 {
+		t.Fatalf("the strip was pushed %d pixels, want its 48: a frame of another length is a light drawn short or past its end", len(got))
+	}
+
+	bands := []struct {
+		name   string
+		from   int
+		to     int
+		colour wled.RGB
+	}{
+		{"red", 0, 12, patternRed},
+		{"green", 12, 24, patternGreen},
+		{"blue", 24, 36, patternBlue},
+		{"white", 36, 48, patternWhite},
+	}
+
+	for _, band := range bands {
+		for pixel := band.from; pixel < band.to; pixel++ {
+			if got[pixel] != band.colour {
+				t.Fatalf("pixel %d is %+v, want the %s band's %+v", pixel, got[pixel], band.name, band.colour)
+			}
+		}
+	}
+}
+
+// TestBorderOnAStripIsItsTwoEnds is the other rung that has to degrade: a rectangle's edge is not a
+// shape a run can show, and the run's answer to the same question is where it begins and ends.
+func TestBorderOnAStripIsItsTwoEnds(t *testing.T) {
+	_, pushed := stripUnderAPattern(t)
+
+	if recorder := postPattern(t, "?pattern=border&hold=8"); recorder.Code != http.StatusAccepted {
+		t.Fatalf("the border pattern answered %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	waitFor(t, "the strip's picture to reach the transport", func() bool { return pushed.pushed() >= 1 })
+
+	got := pushed.last()
+
+	if len(got) != 48 || got[0] != patternWhite || got[47] != patternWhite {
+		t.Fatalf("the run's edge is %d pixels with %+v and %+v at its ends, want white at both ends of 48",
+			len(got), got[0], got[len(got)-1])
+	}
+
+	for pixel := 1; pixel < 47; pixel++ {
+		if got[pixel] != finishedWordBackground {
+			t.Fatalf("pixel %d inside the run is %+v, want the background", pixel, got[pixel])
+		}
 	}
 }

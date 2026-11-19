@@ -32,6 +32,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
@@ -148,6 +149,16 @@ type storedState struct {
 	Colour *storedColour `json:"colour,omitempty"`
 	Word   *string       `json:"word,omitempty"`
 	Holds  *string       `json:"holds,omitempty"`
+
+	// SetAt is the moment this row's word was written. It is what makes a hold mean something on
+	// a state that is already in force: the hold runs from the later of this moment and the
+	// moment the state began, so a word set on a printer that finished hours ago is shown for its
+	// full length rather than being spent before it was read.
+	//
+	// Absent on a row written before schema version 5, and absent is the rule that version had:
+	// the hold counts from the state's own entry. Nothing is invented for a document that did not
+	// carry a moment — the next write of that row stamps one.
+	SetAt *time.Time `json:"set_at,omitempty"`
 }
 
 // storedColour is a colour in the document: one byte per channel, which is what every colour in
@@ -222,6 +233,21 @@ func (r stateRow) holds() (string, string) {
 	}
 
 	return durationForever, fromDefault
+}
+
+// setAt is the moment this row's word was written, and the zero time for a row that carries no
+// word or no moment — which is every row written before schema version 5, and reads as that
+// version's rule: the hold counts from the state's own entry.
+//
+// A moment beside no word is not a decision anybody made: the route never writes one, and a row a
+// person edited by hand that carries one has nothing for it to mean. So it is ignored rather than
+// reported.
+func (r stateRow) setAt() time.Time {
+	if r.override.Word == nil || r.override.SetAt == nil {
+		return time.Time{}
+	}
+
+	return *r.override.SetAt
 }
 
 // findState is the row of the table one name asks for, by the table's own name in any case.

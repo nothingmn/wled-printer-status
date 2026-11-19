@@ -292,6 +292,16 @@ func (ev event) noun() string {
 	return "word"
 }
 
+// needsAPanel reports whether this picture is drawn as a rectangle and nothing else: a word
+// rasterised across one, or a composed frame whose bar is a band of rows.
+//
+// A pattern is not one of them, and that is the whole of why a strip can be diagnosed: its pixels
+// are laid out along the run instead (see pattern.go), so the same ladder runs on a 48-LED strip
+// and on a 256x64 panel.
+func (ev event) needsAPanel() bool {
+	return ev.picture != nil || (ev.pattern == "" && ev.plain == nil && ev.preset == "")
+}
+
 // wholeLight reports whether showing this event means taking the whole light: pixels, a word, a
 // pattern, a composed picture or a preset all do, and a plain colour does not.
 //
@@ -509,19 +519,24 @@ func (w *writer) fire(ev event) {
 }
 
 // preview fires one event now, on the operator's behalf, and says whether the light will show
-// it. POST /preview-finished is the only caller.
+// it. The four POST /preview-* routes are the only callers.
 //
-// It is the same event a finished print fires — finishedWordEvent, not a copy of it — so that
-// looking at the preview tells a person what his panel will do when the print ends, rather than
-// what some other picture would look like.
+// It is the same event the printer's own transitions fire — finishedWordEvent, not a copy of it —
+// so that looking at the preview tells a person what his light will do when the print ends, rather
+// than what some other picture would look like.
 //
-// It refuses, with a typed error the route turns into a code, exactly the cases in which the
-// light cannot be asked for the word:
+// It refuses, with a typed error the route turns into a code, exactly the cases in which the light
+// cannot be asked for the picture:
 //
 //   - a borrowed segment, for the reason fire gives: somebody else's light is not this module's
 //     to animate;
-//   - a controller that reported no matrix, which is a strip;
-//   - a panel too small for the word at finishedWordScale.
+//   - a light that has said nothing about how many pixels it drives, so there is nowhere to draw;
+//   - a word or a composed picture on a controller that reported no matrix, which is a strip. A
+//     pattern is not refused there: a strip is one run of pixels and pattern.go lays the same
+//     picture along it, because the ladder is the instrument that says whether anything is lit and
+//     a strip has to be testable;
+//   - a word or a picture that does not fit the geometry it is drawn at, refused here rather than
+//     after the event has been offered to the writer.
 //
 // What it does not do is write anything itself. It stores the event in the writer's one slot
 // and rings the writer's bell, so the pixels go out on the writer's own goroutine — behind the
@@ -538,8 +553,13 @@ func (w *writer) preview(ev event) error {
 		return fmt.Errorf("%w: segment %d on %s", ErrPreviewBorrowedSegment, *w.segment, w.where)
 	}
 
-	geometry := w.panelOf()
-	if !geometry.matrix() {
+	geometry := w.paintPanel()
+	if !geometry.sized() {
+		return fmt.Errorf("%w: %s has not said how many pixels it drives, so a %s has nowhere to be drawn",
+			ErrPreviewNotDrawable, w.where, ev.noun())
+	}
+
+	if ev.needsAPanel() && !geometry.matrix() {
 		return fmt.Errorf("%w: %s reported no matrix, and a %s needs a two-dimensional panel",
 			ErrPreviewNotDrawable, w.where, ev.noun())
 	}
@@ -753,9 +773,14 @@ func (w *writer) paintReported(ctx context.Context, ev event) ([]wled.RGB, error
 // second lock on the same door costs one comparison, and the preview route reaches this function
 // by a path the decision table never walks.
 func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
-	geometry := w.panelOf()
+	geometry := w.paintPanel()
 
-	if !geometry.matrix() {
+	if !geometry.sized() {
+		return nil, fmt.Errorf("the %q %s was not drawn: %s has not said how many pixels it drives, and a picture needs them",
+			ev.label(), ev.noun(), w.where)
+	}
+
+	if ev.needsAPanel() && !geometry.matrix() {
 		return nil, fmt.Errorf("the %q %s was not drawn: %s reports no matrix, and a picture needs one",
 			ev.label(), ev.noun(), w.where)
 	}

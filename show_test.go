@@ -142,6 +142,13 @@ func storeHolding(t *testing.T, config storedConfig) *configTables {
 func watchOne(t *testing.T, pen *writer, snapshot printer.Snapshot, light strip, store lights) {
 	t.Helper()
 
+	// The driver judges a reading's staleness against the clock it is ticking on, which is the real
+	// one, so a fixture stamped with a fixed noon is a live printer only for the half-minute after
+	// that noon. Run the suite later and every test through here sees a stale reading and paints the
+	// dim red instead of the colour it is about — which is a test that measures the wall clock, not
+	// the state. Stamping the reading now is what makes it about the state.
+	snapshot.LastChange, snapshot.ObservedAt = time.Now(), time.Now()
+
 	pen.store = store
 
 	driver := newDriver(fakeReadings{snapshot: snapshot}, pen, light, quiet)
@@ -389,13 +396,13 @@ func TestAWordsHoldIsMeasuredFromTheStartOfItsState(t *testing.T) {
 		{holds: durationForever, just: 400 * 24 * time.Hour, at: 400 * 24 * time.Hour, forever: true, inForce: true},
 	} {
 		t.Run(one.holds, func(t *testing.T) {
-			until := wordUntil(one.holds, since)
+			until := wordUntil(one.holds, since, time.Time{})
 
 			if got := until.IsZero(); got != one.forever {
 				t.Fatalf("a hold of %s ends at %s, and forever=%v was wanted", one.holds, until, one.forever)
 			}
 
-			if got := wordInForce(one.holds, since, since.Add(one.at)); got != one.inForce {
+			if got := wordInForce(one.holds, since, time.Time{}, since.Add(one.at)); got != one.inForce {
 				t.Fatalf("a hold of %s %s in force %s after its state began, want %v",
 					one.holds, map[bool]string{true: "is", false: "is not"}[got], one.at, one.inForce)
 			}
@@ -903,5 +910,165 @@ func TestAPauseIsReadFromTheDocumentAndExpiresOnItsOwnInstant(t *testing.T) {
 
 	if _, paused := lights.paused(until); paused {
 		t.Fatal("a pause is still in force at the instant it ends")
+	}
+}
+
+// runWordedPanelSince starts a panel writer whose store holds one state's word, with the two
+// moments a hold is measured from given rather than assumed: since is when the state began, and
+// setAt is when the word was written (zero for a row an older release wrote).
+//
+// It is the same panel, the same clock and the same scene runWordedPanel uses; the difference is
+// that the state can have begun long before the word did, which is the case that was invisible.
+func runWordedPanelSince(t *testing.T, holds string, since, setAt time.Time) (*panelStrip, *pushedFrames, *fakeClock, time.Time) {
+	t.Helper()
+
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	clock := newFakeClock(at)
+
+	strip := newPanelStrip()
+	pen := newWriter(strip, 128, quiet)
+	pen.setPanel(strip.info)
+	pen.store = &handTable{states: map[string]show{
+		printer.StateFinished: {
+			colour: render.ColourFinished, origin: fromStore, word: "DONE", holds: holds, setAt: setAt,
+		},
+	}}
+
+	clock.watch(pen)
+	pushed := pushInto(pen)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go pen.run(ctx)
+
+	steady := render.Frame{Colour: render.ColourFinished, Total: 16384, Reason: render.ReasonNoLiveJob}
+	pen.submitScene(scene{frame: steady, state: printer.StateFinished, since: since})
+
+	return strip, pushed, clock, at
+}
+
+// TestAWordSetOnARunningStateIsShownFromTheWrite is the defect this wave fixed, at the painter.
+//
+// The printer finished ten seconds ago and somebody sets a word that holds for thirty: the word is
+// shown now, for its whole length, and the state's colour comes back when *its* hold runs out —
+// which is thirty seconds from the write and not thirty seconds from the finish.
+func TestAWordSetOnARunningStateIsShownFromTheWrite(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	strip, _, clock, _ := runWordedPanelSince(t, hold30s, at.Add(-10*time.Second), at)
+
+	waitFor(t, "the word to reach the panel", func() bool { return paintings(strip) == 1 })
+
+	mark := clock.mark()
+
+	// One second short of the hold, counted from the write.
+	clock.Advance(29 * time.Second)
+	clock.waitArmed(t, mark)
+
+	time.Sleep(20 * time.Millisecond)
+
+	if got := steadyPaints(strip); len(got) != 0 {
+		t.Fatalf("the state's colour came back %d times before the word's hold ran out: %+v", len(got), got)
+	}
+
+	clock.Advance(time.Second)
+
+	waitFor(t, "the state's colour to come back when the hold runs out", func() bool {
+		return len(steadyPaints(strip)) == 1
+	})
+}
+
+// TestAWordOnAStateThatStartedLongBeforeItStillShows is the reported defect in its own shape: the
+// printer finished hours ago, so a hold measured from the finish has already run out, and the write
+// answered 200 while nothing changed on the wall.
+//
+// The word has to appear, and it has to hold for its own length from the write. A picture that
+// showed for the instant of the write and then vanished would be no better than one that never
+// appeared, so the hold is judged either side.
+func TestAWordOnAStateThatStartedLongBeforeItStillShows(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	strip, _, clock, _ := runWordedPanelSince(t, hold60s, at.Add(-4*time.Hour), at)
+
+	waitFor(t, "the word to reach the panel", func() bool { return paintings(strip) == 1 })
+
+	mark := clock.mark()
+
+	clock.Advance(time.Minute - time.Second)
+	clock.waitArmed(t, mark)
+
+	time.Sleep(20 * time.Millisecond)
+
+	if got := steadyPaints(strip); len(got) != 0 {
+		t.Fatalf("a word set on a four-hour-old state gave the panel back early: %+v", got)
+	}
+
+	clock.Advance(time.Second)
+
+	waitFor(t, "the state's colour to come back a minute after the write", func() bool {
+		return len(steadyPaints(strip)) == 1
+	})
+}
+
+// TestAWordSetBeforeItsStateBeginsHoldsFromTheEntry is the behaviour that must not change: a word
+// already stored when the printer enters the state is shown from the entry, for its own length.
+//
+// A hold measured from the write here would be a word that had already expired by the time the
+// state it describes began — the same defect with its ends swapped.
+func TestAWordSetBeforeItsStateBeginsHoldsFromTheEntry(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	// The word was written an hour before the printer finished.
+	strip, _, clock, _ := runWordedPanelSince(t, hold30s, at, at.Add(-time.Hour))
+
+	waitFor(t, "the word to reach the panel", func() bool { return paintings(strip) == 1 })
+
+	mark := clock.mark()
+
+	clock.Advance(29 * time.Second)
+	clock.waitArmed(t, mark)
+
+	time.Sleep(20 * time.Millisecond)
+
+	if got := steadyPaints(strip); len(got) != 0 {
+		t.Fatalf("the word left the panel %d times before its hold from the entry ran out: %+v", len(got), got)
+	}
+
+	clock.Advance(time.Second)
+
+	waitFor(t, "the state's colour to come back thirty seconds after the entry", func() bool {
+		return len(steadyPaints(strip)) == 1
+	})
+}
+
+// TestAWordFromAVersionFourStoreStillHoldsFromTheEntry is the upgrade's half at the painter: a row
+// a version-4 document wrote carries no moment, and the hold is then the one that version meant —
+// the same arithmetic, with the write's moment absent rather than invented.
+func TestAWordFromAVersionFourStoreStillHoldsFromTheEntry(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	// No set_at, and a state that began an hour ago: the word has expired, which is exactly what
+	// version 4 did and what an upgrade must not silently change.
+	strip, pushed, clock, _ := runWordedPanelSince(t, hold30s, at.Add(-time.Hour), time.Time{})
+
+	// The steady frame is what the panel is given, which is the light's own picture: a word that
+	// had no write moment to count from is judged by its state's entry, and this one ran out with it.
+	strip.waitForPaints(t, 1)
+
+	mark := clock.mark()
+
+	clock.Advance(time.Minute)
+	clock.waitArmed(t, mark)
+
+	time.Sleep(20 * time.Millisecond)
+
+	if got := pushed.pushed(); got != 0 {
+		t.Fatalf("a row with no write moment pushed %d pixel frames, want none: its hold ran out with its state", got)
+	}
+
+	if got := paintings(strip); got != 0 {
+		t.Fatalf("a row with no write moment painted the word %d times, want none", got)
 	}
 }

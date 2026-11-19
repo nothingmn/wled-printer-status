@@ -47,7 +47,7 @@ import (
 )
 
 // show is one state as the store has it: the colour it is drawn in, where that colour came from,
-// and the word it may carry with the length that word holds.
+// and the word it may carry with the length that word holds and the moment it was written.
 //
 // The colour is answered whether or not anybody overrode it, because a word is drawn in it and the
 // word is the store's business; `origin` is what lets the painter leave the renderer's own picture
@@ -59,6 +59,12 @@ type show struct {
 
 	word  string
 	holds string
+
+	// setAt is when this word was written, and the zero time for a row written before the store
+	// kept one. It is the anchor a hold on an already-running state is measured from — see
+	// wordUntil — and it is carried here rather than looked up again because the painter asks the
+	// store a question, not a series of them.
+	setAt time.Time
 }
 
 // overridden says the colour is the store's rather than the renderer's.
@@ -70,7 +76,7 @@ func showOf(row stateRow) show {
 	word, _ := row.word()
 	holds, _ := row.holds()
 
-	return show{colour: colour, origin: origin, word: word, holds: holds}
+	return show{colour: colour, origin: origin, word: word, holds: holds, setAt: row.setAt()}
 }
 
 // holdLength is how long one of a state word's four holds lasts, and false for `forever` and for
@@ -89,22 +95,44 @@ func holdLength(holds string) (time.Duration, bool) {
 	return 0, false
 }
 
-// wordUntil is the instant a state's word stops being shown, counted from the moment its state
-// began, and the zero time for a word that does not end.
+// wordUntil is the instant a state's word stops being shown, and the zero time for a word that does
+// not end.
 //
-// A word's hold is a length of the state, not of the module: the state began when the printer
-// entered it, and thirty seconds from then is the thirty seconds the operator asked for. The
-// moment is carried rather than remembered here, because the writer is reconstructed and the
-// driver is the one thing that saw the transition.
-func wordUntil(holds string, since time.Time) time.Time {
+// A hold is a length of the time the word is *shown*, and the moment it counts from is the later of
+// two facts: when the state began, and when the word was written.
+//
+//   - A word written while its state is already the one being shown runs from the write. Anything
+//     else would spend the hold on time the word was not there: a printer that finished at nine and
+//     a word set at one is shown for its full minute from one, rather than a minute that ended
+//     three hours before anybody asked for it — which is the defect this rule was written for, and
+//     the one an operator meets as "I set a word, it answered 200, and nothing happened".
+//   - A word written before its state begins runs from the entry, which is what this module has
+//     always done and what a hold means for the ordinary case: the printer finishes, the word
+//     appears, thirty seconds later the colour comes back.
+//
+// The state's own moment is carried rather than remembered here, because the writer is
+// reconstructed and the driver is the one thing that saw the transition; the write's moment is
+// carried in the store. Neither is a timer, so a process restarted in the middle of a hold judges
+// the same way it did before it stopped.
+func wordUntil(holds string, since, setAt time.Time) time.Time {
 	length, finite := holdLength(holds)
-	if !finite || since.IsZero() {
-		// `forever`, and the one case with no state to count from, which is a frame submitted
-		// without one: a word is then shown for as long as its state lasts.
+	if !finite {
+		// `forever`: a decision, not a very long hold, and no instant ends it.
 		return time.Time{}
 	}
 
-	return since.Add(length)
+	anchor := since
+	if setAt.After(anchor) {
+		anchor = setAt
+	}
+
+	// `forever`, and the one case with no state and no write to count from, which is a frame
+	// submitted without either: a word is then shown for as long as its state lasts.
+	if anchor.IsZero() {
+		return time.Time{}
+	}
+
+	return anchor.Add(length)
 }
 
 // wordInForce says whether a state's word is still the light's picture at a moment.
@@ -112,8 +140,8 @@ func wordUntil(holds string, since time.Time) time.Time {
 // It is the whole of "has this word expired", and it is computed at paint time and never cached:
 // a value computed once and kept would be a word that ended when the last read happened rather
 // than when its hold ran out.
-func wordInForce(holds string, since, at time.Time) bool {
-	until := wordUntil(holds, since)
+func wordInForce(holds string, since, setAt, at time.Time) bool {
+	until := wordUntil(holds, since, setAt)
 
 	return until.IsZero() || at.Before(until)
 }

@@ -53,13 +53,14 @@ var (
 		fault.ShowDetail,
 	))
 
-	// PreviewNotRunning is a preview that arrived when this instance is not driving exactly one
-	// light. The route fires the word on the instance's own panel, and a watch holding several
-	// bindings has no single light to fire at: picking one of them would be putting a picture on
-	// a light the caller did not name.
+	// PreviewNotRunning is a preview that arrived when this instance is driving no light at all,
+	// which is the first second of a start and otherwise a configuration the module could not act
+	// on. It is not a refusal about how many lights there are: a preview is fired at every light
+	// the instance drives, and `?light=` picks one, so several lights is the ordinary case and not
+	// a reason to refuse.
 	PreviewNotRunning = fault.Register(faultDomain, "PREVIEW_NOT_RUNNING", http.StatusServiceUnavailable, fault.Document(
-		"This module is not driving one light yet",
-		"It answers once its watch is running, which is within a second of starting, and only for an instance that drives exactly one controller. An instance holding several bindings has no single light to preview on.",
+		"This module is not driving a light yet",
+		"It answers once its watch is running, which is within a second of starting. An instance driving several lights answers for every one of them, and the light parameter aims the request at one.",
 		fault.RetryAllowed,
 		fault.ShowDetail,
 	))
@@ -74,11 +75,14 @@ var (
 		fault.ShowDetail,
 	))
 
-	// PreviewNotDrawable is a preview asked of a light that cannot carry the word: a strip, which
-	// has no second dimension, or a panel too small for the word at the scale this build draws it.
+	// PreviewNotDrawable is a preview asked of a light that cannot carry the picture: a word or a
+	// composed frame on a strip, which has no second dimension, a panel too small for the word at
+	// the scale this build draws it, or a controller that has not yet said how many pixels it
+	// drives. The diagnostic patterns are not refused by it on a strip: those are laid out along
+	// the run instead.
 	PreviewNotDrawable = fault.Register(faultDomain, "PREVIEW_NOT_DRAWABLE", http.StatusConflict, fault.Document(
-		"This light cannot carry the word",
-		"The finished word is drawn in pixels on a two-dimensional panel. The controller this instance drives reported no matrix, so it is a strip, or its panel is too small for the word at the scale this build draws it. The details say which.",
+		"This light cannot carry the picture",
+		"A word and a composed frame are drawn in pixels on a two-dimensional panel. The controller this instance drives reported no matrix, so it is a strip, or its panel is too small for the word at the scale this build draws it — or it has not yet said how many pixels it drives. The diagnostic patterns solid, border and quarters are drawn on a strip as well, along its one run of LEDs. The details say which case this is.",
 		fault.RetryNever,
 		fault.ShowDetail,
 	))

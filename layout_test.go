@@ -1058,7 +1058,7 @@ func TestThePreviewOfTheComposedPanelRefusesWhatItCannotDraw(t *testing.T) {
 			controller: borrowed,
 		},
 		{
-			name:   "no single light is being driven",
+			name:   "no light is being driven at all",
 			path:   "/preview-frame?percent=41",
 			target: func() *previewTarget { return nil },
 			status: http.StatusServiceUnavailable,
@@ -1087,8 +1087,8 @@ func TestThePreviewOfTheComposedPanelRefusesWhatItCannotDraw(t *testing.T) {
 				t.Fatalf("a refused preview wrote %d requests to the controller, want none", shape.controller.wrote())
 			}
 
-			if target := previewNow(); target != nil && target.pen.fired.Load() != nil {
-				t.Fatal("a refused preview stored an event in the writer's slot")
+			if what, waiting := anyFired(); waiting {
+				t.Fatalf("a refused preview stored the %q event in a writer's slot", what)
 			}
 		})
 	}

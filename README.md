@@ -247,14 +247,19 @@ You can see the picture without running a print:
 
 ```bash
 curl -s -X POST "$base/preview-frame?percent=41&name=MK4IS&hold=120"
-{"controller":"http://10.0.0.136","percent":41,"name":"MK4IS","halves":["41%","MK4IS"],
- "layout":{...},"holds_seconds":120,"rotation_seconds":15}
+{"lights":[{"controller":"http://10.0.0.136","light":"10.0.0.136"}],"count":1,
+ "percent":41,"holds_seconds":120}
 ```
 
 It draws exactly what a printing panel draws with those values — same layout, same scales, same colours,
-same route through the writer — and `halves` tells you what the rotation will show, in order. `percent` is
-required and is a whole number 0 to 100; `hold` works as it does on the other two previews (default 60,
-ceiling 300, refused past it).
+same route through the writer — and, for a request that resolved to one light, `name`, `halves`, `layout` and
+`rotation_seconds` say what that light will show, in order. `percent` is required and is a whole number 0 to
+100; `hold` works as it does on the other two previews (default 60, ceiling 300, refused past it).
+
+On an instance driving more than one light the picture goes to every one of them and each draws it at its own
+geometry, so `name` and `halves` are per light in `lights` — a 64x32 panel and a 256x64 one cut the same name
+differently. A strip has no rows for a bar or a line of digits, so it is refused for that light and the panel
+still gets its picture.
 
 ## Looking at the finished word without waiting for a print
 
@@ -263,22 +268,31 @@ out. The module serves one request for exactly that:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/preview-finished
-{"event":"FINISHED","controller":"http://10.0.0.136","colour":{"r":0,"g":170,"b":0},"scale":5,"holds_seconds":60}
+{"lights":[{"controller":"http://10.0.0.136","light":"10.0.0.136"}],"count":1,
+ "event":"FINISHED","colour":{"r":0,"g":170,"b":0},"scale":5,"holds_seconds":60}
 ```
 
 `POST /preview-finished` fires the finished event now: the same word, in the same colour, for the same
 minute a completed print gets, so what you look at is what the light will do rather than a rehearsal of
-something else. The pixels go out on the module's own writer, behind the same gate and the same retry
-window as every other write, and the steady frame takes the light back when the minute is up — the
-route changes nothing about the light's ordinary picture and writes nothing to the controller itself.
+something else. The pixels go out on the module's own writers, behind the same gate and the same retry
+window as every other write, and the steady frame takes each light back when the minute is up — the
+route changes nothing about a light's ordinary picture and writes nothing to a controller itself.
 
-It refuses, with a code and a sentence, in the three cases where the light cannot be asked for the word:
+It goes to **every light the instance drives**, and `?light=10.0.0.136` aims it at one — the name is the one
+`GET /controllers` gives, the address without its scheme. A light that cannot be asked for the word is
+refused for that light and named in `lights` beside the ones that took it; the request is refused as a whole
+only when no light took it:
 
 | answer | code | why |
 | --- | --- | --- |
-| 503 | `PREVIEW_NOT_RUNNING` | the module is not driving exactly one light yet — an instance holding several bindings has no single light to preview on |
-| 409 | `PREVIEW_BORROWED_SEGMENT` | the light is one borrowed segment of a controller somebody else also drives, and an animation is not something this module puts there |
-| 409 | `PREVIEW_NOT_DRAWABLE` | the controller reported no matrix (a strip), or its panel is too small for the word at the scale this build draws it |
+| 503 | `PREVIEW_NOT_RUNNING` | the module is driving no light at all yet, which is its state for the first second of a start |
+| 404 | `CONTROLLER_NOT_FOUND` | `light` names a controller this instance drives nothing on |
+| 409 | `PREVIEW_BORROWED_SEGMENT` | that light is one borrowed segment of a controller somebody else also drives, and an animation is not something this module puts there |
+| 409 | `PREVIEW_NOT_DRAWABLE` | that controller reported no matrix (a strip), or its panel is too small for the word at the scale this build draws it |
+
+`controller`, `name` and `halves` appear when the request resolved to one light; a multi-light answer carries
+the same facts per light in `lights`, because a field naming one of two lights would be answering for a light
+the picture did not go to.
 
 The route asks the host for `operate_resource` on the module's instance, because it changes what the light
 shows.
@@ -298,11 +312,16 @@ curl -s -X POST "$base/preview-pattern?pattern=border&hold=15"
 curl -s -X POST "$base/preview-pattern?pattern=quarters&hold=15"
 ```
 
-| picture | what it is | what it answers |
-| --- | --- | --- |
-| `solid` | the whole panel in pure white | **does DDP draw at all.** Lit means the transport and the drawing work and every later rung is worth looking at; dark means the transport is the fault, and the word would have been dark for a reason that has nothing to do with the word |
-| `border` | a white edge two pixels thick around the whole panel, nothing inside | **is the LED map the shape this module assumes.** A closed rectangle means row-major `y*width+x` with x across and y down; strips, a diagonal, a border in the wrong place or a border that is only half a rectangle means the panel is wired or mapped differently |
-| `quarters` | four blocks: red top-left, green top-right, blue bottom-left, white bottom-right | **which way up and which way round.** An upside-down picture puts red in the bottom right and names it; a mirrored one swaps red and green |
+| picture | on a panel | on a strip | what it answers |
+| --- | --- | --- | --- |
+| `solid` | the whole panel in pure white | the whole run in pure white | **does DDP draw at all.** Lit means the transport and the drawing work and every later rung is worth looking at; dark means the transport is the fault, and the word would have been dark for a reason that has nothing to do with the word |
+| `border` | a white edge two pixels thick around the whole panel, nothing inside | white at the two ends of the run, nothing between | **is the LED map the shape this module assumes.** A closed rectangle means row-major `y*width+x` with x across and y down; anything else means the panel is wired or mapped differently. On a strip the two ends answer the same question — whether the run the controller draws is the run this module believes |
+| `quarters` | four blocks: red top-left, green top-right, blue bottom-left, white bottom-right | four bands along the run in the same order, twelve pixels each on a 48-LED strip | **which way up and which way round.** An upside-down picture puts red in the bottom right and names it; a mirrored one swaps red and green. A strip names the end it is wrong at |
+
+This is the only instrument there is: the firmware cannot report what its pixels are (`pwr` reads 0 on a lit
+panel, `/json/state` carries no per-LED colours), so a person looking is the measurement. That is why it runs
+on **every light the instance drives** rather than on one — a diagnostic that refused because the install
+holds two lights would stop working exactly when there is more to diagnose. `?light=` aims it at one.
 
 The colours are chosen so that no printer state can be mistaken for one: every colour in the state table
 has at least one channel unlit — printing and finished are `0,170,0`, idle and busy `210,165,0`, an error
@@ -310,16 +329,18 @@ has at least one channel unlit — printing and finished are `0,170,0`, idle and
 
 Each picture goes out as pixels over DDP on the same writer, with the same establishing body, the same
 once-a-second repeat and the same hand-back to the steady frame the word uses; the segment's name is the
-pattern's, so `/json/state` says which picture the panel is holding. It answers `202` with the picture, the
-controller, the sentence above and how long it holds. It refuses with a code in these cases:
+pattern's, so `/json/state` says which picture the panel is holding. It answers `202` with the picture, one
+entry per light in `lights` — the controller, the light's name, and the sentence above in that light's own
+words — and how long it holds. It refuses with a code in these cases:
 
 | answer | code | why |
 | --- | --- | --- |
 | 400 | `PREVIEW_PATTERN_UNKNOWN` | no picture of that name; the sentence lists `solid`, `border` and `quarters` |
 | 400 | `PREVIEW_HOLD_OUT_OF_RANGE` | `hold` is not a whole number of seconds, is not positive, or is above 300 |
-| 503 | `PREVIEW_NOT_RUNNING` | the module is not driving exactly one light yet |
-| 409 | `PREVIEW_BORROWED_SEGMENT` | the light is one borrowed segment of somebody else's controller |
-| 409 | `PREVIEW_NOT_DRAWABLE` | the controller reported no matrix, so it is a strip |
+| 503 | `PREVIEW_NOT_RUNNING` | the module is driving no light at all yet |
+| 404 | `CONTROLLER_NOT_FOUND` | `?light=` names a controller this instance drives nothing on |
+| 409 | `PREVIEW_BORROWED_SEGMENT` | no light took it: the one it was aimed at is a borrowed segment of somebody else's controller |
+| 409 | `PREVIEW_NOT_DRAWABLE` | no light took it: the controller has not yet said how many pixels it drives |
 
 ## Holding a preview for longer than a minute
 

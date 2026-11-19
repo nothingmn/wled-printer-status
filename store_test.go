@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -219,9 +220,13 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 		want    []string
 	}{
 		{
-			name:    "a document from a newer release",
-			fixture: `{"version": 5, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": []}`,
-			want:    []string{"schema version 5", "version 4"},
+			// Named relative to this build's own version, so that the next schema change moves the
+			// fixture with it rather than turning this case into a document this build accepts.
+			name: "a document from a newer release",
+			fixture: fmt.Sprintf(
+				`{"version": %d, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": []}`,
+				storeVersion+1),
+			want: []string{fmt.Sprintf("schema version %d", storeVersion+1), fmt.Sprintf("version %d", storeVersion)},
 		},
 		{
 			name:    "a negative version, which no release wrote",
@@ -229,9 +234,11 @@ func TestAStoreThisBuildCannotReadIsRefusedByName(t *testing.T) {
 			want:    []string{"schema version -1", "counts from zero"},
 		},
 		{
-			name:    "a key this build does not know",
-			fixture: `{"version": 4, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": [], "colours": []}`,
-			want:    []string{"unknown field"},
+			name: "a key this build does not know",
+			fixture: fmt.Sprintf(
+				`{"version": %d, "bindings": [], "states": [], "moments": [], "layouts": [], "windows": [], "pauses": [], "colours": []}`,
+				storeVersion),
+			want: []string{"unknown field"},
 		},
 		{
 			// The three lists version 3 added do not exist at version 2, and the upgrade from it
@@ -493,7 +500,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 4 {
+	if found.Config.Version != storeVersion || storeVersion != 5 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -528,7 +535,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 4 {
+	if version, _ := onDisk["version"].(float64); int(version) != storeVersion {
 		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
 	}
 
@@ -586,7 +593,7 @@ func TestAVersionTwoStoreIsSteppedUpAndKeepsBothTables(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 2")
 	}
 
-	if found.Config.Version != 4 {
+	if found.Config.Version != storeVersion {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -630,7 +637,7 @@ func TestAVersionTwoStoreIsSteppedUpAndKeepsBothTables(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 4 {
+	if version, _ := onDisk["version"].(float64); int(version) != storeVersion {
 		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
 	}
 
@@ -871,8 +878,8 @@ func TestAVersionThreeStoreKeepsItsLayoutThroughTheRekeying(t *testing.T) {
 	}
 
 	onDisk := storedRaw(t, dir)
-	if version, _ := onDisk["version"].(float64); int(version) != 4 {
-		t.Fatalf("the store on disk carries version %v after the upgrade, want 4", onDisk["version"])
+	if version, _ := onDisk["version"].(float64); int(version) != storeVersion {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
 	}
 
 	layouts, _ := onDisk["layouts"].([]any)
@@ -887,5 +894,109 @@ func TestAVersionThreeStoreKeepsItsLayoutThroughTheRekeying(t *testing.T) {
 
 	if _, held := written["printer"]; held {
 		t.Fatalf("the row on disk still carries a printer key: %v", written)
+	}
+}
+
+// TestAVersionFourStoreStepsToFiveAndKeepsEveryTable is this wave's step, on a document with a row
+// in every table — which is the operator's own install, plus the three tables he has not filled in.
+//
+// Two claims. Nothing is dropped: the bindings, the state row and its word and hold, the moment
+// rows, the layout row, the windows and the pause all cross the step as they were. And nothing is
+// invented: version 4 wrote no write-moment for a state's word, so no row here gains one, and every
+// word keeps the rule version 4 had — its hold counts from the state's own entry.
+func TestAVersionFourStoreStepsToFiveAndKeepsEveryTable(t *testing.T) {
+	const panel = "07e893bb-b922-4ff0-9ad3-061b957400c3"
+
+	dir := writeStoreFile(t, `{
+  "version": 4,
+  "bindings": [{"id": "`+panel+`", "printer": "`+panel+`", "controller": "http://10.0.0.136", "segment": -1, "brightness": 128}],
+  "states": [{"state": "FINISHED", "word": "SWEEP", "holds": "60s", "colour": {"r": 0, "g": 170, "b": 0}}],
+  "moments": [{"light": "10.0.0.136", "printer": "`+panel+`", "moment": "print-started", "enabled": true, "shows": "word", "which": "GO"}],
+  "layouts": [{"binding": "`+panel+`", "bar_band": "top", "bar_rows": 6}],
+  "windows": [{"from": "08:00", "to": "18:00", "brightness": 180}],
+  "pauses": [{"scope": "global", "chosen": "1h", "set_at": "2026-11-19T12:00:00Z", "expires": "2026-11-19T13:00:00Z"}]
+}`)
+
+	found, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("a version 4 document was refused: %v", err)
+	}
+
+	if found.Version != 4 {
+		t.Fatalf("the read says the document carried version %d, want 4", found.Version)
+	}
+
+	if !found.Upgraded {
+		t.Fatal("the read does not say the document was upgraded, and it was written at version 4")
+	}
+
+	if found.Config.Version != storeVersion {
+		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
+	}
+
+	// Every table is the table it was. The row counts are the claim that nothing was dropped; the
+	// fields below are the claim that nothing was rewritten.
+	if len(found.Config.Bindings) != 1 || len(found.Config.States) != 1 || len(found.Config.Moments) != 1 ||
+		len(found.Config.Layouts) != 1 || len(found.Config.Windows) != 1 || len(found.Config.Pauses) != 1 {
+		t.Fatalf("the stepped document holds %d bindings, %d states, %d moments, %d layouts, %d windows and %d pauses, "+
+			"want one of each", len(found.Config.Bindings), len(found.Config.States), len(found.Config.Moments),
+			len(found.Config.Layouts), len(found.Config.Windows), len(found.Config.Pauses))
+	}
+
+	var line storedEntry
+	if err := json.Unmarshal(found.Config.Bindings[0], &line); err != nil {
+		t.Fatalf("read the stepped binding line: %v", err)
+	}
+
+	if line.ID != panel || line.Printer != panel || line.Brightness == nil || *line.Brightness != 128 {
+		t.Fatalf("the stepped binding line reads %+v, want the panel at id %q, brightness 128", line, panel)
+	}
+
+	row := found.Config.States[0]
+	if row.State != "FINISHED" || row.Word == nil || *row.Word != "SWEEP" || row.Holds == nil || *row.Holds != hold60s {
+		t.Fatalf("the stepped state row reads %+v, want FINISHED carrying SWEEP for 60s", row)
+	}
+
+	// The one thing this version adds, and the one thing a version-4 row must not be given: no
+	// moment. A stamp here would be a hold that begins at the upgrade, and every word on an install
+	// that upgraded would appear for its length on a light nobody had touched.
+	if row.SetAt != nil {
+		t.Fatalf("the stepped state row gained the write moment %v, and version 4 never recorded one", row.SetAt)
+	}
+
+	if row.Colour == nil || row.Colour.G != 170 {
+		t.Fatalf("the stepped state row's colour reads %+v, want the green it carried", row.Colour)
+	}
+
+	layout := found.Config.Layouts[0]
+	if layout.Binding != panel || layout.BarBand == nil || *layout.BarBand != "top" || layout.BarRows == nil || *layout.BarRows != 6 {
+		t.Fatalf("the stepped layout row reads %+v, want the panel's own band and rows", layout)
+	}
+
+	if found.Config.Windows[0].Brightness == nil || *found.Config.Windows[0].Brightness != 180 ||
+		found.Config.Pauses[0].Chosen != pause1h {
+		t.Fatalf("the stepped window and pause read %+v and %+v, want the window at 180 and the pause of an hour",
+			found.Config.Windows[0], found.Config.Pauses[0])
+	}
+
+	// And it is written back at the new version, as a document this build wrote rather than a
+	// version-4 document read leniently.
+	if _, err := saveStore(dir, found.Config); err != nil {
+		t.Fatalf("write the upgraded store back: %v", err)
+	}
+
+	onDisk := storedRaw(t, dir)
+
+	if version, _ := onDisk["version"].(float64); int(version) != storeVersion {
+		t.Fatalf("the store on disk carries version %v after the upgrade, want %d", onDisk["version"], storeVersion)
+	}
+
+	again, err := loadStore(dir)
+	if err != nil {
+		t.Fatalf("read the document back at version %d: %v", storeVersion, err)
+	}
+
+	if again.Upgraded {
+		t.Fatal("the document was stepped a second time, and it is already at this build's version")
 	}
 }

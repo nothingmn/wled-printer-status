@@ -201,7 +201,7 @@ func (w *writer) closePixels() {
 // A failed push is returned rather than retried here: the caller owns the retry, the log line
 // and the hold, and a second retry path inside this one would be two answers to one question.
 func (w *writer) pushWord(frame []wled.RGB) error {
-	push, err := w.pixelSender(w.panelOf())
+	push, err := w.pixelSender(w.paintPanel())
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (w *writer) pushWord(frame []wled.RGB) error {
 // its rotation is a function of the clock, so it is drawn again at the moment it goes out and the
 // hold's own copy is replaced with what the panel now holds.
 func (w *writer) republish(held *heldEvent) error {
-	push, err := w.pixelSender(w.panelOf())
+	push, err := w.pixelSender(w.paintPanel())
 	if err != nil {
 		return err
 	}
@@ -226,7 +226,7 @@ func (w *writer) republish(held *heldEvent) error {
 	frame := held.frame
 
 	if held.picture != nil {
-		if frame, err = held.event.draw(w.panelOf(), w.now()); err != nil {
+		if frame, err = held.event.draw(w.paintPanel(), w.now()); err != nil {
 			return err
 		}
 

@@ -241,7 +241,7 @@ func (w *writer) wordNow() (show, bool) {
 		return show{}, false
 	}
 
-	if !wordInForce(wanted.holds, standing.since, w.now()) {
+	if !wordInForce(wanted.holds, standing.since, wanted.setAt, w.now()) {
 		return show{}, false
 	}
 
@@ -311,7 +311,7 @@ func (w *writer) speak(ctx context.Context) (time.Duration, bool, error) {
 	case w.spoken == nil ||
 		w.spoken.word != wanted.word ||
 		w.spoken.colour != wanted.colour ||
-		!w.spoken.until.Equal(wordUntil(wanted.holds, sinceOf(w.standing.Load()))):
+		!w.spoken.until.Equal(wordUntil(wanted.holds, sinceOf(w.standing.Load()), wanted.setAt)):
 		if err := w.holdWord(ctx, wanted); err != nil {
 			return 0, true, err
 		}
@@ -351,7 +351,7 @@ func (w *writer) holdWord(ctx context.Context, wanted show) error {
 
 	w.spoken = &heldEvent{
 		event:   ev,
-		until:   wordUntil(wanted.holds, sinceOf(w.standing.Load())),
+		until:   wordUntil(wanted.holds, sinceOf(w.standing.Load()), wanted.setAt),
 		frame:   frame,
 		repush:  w.now().Add(pixelRepeat),
 		painted: true,

@@ -871,21 +871,21 @@ func routes() http.Handler {
 	// the same minute — because a preview that showed a different picture would be telling the
 	// operator something about a light he does not have.
 	//
-	// Nothing here writes to the controller: the event goes into the writer's one slot and the
+	// Nothing here writes to the controller: the event goes into each writer's one slot and each
 	// writer's own goroutine paints it, behind the same gate and the same backoff as every other
-	// write, and hands the steady frame back when the hold ends. So the route cannot reach the
-	// light in a way the module's ordinary path could not, and it cannot change what the light
+	// write, and hands the steady frame back when the hold ends. So the route cannot reach a
+	// light in a way the module's ordinary path could not, and it cannot change what a light
 	// rests at afterwards.
 	//
-	// It refuses in the three cases where the light cannot be asked for the word — no single
-	// light is being driven, the light is a borrowed segment of somebody else's controller, or
-	// it is a strip or a panel too small for the word — with a registered code for each, so a
-	// caller branches on the code and not on a sentence.
+	// It fires at every light this instance drives, and a request that wants one names it with
+	// `light`. A light that cannot be asked for the word — a borrowed segment of somebody else's
+	// controller, or a strip — is refused for that light and reported beside the ones that took
+	// it; the route refuses as a whole, with a registered code, only when no light took it at
+	// all. See previewTargets and paintPreview.
 	mux.HandleFunc("POST /preview-finished", func(w http.ResponseWriter, r *http.Request) {
-		target := previewNow()
-		if target == nil {
-			refuse(w, r, PreviewNotRunning.New(
-				"this module is not driving exactly one light, so there is nothing to preview the word on"))
+		targets, problem := previewTargets(r)
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
@@ -904,31 +904,25 @@ func routes() http.Handler {
 
 		ev.holds = holds
 
-		if err = target.pen.preview(ev); err != nil {
-			if errors.Is(err, ErrPreviewBorrowedSegment) {
-				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
-
-				return
-			}
-
-			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+		painted, problem := paintPreview(targets, func(*previewTarget) event { return ev })
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
 
-		answer(w, http.StatusAccepted, map[string]any{
-			"event":      ev.word,
-			"controller": target.where,
-			"colour":     colourView{R: ev.colour.R, G: ev.colour.G, B: ev.colour.B},
-			"scale":      finishedWordScale,
+		answer(w, http.StatusAccepted, withLights(map[string]any{
+			"event":  ev.word,
+			"colour": colourView{R: ev.colour.R, G: ev.colour.G, B: ev.colour.B},
+			"scale":  finishedWordScale,
 			// How long the word keeps the light, in whole seconds: the number a person needs to
 			// know when to look, and to know how long he has to look.
 			"holds_seconds": int(ev.holds / time.Second),
-		})
+		}, painted))
 	})
 
 	// The panel's own picture, drawn with the values the caller gives, so that the composed layout
-	// can be looked at without a print. It is the same machinery the two routes above use — the
+	// can be looked at without a print. It is the same machinery the two routes below use — the
 	// same writer, the same establishing body, the same once-a-second repeat over DDP, the same
 	// deadline and the same hand-back — because everything else about it is the point: what it
 	// draws is what a printing panel draws, or the picture would be a lie about a light.
@@ -937,10 +931,9 @@ func routes() http.Handler {
 	// without naming a progress has not said what to draw, and a route that answered with a picture
 	// of nothing would be a route that quietly ignored a misspelt parameter.
 	mux.HandleFunc("POST /preview-frame", func(w http.ResponseWriter, r *http.Request) {
-		target := previewNow()
-		if target == nil {
-			refuse(w, r, PreviewNotRunning.New(
-				"this module is not driving exactly one light, so there is nothing to preview the panel's picture on"))
+		targets, problem := previewTargets(r)
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
@@ -961,40 +954,70 @@ func routes() http.Handler {
 			return
 		}
 
-		geometry := target.pen.panelOf()
 		jobName := strings.TrimSpace(r.URL.Query().Get("name"))
 
-		// The frame a printing printer at this progress would have decided, drawn by the layout this
-		// instance is running. Both halves come from the same function the steady path uses.
-		picture := target.pen.pictureOf(previewFrame(percent, jobName, geometry.width*geometry.height))
+		// A composed picture is a rectangle: the bar is a band of rows and the text is centred in
+		// another, and a strip has one row. So each light is handed the picture drawn for its own
+		// geometry, and a light that has no rectangle refuses it — which is what keeps this route
+		// refusing on a strip, for the reason the word does.
+		painted, problem := paintPreview(targets, func(target *previewTarget) event {
+			geometry := target.pen.panelOf()
 
-		if err = target.pen.preview(composedEvent(picture, holds)); err != nil {
-			if errors.Is(err, ErrPreviewBorrowedSegment) {
-				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
-
-				return
-			}
-
-			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+			return composedEvent(
+				target.pen.pictureOf(previewFrame(percent, jobName, geometry.width*geometry.height)), holds)
+		})
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
 
-		bands, _ := target.pen.composing().bandsOn(geometry)
+		body := map[string]any{
+			"percent":       percent,
+			"holds_seconds": int(holds / time.Second),
+		}
 
-		answer(w, http.StatusAccepted, map[string]any{
-			"controller": target.where,
-			"percent":    percent,
-			// The name as the panel will draw it, which is not the name that was asked for: upper
-			// cased, without the characters this font does not hold, and cut to what fits.
-			"name": picture.name(geometry.width, nameScale(bands.textRows)),
-			// What the rotation shows, in the order it shows them, so that a caller holding the
-			// light for two minutes is told what he will see rather than what he would see now.
-			"halves":           picture.halves(geometry, bands),
-			"layout":           target.pen.composing().view(),
-			"holds_seconds":    int(holds / time.Second),
-			"rotation_seconds": int(target.pen.composing().rotate / time.Second),
-		})
+		// The name as each panel will draw it, and what its rotation shows: both are per light,
+		// because a 64x32 panel and a 256x64 one cut the same name at the same scale differently.
+		details := make([]map[string]any, 0, len(painted))
+
+		for i, one := range painted {
+			detail := map[string]any{"controller": one.Controller, "light": one.Light}
+
+			// A light that refused the picture has no name or rotation to report — the bands it
+			// would report them for do not exist on it — so its entry carries the refusal and
+			// nothing that would be a guess about a picture it is not drawing.
+			if one.Refused != "" {
+				detail["refused"], detail["why"] = one.Refused, one.Why
+				details = append(details, detail)
+
+				continue
+			}
+
+			geometry := targets[i].pen.panelOf()
+			bands, _ := targets[i].pen.composing().bandsOn(geometry)
+			picture := targets[i].pen.pictureOf(previewFrame(percent, jobName, geometry.width*geometry.height))
+
+			detail["name"] = picture.name(geometry.width, nameScale(bands.textRows))
+			detail["halves"] = picture.halves(geometry, bands)
+
+			details = append(details, detail)
+
+			if len(targets) == 1 {
+				body["name"] = detail["name"]
+				body["halves"] = detail["halves"]
+				body["layout"] = targets[i].pen.composing().view()
+				body["rotation_seconds"] = int(targets[i].pen.composing().rotate / time.Second)
+			}
+		}
+
+		body["lights"], body["count"] = details, len(details)
+
+		if len(details) == 1 {
+			body["controller"] = details[0]["controller"]
+		}
+
+		answer(w, http.StatusAccepted, body)
 	})
 
 	// The diagnostic ladder: three pictures that answer, one each, the three faults a blank panel
@@ -1004,13 +1027,13 @@ func routes() http.Handler {
 	// It shares the whole of the finished word's machinery rather than copying it: the same slot
 	// in the same writer, the same establishing body, the same once-a-second repeat over DDP and
 	// the same hand-back when the hold ends. What it does not share is the word: a pattern carries
-	// its own pixels, so the refusal for a panel too small to hold the word does not apply, and the
-	// refusals that do apply are the finished word's own three plus two of this route's.
+	// its own pixels, so the refusal for a panel too small to hold the word does not apply, and a
+	// strip is given the same picture laid out along its one row rather than being refused — the
+	// ladder is the instrument that says whether anything is lit, and a strip is a light.
 	mux.HandleFunc("POST /preview-pattern", func(w http.ResponseWriter, r *http.Request) {
-		target := previewNow()
-		if target == nil {
-			refuse(w, r, PreviewNotRunning.New(
-				"this module is not driving exactly one light, so there is nothing to preview a pattern on"))
+		targets, problem := previewTargets(r)
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
@@ -1034,28 +1057,47 @@ func routes() http.Handler {
 			return
 		}
 
-		if err = target.pen.preview(ev); err != nil {
-			if errors.Is(err, ErrPreviewBorrowedSegment) {
-				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
-
-				return
-			}
-
-			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+		painted, problem := paintPreview(targets, func(*previewTarget) event { return ev })
+		if problem != nil {
+			refuse(w, r, problem)
 
 			return
 		}
 
 		shape, _ := patternNamed(ev.pattern)
 
-		answer(w, http.StatusAccepted, map[string]any{
-			"pattern":    ev.pattern,
-			"controller": target.where,
-			// What a person is supposed to learn by looking, so that the route and the look are
-			// one errand rather than two.
-			"answers":       shape.answers,
+		// What a person is supposed to learn by looking, so that the route and the look are one
+		// errand rather than two. It is per light because a one-row light does not show four
+		// quadrants: it shows four bands, and the sentence has to say which.
+		body := map[string]any{
+			"pattern":       ev.pattern,
 			"holds_seconds": int(ev.holds / time.Second),
-		})
+		}
+
+		details := make([]map[string]any, 0, len(painted))
+
+		for i, one := range painted {
+			detail := map[string]any{
+				"controller": one.Controller,
+				"light":      one.Light,
+				"answers":    shape.answersOn(targets[i].pen.panelOf()),
+			}
+
+			if one.Refused != "" {
+				detail["refused"], detail["why"] = one.Refused, one.Why
+			}
+
+			details = append(details, detail)
+		}
+
+		body["lights"], body["count"] = details, len(details)
+
+		if len(details) == 1 {
+			body["controller"] = details[0]["controller"]
+			body["answers"] = details[0]["answers"]
+		}
+
+		answer(w, http.StatusAccepted, body)
 	})
 
 	// Everything else is this module's own refusal. It carries the code from
@@ -1068,6 +1110,151 @@ func routes() http.Handler {
 	})
 
 	return mux
+}
+
+// previewTargets answers the lights one preview request is about: every light this instance
+// drives, in the order the settings name them, or the ones the request's `light` parameter names.
+//
+// The set is the watch's, read whole — see previewHeld — so a request cannot be answered for one
+// configuration and painted on another. An instance driving no light at all is the one case these
+// routes still refuse: there is nothing to put a picture on, and saying so is the whole answer.
+func previewTargets(r *http.Request) ([]*previewTarget, *fault.Fault) {
+	targets := previewsNow()
+	if len(targets) == 0 {
+		return nil, PreviewNotRunning.New(
+			"this module is driving no light at all, so there is nothing to preview a picture on: " +
+				"it answers once its watch is running, which is within a second of starting")
+	}
+
+	wanted := strings.TrimSpace(r.URL.Query().Get("light"))
+	if wanted == "" {
+		return targets, nil
+	}
+
+	chosen := make([]*previewTarget, 0, 1)
+
+	for _, target := range targets {
+		if target.named(wanted) {
+			chosen = append(chosen, target)
+		}
+	}
+
+	if len(chosen) == 0 {
+		return nil, ControllerNotFound.
+			New(fmt.Sprintf("This module drives no light called %q. Read GET /controllers for the ones it does.", wanted)).
+			With(fault.StringParam("controller", wanted))
+	}
+
+	return chosen, nil
+}
+
+// previewPaint is one light's answer to a preview: the controller it went to, the name a caller
+// could have used to target it, and — for a light that would not take the picture — the code it
+// refused with and the sentence saying why.
+//
+// It is one record per light because a preview on a two-light install is two writes and one of them
+// can be refused: an answer that said only "accepted" would be hiding a light that stayed dark, and
+// one that failed the whole request because a strip cannot draw a word would be taking the panel's
+// preview away with it.
+type previewPaint struct {
+	Controller string `json:"controller"`
+	Light      string `json:"light"`
+	Refused    string `json:"refused,omitempty"`
+	Why        string `json:"why,omitempty"`
+}
+
+// previewRefusal is the two ways a light can refuse a preview, kept apart from the error so that
+// the code can be reported per light and still be the registered code a caller branches on.
+type previewRefusal int
+
+const (
+	refusalBorrowedSegment previewRefusal = iota
+	refusalNotDrawable
+)
+
+// code is the registered code this refusal carries.
+func (r previewRefusal) code() string {
+	if r == refusalBorrowedSegment {
+		return PreviewBorrowedSegment.Code().String()
+	}
+
+	return PreviewNotDrawable.Code().String()
+}
+
+// faultOf is the refusal as the route raises it when no light took the picture.
+func (r previewRefusal) faultOf(message string) *fault.Fault {
+	if r == refusalBorrowedSegment {
+		return PreviewBorrowedSegment.New(message)
+	}
+
+	return PreviewNotDrawable.New(message)
+}
+
+// paintPreview fires one picture at every light the request is about, in the order the watch drives
+// them, and answers one record per light.
+//
+// picture builds the event for one light, because a composed frame is drawn at the light's own
+// geometry while a word and a pattern are the same event everywhere. Each writer stores its own
+// copy, so one light taking the picture cannot change what another is handed.
+//
+// The refusal is the other half: a light that will not take the picture does not stop the others,
+// and the route refuses as a whole only when not one light took it — with the code that fired first
+// and a sentence naming every light, so that a caller reading one answer learns which lights are
+// dark and why.
+func paintPreview(targets []*previewTarget, picture func(*previewTarget) event) ([]previewPaint, *fault.Fault) {
+	painted := make([]previewPaint, 0, len(targets))
+	refusals := make([]string, 0, len(targets))
+	kinds := make([]previewRefusal, 0, len(targets))
+
+	took := 0
+
+	for _, target := range targets {
+		record := previewPaint{Controller: target.where, Light: target.light}
+
+		err := target.pen.preview(picture(target))
+		if err == nil {
+			took++
+
+			painted = append(painted, record)
+
+			continue
+		}
+
+		kind := refusalNotDrawable
+		if errors.Is(err, ErrPreviewBorrowedSegment) {
+			kind = refusalBorrowedSegment
+		}
+
+		record.Refused, record.Why = kind.code(), err.Error()
+
+		refusals = append(refusals, err.Error())
+		kinds = append(kinds, kind)
+
+		painted = append(painted, record)
+	}
+
+	if took == 0 {
+		return nil, kinds[0].faultOf(strings.Join(refusals, "; "))
+	}
+
+	return painted, nil
+}
+
+// withLights adds the lights a preview was painted on to an answer, and the single controller field
+// a caller reading a one-light install has always read.
+//
+// `controller` is kept for exactly the case it can be true in — a request that resolved to one
+// light — and left out when there are several, where it would be naming one of them as though the
+// answer were about it. `lights` is always there, so a caller with one light and a caller with four
+// read the same field.
+func withLights(body map[string]any, painted []previewPaint) map[string]any {
+	body["lights"], body["count"] = painted, len(painted)
+
+	if len(painted) == 1 {
+		body["controller"] = painted[0].Controller
+	}
+
+	return body
 }
 
 // answer writes one JSON body, which is every route above that answers.

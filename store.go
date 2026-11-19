@@ -70,7 +70,14 @@ const (
 	// Every version-3 binding was its printer's only one, so the step writes each line's `id` as
 	// the printer it already carried and renames each layout row's `printer` key to `binding` with
 	// the same value. Nothing is dropped: the rows are the rows.
-	storeVersion = 4
+	//
+	// Version 5 is the moment a state's word was written: `set_at` on a state's row. A hold now
+	// runs from the later of that moment and the moment the state began, so a word set on a state
+	// that is already being shown is shown for its full length instead of being spent before
+	// anyone read it. The step from 4 is deliberately a step that changes nothing in the rows:
+	// version 4 wrote no such moment, and a row without one keeps version 4's rule — the hold
+	// counts from the state's own entry.
+	storeVersion = 5
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -393,6 +400,30 @@ var storeUpgrades = []storeUpgrade{
 				Windows:  third.Windows,
 				Pauses:   third.Pauses,
 			})
+		},
+	},
+	{
+		from: 4,
+		why:  "a state's word carries the moment it was written, so a hold begins at the write",
+		step: func(raw []byte) ([]byte, error) {
+			// Version 4 and version 5 are the same document and not the same rows: version 5's
+			// rows may carry `set_at` and version 4's never did, so a version-4 document decodes
+			// into this shape with that field absent on every row. Absent is the rule version 4
+			// had — a hold counts from the moment the state began — and inventing a moment here
+			// would be inventing a decision nobody made, on every row of every existing install.
+			//
+			// What the step is for is the discipline the table exists for: a version 5 document
+			// has to have been *written* by this build, one step at a time, so that a version 4
+			// document is stepped rather than read as though it were version 5 with a field
+			// missing. The read after it decodes strictly at version 5.
+			var fourth storedConfig
+			if err := decodeStrictly(raw, &fourth); err != nil {
+				return nil, err
+			}
+
+			fourth.Version = 5
+
+			return json.Marshal(fourth)
 		},
 	},
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
 
+	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
@@ -972,5 +973,139 @@ func TestAnUnknownNameIsRefusedByCode(t *testing.T) {
 	detail, _ := answer["detail"].(string)
 	if !strings.Contains(detail, "printer-a") || !strings.Contains(detail, "printer-b") {
 		t.Fatalf("the refusal %q does not name the printers the light carries", detail)
+	}
+}
+
+// stateRoutesAt builds the state table's routes over a store in a directory of its own, judged at a
+// clock the test moves.
+//
+// No watch runs. These routes answer about the document and about what the writers published — a
+// state's start comes from a writer's own report (see stateStarts), which a test sets directly
+// rather than starting a watch whose driver would publish a state of its own over it.
+func stateRoutesAt(t *testing.T, clock func() time.Time) *tablesUnderTest {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	if _, err := saveStore(dir, storedConfig{Version: storeVersion}); err != nil {
+		t.Fatalf("write the store the module would have written: %v", err)
+	}
+
+	tables := &configTables{}
+	tables.grant(dir)
+
+	mux := http.NewServeMux()
+	tableAPI{tables: tables, clock: clock}.mount(mux)
+
+	return &tablesUnderTest{mux: mux, dir: dir, tables: tables}
+}
+
+// TestAWordSetOnARunningStateSaysWhenItWillStop is the write's answer, which is where the defect
+// was most expensive: it said 200 and meant nothing.
+//
+// The printer finished four hours ago, so a hold counted from the state's entry expired three
+// hours and fifty-nine minutes ago. The word is now counted from the write, and the answer says
+// both halves of that: that the word is on the light, and the instant it stops being on it — the
+// number a person needs to know when to look.
+func TestAWordSetOnARunningStateSaysWhenItWillStop(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+	now := at
+
+	under := stateRoutesAt(t, func() time.Time { return now })
+
+	// The light is showing FINISHED, and has been since four hours before the write.
+	publishShape(
+		binding{DeviceID: "printer-a", Address: "http://10.0.0.136", Segment: -1},
+		bindingShape{state: printer.StateFinished, since: at.Add(-4 * time.Hour)})
+	t.Cleanup(forgetBindings)
+
+	status, body := under.do(t, http.MethodPut, "/states/FINISHED", `{"word": "SWEEP", "holds": "60s"}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT /states/FINISHED answered %d: %v", status, body)
+	}
+
+	written := readObject(t, body, "state")
+
+	if got := readString(t, written, "word_shows"); got != wordShowsShowing {
+		t.Fatalf("the write says the word is %q, want %q: the state is being shown and the hold starts at the write",
+			got, wordShowsShowing)
+	}
+
+	if want := at.Add(time.Minute).Format(time.RFC3339); readString(t, written, "word_until") != want {
+		t.Fatalf("the write says the word shows until %q, want %q — sixty seconds from the write and not from the state",
+			readString(t, written, "word_until"), want)
+	}
+
+	// The sentence is the point of the answer: a person reads it rather than decoding a code.
+	if note := readString(t, body, "note"); !strings.Contains(note, "on the light now") {
+		t.Fatalf("the note reads %q, want it to say the word is on the light now", note)
+	}
+
+	// And the moment is in the document, because that is what makes the answer survive a restart.
+	stored := under.stored(t)
+
+	if len(stored.States) != 1 || stored.States[0].SetAt == nil || !stored.States[0].SetAt.Equal(at) {
+		t.Fatalf("the document holds %+v, want the state's row stamped with the moment of the write", stored.States)
+	}
+
+	// A minute and a second later the same word has run out, and the answer says so instead of
+	// repeating a success nobody can see on the light.
+	now = at.Add(61 * time.Second)
+
+	status, body = under.do(t, http.MethodGet, "/states/FINISHED", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /states/FINISHED answered %d: %v", status, body)
+	}
+
+	read := readObject(t, body, "state")
+
+	if got := readString(t, read, "word_shows"); got != wordShowsExpired {
+		t.Fatalf("a word whose hold has run out reads %q, want %q", got, wordShowsExpired)
+	}
+}
+
+// TestAWordForAStateNobodyIsShowingSaysItIsWaiting is the third answer: a word set on a state no
+// light is showing is not a failure and not a success — it runs from the moment a light enters that
+// state, and the answer says which.
+func TestAWordForAStateNobodyIsShowingSaysItIsWaiting(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+
+	under := stateRoutesAt(t, func() time.Time { return at })
+
+	status, body := under.do(t, http.MethodPut, "/states/ERROR", `{"word": "OH NO", "holds": "30s"}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT /states/ERROR answered %d: %v", status, body)
+	}
+
+	written := readObject(t, body, "state")
+
+	if got := readString(t, written, "word_shows"); got != wordShowsLater {
+		t.Fatalf("a word on a state no light shows reads %q, want %q", got, wordShowsLater)
+	}
+
+	if until := readString(t, written, "word_until"); until != "" {
+		t.Fatalf("a word waiting for its state says it shows until %q, and there is no instant it stops at", until)
+	}
+}
+
+// TestAWriteWithNoWordSaysNothingAboutOne keeps the new field honest: a colour written on its own
+// carries no word, so there is no hold to judge and the answer does not invent one.
+func TestAWriteWithNoWordSaysNothingAboutOne(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 20, 0, 0, 0, time.UTC)
+
+	under := stateRoutesAt(t, func() time.Time { return at })
+
+	status, body := under.do(t, http.MethodPut, "/states/IDLE", `{"colour": {"r": 1, "g": 2, "b": 3}}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT /states/IDLE answered %d: %v", status, body)
+	}
+
+	if got := readString(t, readObject(t, body, "state"), "word_shows"); got != wordShowsNone {
+		t.Fatalf("a colour-only write says its word is %q, want %q", got, wordShowsNone)
+	}
+
+	// And no moment is stamped on a row with no word to measure.
+	if stored := under.stored(t); len(stored.States) != 1 || stored.States[0].SetAt != nil {
+		t.Fatalf("the document holds %+v, want a row with no write moment", stored.States)
 	}
 }

@@ -290,6 +290,23 @@ type stateAnswer struct {
 	Holds        string `json:"holds"`
 	HoldsOrigin  string `json:"holds_origin"`
 
+	// WordShows is what the word is doing at the moment this answer was written, and WordUntil is
+	// the instant it stops — the two facts a write's success was silent about before schema
+	// version 5. A caller who set a word on a printer that finished hours ago was told 200 and
+	// watched a light that never changed, so the answer now says which of these it is:
+	//
+	//	none     the state carries no word
+	//	showing  a light is showing this state and the word is on it; WordUntil is when it stops,
+	//	         and empty for a word of forever
+	//	expired  a light is showing this state and the hold has run out: nothing is showing the
+	//	         word, and it will not until it is written again
+	//	later    no light is showing this state; the word runs from the moment one enters it
+	WordShows string `json:"word_shows"`
+
+	// WordUntil is the last instant the word is showing on any light, in UTC, and empty when
+	// nothing is counting down.
+	WordUntil string `json:"word_until,omitempty"`
+
 	// Overridden is true when any of the three came from the store, which is what decides whether
 	// a screen offers "reset to the default".
 	Overridden bool `json:"overridden"`
@@ -299,11 +316,112 @@ type stateAnswer struct {
 	Meaning string `json:"meaning"`
 }
 
-// stateAnswerOf renders one row of the state table.
-func stateAnswerOf(row stateRow) stateAnswer {
+// What a state's word may be doing at the moment an answer is written. See stateAnswer.WordShows.
+const (
+	wordShowsNone    = "none"
+	wordShowsShowing = "showing"
+	wordShowsExpired = "expired"
+	wordShowsLater   = "later"
+)
+
+// wordStanding is one state's word at one instant: what it is doing, when it stops, and how many
+// lights are showing it.
+type wordStanding struct {
+	shows  string
+	until  time.Time
+	lights int
+}
+
+// wordStandingOf answers what one state's word is doing at an instant.
+//
+// It is the arithmetic the painter does, asked of the same facts: the hold the row carries, the
+// moment the word was written, and the moment each light began showing the state. A light is the
+// only thing that knows the last of those, so the answer comes from what the writers published
+// (see stateStarts) rather than from a second clock or a guess.
+//
+// The word counts as showing while any light is showing it: a hold is per light because a state
+// begins per binding, and an install whose two lights entered the state a minute apart has one
+// light still holding the word and one that has moved on.
+func wordStandingOf(row stateRow, at time.Time) wordStanding {
+	word, _ := row.word()
+	if word == "" {
+		return wordStanding{shows: wordShowsNone}
+	}
+
+	starts := stateStarts(row.definition.name)
+	if len(starts) == 0 {
+		return wordStanding{shows: wordShowsLater}
+	}
+
+	holds, _ := row.holds()
+	standing := wordStanding{shows: wordShowsExpired}
+
+	for _, since := range starts {
+		until := wordUntil(holds, since, row.setAt())
+		if !until.IsZero() && !at.Before(until) {
+			continue
+		}
+
+		standing.shows = wordShowsShowing
+		standing.lights++
+
+		if until.After(standing.until) {
+			standing.until = until
+		}
+	}
+
+	return standing
+}
+
+// wordStandingNote is what a write's answer says about the word it just wrote: the sentence that
+// turns "200, and nothing happened" into something a person can act on.
+//
+// It is the prose beside stateAnswer.WordShows, and it exists because the two facts a caller needs
+// are not the same fact. A word that is showing is a success with a length; a word that has expired
+// is a success worth nothing, and saying so is the whole reason this was written. The fourth case —
+// a state no light is showing — is not a failure at all: the word waits for its state, which is
+// what a state's word is for.
+func wordStandingNote(row stateRow, at time.Time) string {
+	word, _ := row.word()
+	if word == "" {
+		return ""
+	}
+
+	standing := wordStandingOf(row, at)
+
+	switch standing.shows {
+	case wordShowsShowing:
+		if standing.until.IsZero() {
+			return fmt.Sprintf("The word %q is on the light now and holds until the state moves. ", word)
+		}
+
+		return fmt.Sprintf("The word %q is on the light now, for %d more second(s), until %s. ",
+			word, int(standing.until.Sub(at)/time.Second), standing.until.UTC().Format(time.RFC3339))
+
+	case wordShowsExpired:
+		return fmt.Sprintf("The word %q has already expired: the %s state is being shown and its hold ran out, "+
+			"so nothing is showing it and nothing will until it is written again. ", word, row.definition.name)
+
+	case wordShowsLater:
+		return fmt.Sprintf("The word %q is not on the light now: no light is showing %s, and a state's word runs "+
+			"from the moment a light enters that state. ", word, row.definition.name)
+	}
+
+	return ""
+}
+
+// stateAnswerOf renders one row of the state table as it stands at one instant.
+func stateAnswerOf(row stateRow, at time.Time) stateAnswer {
 	colour, colourOrigin := row.colour()
 	word, wordOrigin := row.word()
 	holds, holdsOrigin := row.holds()
+
+	standing := wordStandingOf(row, at)
+
+	until := ""
+	if !standing.until.IsZero() {
+		until = standing.until.UTC().Format(time.RFC3339)
+	}
 
 	return stateAnswer{
 		State:        row.definition.name,
@@ -314,6 +432,8 @@ func stateAnswerOf(row stateRow) stateAnswer {
 		WordOrigin:   wordOrigin,
 		Holds:        holds,
 		HoldsOrigin:  holdsOrigin,
+		WordShows:    standing.shows,
+		WordUntil:    until,
 		Overridden:   row.overridden(),
 		Meaning:      row.definition.meaning,
 	}
@@ -356,9 +476,11 @@ func (api tableAPI) listStates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	at := api.now()
+
 	out := make([]stateAnswer, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, stateAnswerOf(row))
+		out = append(out, stateAnswerOf(row, at))
 	}
 
 	said := statesAnswer{
@@ -406,7 +528,7 @@ func (api tableAPI) readState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	said := map[string]any{"state": stateAnswerOf(row), "persisted": available}
+	said := map[string]any{"state": stateAnswerOf(row, api.now()), "persisted": available}
 
 	if !available {
 		said["note"] = noStoreNote
@@ -447,8 +569,14 @@ func readStateRequest(r *http.Request) (stateRequest, error) {
 	return sent, nil
 }
 
-// override is the row this request writes, for the state it names.
-func (sent stateRequest) override(state string) (storedState, error) {
+// override is the row this request writes, for the state it names, at the moment it is written.
+//
+// The moment is stamped on every row that carries a word, and it is the whole of the fix for a
+// hold that was spent before anybody read it: the painter measures a word's hold from the later of
+// this instant and the moment the state began (see wordUntil), so a word written onto a state
+// that has been running for hours is shown for its full length from now. A row without a word
+// carries no moment, because there would be nothing for it to mean.
+func (sent stateRequest) override(state string, at time.Time) (storedState, error) {
 	one := storedState{State: state, Colour: sent.Colour, Holds: sent.Holds}
 
 	if sent.Colour != nil && !sent.Colour.inRange() {
@@ -469,6 +597,7 @@ func (sent stateRequest) override(state string) (storedState, error) {
 	if sent.Word != nil {
 		if word := strings.TrimSpace(*sent.Word); word != "" {
 			one.Word = &word
+			one.SetAt = &at
 		}
 	}
 
@@ -508,7 +637,12 @@ func (api tableAPI) updateState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	one, err := sent.override(definition.name)
+	// One clock for the write and for its answer: the moment stamped on the row is the moment the
+	// answer judges the word at, so "it shows until 12:01" and a hold that begins at 12:00 cannot
+	// be a second apart in the same reply.
+	at := api.now()
+
+	one, err := sent.override(definition.name, at)
 	if err != nil {
 		refuse(w, r, sent.refusalOf(definition.name, err))
 
@@ -532,10 +666,10 @@ func (api tableAPI) updateState(w http.ResponseWriter, r *http.Request) {
 	row, _ := rowNamed(rows, definition.name)
 
 	answer(w, http.StatusOK, map[string]any{
-		"state":     stateAnswerOf(row),
+		"state":     stateAnswerOf(row, at),
 		"applied":   true,
 		"persisted": true,
-		"note":      persistedNote + " " + statesDrawnNote,
+		"note":      wordStandingNote(row, at) + persistedNote + " " + statesDrawnNote,
 	})
 }
 
@@ -575,7 +709,7 @@ func (api tableAPI) deleteState(w http.ResponseWriter, r *http.Request) {
 	row, _ := rowNamed(rows, definition.name)
 
 	answer(w, http.StatusOK, map[string]any{
-		"state":     stateAnswerOf(row),
+		"state":     stateAnswerOf(row, api.now()),
 		"removed":   removed,
 		"persisted": true,
 		"note":      persistedNote,

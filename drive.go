@@ -118,20 +118,34 @@ const (
 // panelShape is the shape every frame takes on a matrix.
 const panelShape = fillAcrossColumns
 
-// panel is a controller's two-dimensional geometry: how many pixels wide its matrix is and
-// how many rows it has.
+// panel is a controller's geometry: how many pixels wide its matrix is and how many rows it has,
+// or — for a light that is one run of pixels — how many LEDs the run holds.
 //
-// The zero value is a controller that drives one run of pixels, which is what a strip is, and
-// that is the shape the 1D path writes. Both dimensions are needed before a controller counts
-// as a panel: WLED publishes "leds.matrix" only on a build configured as one, and a half-read
-// geometry is a strip.
+// The zero value is a controller that has said nothing about itself, and that is the shape the 1D
+// path writes for a strip today: the steady picture of a strip is a colour, which needs no
+// rectangle. Both dimensions are needed before a controller counts as a panel: WLED publishes
+// "leds.matrix" only on a build configured as one, and a half-read geometry is a strip.
 type panel struct {
 	width  int
 	height int
+
+	// run says this is a light's single run of pixels rather than a matrix: a strip, whose geometry
+	// is its LED count laid out one pixel tall. It is a field of its own because a 48x1 rectangle
+	// and a 48-LED strip are the same two numbers and different things — the same reason a word is
+	// refused on both while a diagnostic pattern is drawn on both, laid out differently.
+	run bool
 }
 
 // matrix reports whether the controller has a matrix at all.
-func (p panel) matrix() bool { return p.width > 0 && p.height > 0 }
+func (p panel) matrix() bool { return !p.run && p.width > 0 && p.height > 0 }
+
+// runOf reports a light that is one run of pixels, which is what a strip is: the geometry this
+// module makes up for one is its LED count in a single row.
+func (p panel) runOf() bool { return p.run && p.width > 0 }
+
+// sized reports a light with pixels to draw on at all, whichever shape it is. A light that reported
+// nothing is not one, and a picture asked of it is refused rather than drawn into no pixels.
+func (p panel) sized() bool { return p.matrix() || p.runOf() }
 
 // logf is where this module's own words go. The host copies the process's
 // standard error into its log, which is the only place a person sees this process.
@@ -286,6 +300,12 @@ type writer struct {
 	// race on. Nothing else about a frame depends on it: the colour, the fill and the
 	// total are the printer's, and this is only how they are laid out.
 	geometry atomic.Pointer[panel]
+
+	// pixelCount is how many LEDs the controller said it drives, and it is the strip's geometry:
+	// a strip reports no matrix, and a picture pushed to it over DDP — which is what a diagnostic
+	// pattern is — needs its length. It is stored whether or not there is a matrix, because it is
+	// the controller's own report and nothing else in this module asks it twice.
+	pixelCount atomic.Int64
 
 	// span is the run of pixels this writer borrowed, and nil for one that drives the whole
 	// light. It is an atomic pointer for the reason geometry is one: the writer's goroutine
@@ -1238,8 +1258,8 @@ func drawsComposed(frame render.Frame, geometry panel, shape layout) bool {
 }
 
 // shapeOf is what this writer draws on, as GET /frames needs it: the geometry the controller
-// reported, the run of a segment it borrowed, the arrangement it composes with, and what its light is
-// showing instead of the steady frame.
+// reported, the run of a segment it borrowed, the arrangement it composes with, what its light is
+// showing instead of the steady frame, and the state it is showing with the moment that began.
 //
 // It is read by the driver's goroutine on every tick, so every field it touches is either an atomic
 // pointer or a value the driver already owns. Nothing here writes to the light, and nothing here takes
@@ -1255,6 +1275,13 @@ func (w *writer) shapeOf() bindingShape {
 	if held := w.holding.Load(); held != nil {
 		shape.paused, shape.word, shape.wordColour = held.paused, held.word, held.colour
 		shape.plain, shape.preset = held.plain, held.preset
+	}
+
+	// The state and its start are the scene this writer last took, which is also what the state
+	// table's word is judged against. A writer that has not taken one yet publishes neither, and a
+	// state of "" is a light this module is not showing anything for.
+	if standing := w.standing.Load(); standing != nil {
+		shape.state, shape.since = standing.state, standing.since
 	}
 
 	return shape
@@ -1286,7 +1313,7 @@ func (w *writer) enterComposed(ctx context.Context, picture panelPicture) error 
 // the clock — the half that takes the panel changes on its own interval, and a repeat that re-sent
 // old bytes would hold the digits until the printer's progress next moved.
 func (w *writer) repeatComposed(picture panelPicture) error {
-	pixels, err := picture.draw(w.panelOf())
+	pixels, err := picture.draw(w.paintPanel())
 	if err != nil {
 		return fmt.Errorf("the composed frame was not drawn: %w", err)
 	}
@@ -1623,11 +1650,16 @@ func segmentIDs(segments []wled.Segment) string {
 // of pixels into a rectangle.
 //
 // A controller that reports no matrix leaves the zero panel in place, so a strip keeps the
-// body it has always been given. A geometry that changes under a running writer — a
-// controller swapped for a panel and asked again — does not happen in this module, because
-// the LED count is learned once and never re-read; if that changes, the frame that crosses
-// the change is the one to look at.
+// body it has always been given — but its LED count is kept beside it, because that is the
+// geometry a picture pushed to a strip is drawn against (see paintPanel). A geometry that
+// changes under a running writer — a controller swapped for a panel and asked again — does not
+// happen in this module, because the LED count is learned once and never re-read; if that
+// changes, the frame that crosses the change is the one to look at.
 func (w *writer) setPanel(info wled.Info) {
+	if info.LEDCount > 0 {
+		w.pixelCount.Store(int64(info.LEDCount))
+	}
+
 	reported := panel{width: info.MatrixWidth, height: info.MatrixHeight}
 	if !reported.matrix() {
 		return
@@ -1640,6 +1672,28 @@ func (w *writer) setPanel(info wled.Info) {
 func (w *writer) panelOf() panel {
 	if held := w.geometry.Load(); held != nil {
 		return *held
+	}
+
+	return panel{}
+}
+
+// paintPanel is the geometry a picture drawn in pixels is laid out and pushed against: the matrix
+// the controller reported, or — for a strip, which is one run of LEDs — that run, one pixel tall.
+//
+// It is a second question and not a change to panelOf, because the two are asked by different
+// things. panelOf answers what the steady picture is drawn on, and a strip's steady picture is a
+// colour written over JSON, which needs no rectangle. paintPanel answers where a picture goes when
+// it is pixels, and a strip is a light with pixels: the diagnostic ladder has to be able to run on
+// one, or a two-light install with a strip in it could not be tested at all.
+//
+// The zero panel when the controller has said nothing about itself, which every caller refuses.
+func (w *writer) paintPanel() panel {
+	if held := w.geometry.Load(); held != nil {
+		return *held
+	}
+
+	if count := w.pixelCount.Load(); count > 0 {
+		return panel{width: int(count), height: 1, run: true}
 	}
 
 	return panel{}

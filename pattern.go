@@ -85,9 +85,24 @@ type patternShape struct {
 	// three meanings in his head to read the result.
 	answers string
 
-	// frame lays the picture out as the whole panel, in the controller's own order: pixel (x, y)
-	// is y*width+x.
+	// runAnswers is the same sentence for a light that is one run of pixels rather than a
+	// rectangle. A strip has no corners and no second dimension, so the panel's sentence would be
+	// describing a picture that is not on the wall; empty means the panel's sentence is also true
+	// of a strip, which is the case for solid.
+	runAnswers string
+
+	// frame lays the picture out as the whole light: the panel's rectangle in the controller's own
+	// order — pixel (x, y) is y*width+x — or a strip's single row, one pixel per LED.
 	frame func(geometry panel) []wled.RGB
+}
+
+// answersOn is what this picture answers on one light, in the words for that light's shape.
+func (s patternShape) answersOn(geometry panel) string {
+	if geometry.matrix() || s.runAnswers == "" {
+		return s.answers
+	}
+
+	return s.runAnswers
 }
 
 // patternShapes is the ladder, in the order a person should walk it: does anything draw, is the
@@ -98,17 +113,21 @@ var patternShapes = []patternShape{
 	{
 		name:    "solid",
 		answers: "does DDP draw at all: a lit panel means the transport works, a dark one means no datagram was drawn and the word would be dark for that reason alone",
-		frame:   solidFrame,
+		// The one picture whose question a strip answers exactly as a panel does: the whole run
+		// lit, or nothing drawn.
+		frame: solidFrame,
 	},
 	{
-		name:    "border",
-		answers: "is the LED map the shape this module assumes: a closed white rectangle two pixels thick means row-major y*width+x with x across and y down, anything else means the panel is wired or mapped differently",
-		frame:   borderFrame,
+		name:       "border",
+		answers:    "is the LED map the shape this module assumes: a closed white rectangle two pixels thick means row-major y*width+x with x across and y down, anything else means the panel is wired or mapped differently",
+		runAnswers: "is the run the length this module assumes: white at both ends and nothing between them, so a run that is shorter or longer than the controller says shows its white in the wrong place",
+		frame:      borderFrame,
 	},
 	{
-		name:    "quarters",
-		answers: "which way up and which way round: red top-left, green top-right, blue bottom-left, white bottom-right, so an upside-down or mirrored panel names the corner it is wrong in",
-		frame:   quartersFrame,
+		name:       "quarters",
+		answers:    "which way up and which way round: red top-left, green top-right, blue bottom-left, white bottom-right, so an upside-down or mirrored panel names the corner it is wrong in",
+		runAnswers: "which way round the run is: red at the start, green, blue and white at the far end, so a run wired backwards, or one shorter than this module believes, names the wrong end",
+		frame:      quartersFrame,
 	},
 }
 
@@ -197,14 +216,30 @@ func solidFrame(geometry panel) []wled.RGB {
 }
 
 // borderFrame is two pixels of white around the panel's whole edge and the background everywhere
-// else.
+// else, or — on a light that is one run of pixels — white at the two ends and the background
+// between them.
 //
 // The inside is finishedWordBackground rather than black written out here, for the reason the word
 // uses it: it is the colour the steady frame gives an unfilled range, read from the renderer, so
 // the picture the light rests at afterwards and the inside of this one cannot drift apart. Today
 // that colour is black, and a dark interior is what makes two pixels of white read as an edge.
+//
+// A strip's answer is its two ends, because that is what it has: a run of forty-eight pixels given
+// white at 0 and 47 and nothing between says whether the run the controller draws is the run this
+// module believes, which is the same question the rectangle's edge answers for a panel. Its
+// thickness is one pixel and not two, because two pixels at each end of a short run is most of the
+// run, and the dark middle is what the picture is read by.
 func borderFrame(geometry panel) []wled.RGB {
 	frame := make([]wled.RGB, geometry.width*geometry.height)
+
+	if !geometry.matrix() {
+		if len(frame) > 0 {
+			frame[0] = patternWhite
+			frame[len(frame)-1] = patternWhite
+		}
+
+		return frame
+	}
 
 	for y := range geometry.height {
 		for x := range geometry.width {
@@ -225,14 +260,36 @@ func borderFrame(geometry panel) []wled.RGB {
 }
 
 // quartersFrame is the panel in four blocks: red top-left, green top-right, blue bottom-left, white
-// bottom-right.
+// bottom-right. On a light that is one run of pixels it is four bands along the run, in the same
+// order: red at the start, then green, then blue, then white at the far end.
 //
 // The split is at the panel's half, floor-divided, so an odd dimension leaves the extra column or
 // row in the right-hand or bottom block. This panel is 256x64, where the question does not arise;
 // it is written down because a fallback that silently picked a side would be a second answer to
-// where the middle is.
+// where the middle is. A strip's quarter is its length quartered the same way, so a run of 48 is
+// four bands of twelve and a run of 50 is twelve, twelve, twelve and fourteen — the extra pixels
+// at the far end, where the panel puts its extra column.
+//
+// A run too short to quarter — fewer than four pixels — gives each pixel its own colour in order
+// and repeats the last one, which is the same picture degraded rather than a division by zero.
 func quartersFrame(geometry panel) []wled.RGB {
 	frame := make([]wled.RGB, geometry.width*geometry.height)
+
+	if !geometry.matrix() {
+		quarter := geometry.width / 4
+		colours := [4]wled.RGB{patternRed, patternGreen, patternBlue, patternWhite}
+
+		for x := range geometry.width {
+			band := x
+			if quarter > 0 {
+				band = min(x/quarter, len(colours)-1)
+			}
+
+			frame[x] = colours[min(band, len(colours)-1)]
+		}
+
+		return frame
+	}
 
 	halfWidth, halfHeight := geometry.width/2, geometry.height/2
 
