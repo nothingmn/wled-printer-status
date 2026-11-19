@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -284,6 +285,57 @@ func TestTheManifestAsksForObserveBecauseTheReaderIsWired(t *testing.T) {
 
 	if !strings.Contains(string(source), "printer.NewSource(") {
 		t.Fatal("main.go builds no printer source, so the observe grant in module.yaml buys nothing")
+	}
+}
+
+// TestTheVersionAgreesInBothHalves holds the release to the one thing the host will not
+// reconcile for it. `module.yaml`'s `version:` is what the installer writes down; `release`, built
+// from the literal in `main.go`, is what the process reports back when the host asks. The host
+// compares the two at start and refuses a module whose halves differ, which an operator sees as a
+// module that installs and never comes up — this tree has been bitten by that twice. Neither file
+// is compiled against the other, so nothing else here can notice.
+//
+// Both halves are read as text and absence fails. A version that could not be found must not read
+// as an empty string that happens to match the other empty string.
+func TestTheVersionAgreesInBothHalves(t *testing.T) {
+	manifestVersion := ""
+	for line := range strings.SplitSeq(readManifest(t), "\n") {
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if rest, found := strings.CutPrefix(line, "version: "); found {
+			manifestVersion = strings.TrimSpace(rest)
+			break
+		}
+	}
+
+	if manifestVersion == "" {
+		t.Fatal("module.yaml declares no top-level version:, and the host reads one out of the release")
+	}
+
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+
+	found := regexp.MustCompile(`extension\.Version\("([^"]*)"\)`).FindStringSubmatch(string(source))
+	if found == nil || found[1] == "" {
+		t.Fatal(`main.go carries no extension.Version("...") literal, and that literal is the version the process reports`)
+	}
+
+	codeVersion := found[1]
+	if manifestVersion != codeVersion {
+		t.Fatalf("the halves disagree: module.yaml says version %q and main.go says extension.Version(%q); "+
+			"the host refuses a module whose halves differ, so the install would never start",
+			manifestVersion, codeVersion)
+	}
+
+	// The literal is where the version is written, but `release` is what the process actually
+	// reports. Holding the two together catches a literal left behind beside a constant built
+	// some other way — the literal would agree with the manifest while the process did not.
+	if release.String() != codeVersion {
+		t.Fatalf("main.go's literal reads %q and the release the process reports reads %q",
+			codeVersion, release.String())
 	}
 }
 
