@@ -436,10 +436,10 @@ of the finished word go over DDP once a second for the minute the word holds.
 
 A binding is one printer, one controller, and the segment of that controller it is shown on. The
 **segment** is the unit, not the controller: a controller may carry as many bindings as it has segments it
-is willing to give up, and a printer appears in at most one binding. Two bindings on one segment would
-overwrite each other on every frame and neither log line would say so, so the module refuses that rather
-than leaving it to be discovered — and a binding driving the whole of a controller leaves no segment for
-anything else on it.
+is willing to give up, and a printer may sit on several lights at once — it is the segment, or the whole of
+a controller, that belongs to one binding. Two bindings on one segment would overwrite each other on every
+frame and neither log line would say so, so the module refuses that rather than leaving it to be
+discovered — and a binding driving the whole of a controller leaves no segment for anything else on it.
 
 That replaces the older rule of one controller per printer. It is worth knowing why the older one was
 there: two writers to one controller do interleave, because WLED has one small web server and promises
