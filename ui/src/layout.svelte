@@ -23,6 +23,31 @@
 	//     says so rather than leaving a blank tab for somebody to wonder about, and it offers the four
 	//     panel controls nowhere on a strip.
 	//
+	// **The arrangement, and why it is four groups.** The controls used to be one long run — bar, band,
+	// rows, percentage, scale, name, rotation, seconds, seven toggles, then the fit sentence — with
+	// nothing saying which control belonged with which and the picture below all of it. They are now
+	// four named groups, each answering one question, and the picture is beside them rather than under
+	// them:
+	//
+	//   1. **The picture** — what this binding draws, and the verdict on whether it fits, held in its
+	//      own column. It is sticky from `lg` so it stays put as the groups below it change height
+	//      (which they do: the sharing group appears and disappears), and it is the thing being edited,
+	//      so it does not scroll away while somebody is editing it.
+	//   2. **What is in it** — the bar (on, which band, how many rows), the percentage (on, at which
+	//      scale) and the job's name. These are the three things the picture is made of.
+	//   3. **How they share the row** — take turns or side by side, and the turn length. It is shown
+	//      only when more than one of bar, percentage and name is switched on, because with one thing on
+	//      there is nothing to share the row with and a greyed-out control is the clutter this screen was
+	//      reorganised to remove. Hidden never means forgotten: the route replaces the row whole, so the
+	//      stored rotation and turn length are written back unchanged while the group is out of sight.
+	//   4. **Lines under the picture** — the seven toggles, the live row count, and, when the set cannot
+	//      fit, the refusal in words naming the lines that have no room.
+	//
+	// **Moving between bindings.** One card instead of a stack of them, and a segmented selector at the
+	// top naming each binding on this light by its printer and segment. The selector carries a warning
+	// on a binding whose arrangement does not fit, so a refusal on the binding nobody is looking at is
+	// still visible from here.
+	//
 	// The arithmetic is shown instead of hidden, because it is the whole of the refusal rule: 64 rows
 	// with a 12-row bar leave 52, and digits at scale 5 are 35 rows. A layout that will not fit is
 	// **refused, not cropped** — the module judges that when it draws, against the panel's own
@@ -141,6 +166,11 @@
 
 	/** The light this page is scoped to, by the name these routes use: its address, no scheme. */
 	let chosen = $state('');
+	/**
+	 * The binding showing, by the id these routes use. One card is drawn at a time, and this is
+	 * which one — so reaching the second binding is a press rather than a scroll past the first.
+	 */
+	let picked = $state('');
 	/** The light's bindings and their layouts, as the route last answered. */
 	let board = $state<LayoutsBody | null>(null);
 	/** One frame per binding, which is the only thing that knows a binding's shape and height. */
@@ -213,8 +243,19 @@
 	/** The scale the job's name is drawn at in a band of that many rows: as large as it allows, twice at most. */
 	const nameScale = (band: number): number => Math.min(Math.max(Math.floor(band / GLYPH_ROWS), 1), NAME_SCALE_MAX);
 
-	/** One line in the operator's words, spelled out here so the catalogue check can see every key. */
-	const lineName = (key: LineKey): string => {
+	/**
+	 * One line in the operator's words, spelled out here so the catalogue check can see every key.
+	 * `lower` is for the places a list of them sits inside a sentence: the toggle labels are the
+	 * names of things and keep their capital, the same words mid-sentence do not.
+	 */
+	const lineName = (key: LineKey, lower = false): string => {
+		const said = lineLabel(key);
+
+		return lower && said !== '' ? `${said.charAt(0).toLowerCase()}${said.slice(1)}` : said;
+	};
+
+	/** The line's own label, as its toggle carries it. */
+	const lineLabel = (key: LineKey): string => {
 		switch (key) {
 			case 'remaining':
 				return t('layout.line_remaining');
@@ -238,7 +279,7 @@
 		words.length === 0 ? '' : words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 
 	/** A set of lines in the operator's words, joined for a sentence. */
-	const lineNames = (keys: LineKey[]): string => joinWords(keys.map((key) => lineName(key)));
+	const lineNames = (keys: LineKey[], lower = false): string => joinWords(keys.map((key) => lineName(key, lower)));
 
 	/**
 	 * The rows the picture's own row needs in a band of that many rows: the taller of the digits and
@@ -275,16 +316,23 @@
 		return 0;
 	};
 
-	/** What in the picture's own row is asking for rows, for the refusal: the part that took the room. */
-	const primaryPhrase = (draft: Draft, band: number): string => {
+	/**
+	 * What in the picture's own row is asking for rows, for the refusal: the part that took the room.
+	 * `many` is whether that part is plural, because the refusal's verb has to agree with it — "the
+	 * digits at scale 5 take" against "the job's name takes".
+	 */
+	const primaryPhrase = (draft: Draft, band: number): { said: string; many: boolean } => {
 		const digits = draft.percent ? draft.percent_scale * GLYPH_ROWS : 0;
 		const name = draft.name ? nameScale(band) * GLYPH_ROWS : 0;
 
-		if (digits > 0 && name > 0 && draft.rotation === 'side-by-side') return t('layout.fit_what_beside');
-		if (digits >= name && digits > 0) return t('layout.fit_what_digits', { scale: draft.percent_scale });
-		if (name > 0) return t('layout.fit_what_name');
+		if (digits > 0 && name > 0 && draft.rotation === 'side-by-side') {
+			return { said: t('layout.fit_what_beside'), many: true };
+		}
 
-		return t('layout.fit_what_picture');
+		if (digits >= name && digits > 0) return { said: t('layout.fit_what_digits', { scale: draft.percent_scale }), many: true };
+		if (name > 0) return { said: t('layout.fit_what_name'), many: false };
+
+		return { said: t('layout.fit_what_picture'), many: false };
 	};
 
 	/**
@@ -380,20 +428,22 @@
 
 		if (missed.length > 0) {
 			const rooms = roomsFor(draft, height, wanted.length);
+			const need = primaryPhrase(draft, left);
 
 			return {
 				fits: false,
 				said: t('layout.fit_lines_over', {
-					lines: lineNames(wanted),
+					lines: lineNames(wanted, true),
 					height,
 					rows,
 					left,
-					need: primaryPhrase(draft, left),
+					need: need.said,
+					verb: need.many ? t('layout.fit_verb_many') : t('layout.fit_verb_one'),
 					needRows: primaryHeight(draft, left),
 					fits: count,
 					total: wanted.length,
-					held: held.length === 0 ? t('layout.fit_none') : lineNames(held),
-					missed: lineNames(missed),
+					held: held.length === 0 ? t('layout.fit_none') : lineNames(held, true),
+					missed: lineNames(missed, true),
 					rooms: rooms.length === 0 ? t('layout.room_none') : rooms.join(' '),
 				}),
 			};
@@ -425,7 +475,8 @@
 				fits: true,
 				said: t('layout.fit_lines_ok', {
 					band,
-					lines: lineNames(wanted),
+					lines: lineNames(wanted, true),
+					verb: wanted.length === 1 ? t('layout.fit_verb_one') : t('layout.fit_verb_many'),
 					count: wanted.length,
 					rows: stackHeight(wanted.length),
 					left: primary,
@@ -437,7 +488,23 @@
 	};
 
 	/**
-	 * The picture's boxes to scale, for the sketch under the controls.
+	 * How the lines this draft asks for divide between what fits and what does not — the same
+	 * placement `fitOf` makes, kept separate so the lines group can name the ones with no room
+	 * without restating the arithmetic.
+	 */
+	const linesTally = (
+		draft: Draft,
+		height: number,
+	): { wanted: LineKey[]; fits: number; missed: LineKey[]; stack: number; left: number } => {
+		const left = textRows(draft, height);
+		const wanted = linesOn(draft);
+		const fits = stackFit(draft, left, wanted.length);
+
+		return { wanted, fits, missed: wanted.slice(fits), stack: stackHeight(wanted.length), left };
+	};
+
+	/**
+	 * The picture's boxes to scale, for the sketch beside the controls.
 	 *
 	 * It draws what the draft *is* — the band, the text band, the digits' box, the name's box and one
 	 * box per optional line — and not a rendering of the module's glyphs, so it is the arithmetic a
@@ -526,9 +593,26 @@
 		),
 	);
 
+	/**
+	 * The binding showing: the one picked, or the light's first when nothing has been picked yet
+	 * (and after a re-read, where a picked binding may be gone).
+	 */
+	const showing = $derived(rows.find((one) => one.id === picked) ?? rows[0]);
+
+	/** Whether a binding is a panel whose draft, as it stands, would not fit it. */
+	const overflows = (one: Layout): boolean => {
+		const height = heightOf(one);
+
+		return kindOf(one) === 'panel' && height > 0 && !fitOf(draftAt(one), height).fits;
+	};
+
+	/** How many of the three things the picture is made of this draft switches on — group 3's test. */
+	const partsOn = (draft: Draft): number => (draft.bar ? 1 : 0) + (draft.percent ? 1 : 0) + (draft.name ? 1 : 0);
+
 	/** Reads one light's bindings, their layouts and the frames drawn for them. */
 	const openLight = async (light: string): Promise<void> => {
 		chosen = light;
+		picked = '';
 		board = null;
 		drafts = {};
 		faults = {};
@@ -784,375 +868,480 @@
 			</p>
 		{/if}
 
-		<!--
-			One card per binding, and the card is whichever of the two renderings the hardware asks
-			for. The shape comes from the frame the module has drawn, because that is the only route
-			that knows it: a light that has never had a frame drawn has no shape to show, and guessing
-			one would offer a composer to a strip.
-		-->
-		{#each rows as one (one.id)}
-			{@const draft = draftAt(one)}
-			{@const kind = kindOf(one)}
-			{@const frame = frameOf(one)}
-			{@const height = heightOf(one)}
-			{@const fit = kind === 'panel' && height > 0 ? fitOf(draft, height) : null}
-			{@const sketch = kind === 'panel' && height > 0 ? sketchOf(draft, frame?.width ?? 256, height) : null}
-
-			<article class="flex flex-col gap-3 rounded border p-3" data-binding={one.id} data-kind={kind}>
-				<div class="flex flex-wrap items-center gap-2">
-					<span class="text-sm font-semibold">{printerOf(one)}</span>
-					<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
-					{#if kind === 'panel'}
-						<Badge variant="outline" size="sm">{t('layout.panel_chip', { width: frame?.width ?? 0, height })}</Badge>
-					{:else if kind === 'strip'}
-						<Badge variant="outline" size="sm">{t('layout.strip_chip', { pixels: frame?.width ?? 0 })}</Badge>
-					{:else}
-						<Badge variant="outline" size="sm">{t('layout.shape_unknown_chip')}</Badge>
-					{/if}
-					<div class="ml-auto flex flex-wrap items-center gap-1">
-						<Badge variant={one.overridden ? 'secondary' : 'outline'} size="sm">
-							{one.overridden ? t('layout.yours') : t('layout.default')}
-						</Badge>
-						{#if one.overridden}
-							<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(one)}>
-								{t('layout.reset')}
-							</Button>
-						{/if}
-					</div>
-				</div>
-
-				{#if (faults[one.id] ?? '') !== ''}
-					<p class="rounded border border-dashed px-2 py-1 text-xs" role="alert">{faults[one.id]}</p>
-				{/if}
-
-				{#if kind === 'panel'}
-					<!--
-						The composer. Every control writes exactly one of the eight keys, and every one
-						carries the line that says whether the value in force is yours or the default.
-					-->
-					<div class="grid gap-3 md:grid-cols-2">
-						<div class="flex flex-col gap-2">
-							<label class="flex items-center gap-2 text-sm">
-								<input
-									type="checkbox"
-									class="h-4 w-4"
-									checked={draft.bar}
-									disabled={busy}
-									onchange={(event) => edit(one, { bar: (event.currentTarget as HTMLInputElement).checked })}
-								/>
-								<span class="font-medium">{t('layout.bar')}</span>
-								<span class="text-[10px] opacity-60">{one.bar_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-							</label>
-
-							<label class="flex flex-col gap-1 text-sm">
-								<span class="text-xs opacity-70">
-									{t('layout.bar_band')}
-									<span class="text-[10px]">{one.bar_band_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-								</span>
-								<select
-									class="rounded border px-2 py-1"
-									value={draft.bar_band}
-									disabled={busy || !draft.bar}
-									onchange={(event) =>
-										edit(one, { bar_band: (event.currentTarget as HTMLSelectElement).value as 'top' | 'bottom' })}
-								>
-									{#each ['top', 'bottom'] as band (band)}
-										<option value={band}>{bandLabel(band as 'top' | 'bottom')}</option>
-									{/each}
-								</select>
-							</label>
-
-							<label class="flex flex-col gap-1 text-sm">
-								<span class="text-xs opacity-70">
-									{t('layout.bar_rows')}
-									<span class="text-[10px]">{one.bar_rows_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-								</span>
-								<input
-									type="number"
-									class="w-24 rounded border px-2 py-1"
-									min="1"
-									max="48"
-									value={draft.bar_rows}
-									disabled={busy || !draft.bar}
-									onchange={(event) => edit(one, { bar_rows: Number((event.currentTarget as HTMLInputElement).value) })}
-								/>
-								<span class="text-[10px] opacity-60">{t('layout.bar_rows_note')}</span>
-							</label>
-						</div>
-
-						<div class="flex flex-col gap-2">
-							<label class="flex items-center gap-2 text-sm">
-								<input
-									type="checkbox"
-									class="h-4 w-4"
-									checked={draft.percent}
-									disabled={busy}
-									onchange={(event) => edit(one, { percent: (event.currentTarget as HTMLInputElement).checked })}
-								/>
-								<span class="font-medium">{t('layout.percent')}</span>
-								<span class="text-[10px] opacity-60">{one.percent_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-							</label>
-
-							<label class="flex flex-col gap-1 text-sm">
-								<span class="text-xs opacity-70">
-									{t('layout.percent_scale')}
-									<span class="text-[10px]">{one.percent_scale_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-								</span>
-								<select
-									class="rounded border px-2 py-1"
-									value={String(draft.percent_scale)}
-									disabled={busy || !draft.percent}
-									onchange={(event) =>
-										edit(one, { percent_scale: Number((event.currentTarget as HTMLSelectElement).value) as 3 | 4 | 5 })}
-								>
-									{#each SCALES as scale (scale)}
-										<option value={String(scale)}>{t('layout.scale', { scale })}</option>
-									{/each}
-								</select>
-							</label>
-
-							<label class="flex items-center gap-2 text-sm">
-								<input
-									type="checkbox"
-									class="h-4 w-4"
-									checked={draft.name}
-									disabled={busy}
-									onchange={(event) => edit(one, { name: (event.currentTarget as HTMLInputElement).checked })}
-								/>
-								<span class="font-medium">{t('layout.name')}</span>
-								<span class="text-[10px] opacity-60">{one.name_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-							</label>
-						</div>
-					</div>
-
-					<div class="flex flex-wrap items-end gap-3 text-sm">
-						<label class="flex flex-col gap-1">
-							<span class="text-xs opacity-70">
-								{t('layout.rotation')}
-								<span class="text-[10px]">{one.rotation_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-							</span>
-							<select
-								class="rounded border px-2 py-1"
-								value={draft.rotation}
-								disabled={busy}
-								onchange={(event) =>
-									edit(one, {
-										rotation: (event.currentTarget as HTMLSelectElement).value as 'take-turns' | 'side-by-side',
-									})}
-							>
-								{#each ROTATIONS as rotation (rotation)}
-									<option value={rotation}>{rotationLabel(rotation)}</option>
-								{/each}
-							</select>
-						</label>
-
-						<label class="flex flex-col gap-1">
-							<span class="text-xs opacity-70">
-								{t('layout.rotate_seconds')}
-								<span class="text-[10px]">{one.rotate_seconds_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
-							</span>
-							<input
-								type="number"
-								class="w-20 rounded border px-2 py-1"
-								min="1"
-								value={draft.rotate_seconds}
-								disabled={busy || draft.rotation === 'side-by-side'}
-								onchange={(event) => edit(one, { rotate_seconds: Number((event.currentTarget as HTMLInputElement).value) })}
-							/>
-						</label>
-
-						{#if dirty(one)}
-							<Button variant="link" size="sm" disabled={busy} onclick={() => (drafts[one.id] = draftOf(one))}>
-								{t('layout.discard')}
-							</Button>
-						{/if}
-					</div>
-
-					{#if draft.rotation === 'side-by-side'}
-						<p class="text-[11px] opacity-70">{one.rotation_note ?? t('layout.side_by_side_what')}</p>
-					{/if}
-
-					<!--
-						The seven optional lines. Each is one switch, each says whether the value in force is
-						yours or the default, and the count under the heading is the rows they have taken out of
-						the text band — because that is what decides whether the picture still fits.
-					-->
-					<div class="flex flex-col gap-2 rounded border px-2 py-2">
-						<div class="flex flex-wrap items-baseline gap-2">
-							<span class="text-sm font-medium">{t('layout.lines_heading')}</span>
-							<span class="text-[11px] opacity-60">
-								{t('layout.lines_count', { on: linesOn(draft).length, rows: stackHeight(linesOn(draft).length) })}
-							</span>
-						</div>
-						<p class="text-[11px] opacity-60">{t('layout.lines_note')}</p>
-
-						<div class="grid gap-1 md:grid-cols-2">
-							{#each LINES as line (line.key)}
-								<label class="flex items-center gap-2 text-sm" title={t(line.what)}>
-									<input
-										type="checkbox"
-										class="h-4 w-4"
-										checked={draft[line.key]}
-										disabled={busy}
-										onchange={(event) => edit(one, { [line.key]: (event.currentTarget as HTMLInputElement).checked })}
-									/>
-									<span>{t(line.label)}</span>
-									<span class="text-[10px] opacity-60">
-										{(one[LINE_ORIGIN[line.key]] as Origin) === 'store' ? t('layout.yours') : t('layout.default')}
-									</span>
-								</label>
-							{/each}
-						</div>
-
-						{#if draft.ends && one.zone === ''}
-							<p class="text-[11px]" role="note">{t('layout.line_ends_no_zone')}</p>
-						{/if}
-					</div>
-
-					<!-- The arithmetic, and the verdict that follows from it. -->
-					<div class="rounded border px-2 py-2 text-xs {fit !== null && !fit.fits ? 'border-2' : ''}">
-						<div class="flex flex-wrap items-center gap-2">
-							<span class="font-medium">{t('layout.fit_heading')}</span>
-							{#if fit === null}
-								<Badge variant="outline" size="sm">{t('layout.fit_unknown_badge')}</Badge>
-							{:else if fit.fits}
-								<Badge variant="secondary" size="sm">{t('layout.fits')}</Badge>
-							{:else}
+		{#if rows.length === 0}
+			<p class="text-sm opacity-70">{t('layout.no_bindings')}</p>
+		{:else}
+			<!--
+				Moving between bindings. One card is drawn at a time and this picks which, so the
+				second binding on a light is a press rather than a scroll past the first. The
+				warning badge is the whole reason this is a selector and not a pair of tabs: a
+				binding whose arrangement does not fit says so here, without being opened.
+			-->
+			<div class="flex flex-col gap-1">
+				<div class="flex flex-wrap gap-1" role="group" aria-label={t('layout.bindings_heading')}>
+					{#each rows as one (one.id)}
+						{@const shown = showing !== undefined && showing.id === one.id}
+						<button
+							type="button"
+							class={shown
+								? 'flex items-center gap-2 rounded-md border bg-black/5 px-3 py-1.5 text-sm font-semibold dark:bg-white/10'
+								: 'flex items-center gap-2 rounded-md border border-transparent px-3 py-1.5 text-sm opacity-70 hover:opacity-100'}
+							aria-pressed={shown}
+							onclick={() => (picked = one.id)}
+						>
+							<span>{printerOf(one)}</span>
+							<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
+							{#if overflows(one)}
 								<Badge variant="warning" size="sm">{t('layout.does_not_fit')}</Badge>
 							{/if}
-						</div>
-						<p class="mt-1 {fit !== null && !fit.fits ? 'font-medium' : 'opacity-70'}" role={fit !== null && !fit.fits ? 'alert' : undefined}>
-							{fit === null ? t('layout.fit_unknown') : fit.said}
-						</p>
+						</button>
+					{/each}
+				</div>
+				<p class="text-[11px] opacity-60">{t('layout.bindings_note')}</p>
+			</div>
 
-						{#if sketch !== null}
-							<svg
-								class="mt-2 w-full max-w-[32rem]"
-								viewBox="0 0 {frame?.width ?? 256} {height}"
-								role="img"
-								aria-label={t('layout.sketch_alt', { height, rows: sketch.barRows })}
-							>
-								<rect x="0" y="0" width={frame?.width ?? 256} height={height} fill="none" stroke="currentColor" stroke-opacity="0.4" />
-								{#if sketch.barRows > 0}
-									<rect
-										x="0"
-										y={sketch.barTop}
-										width={frame?.width ?? 256}
-										height={sketch.barRows}
-										fill="currentColor"
-										fill-opacity="0.18"
-										stroke="currentColor"
-										stroke-opacity="0.5"
-									/>
-								{/if}
-								{#if draft.percent}
-									<rect
-										x={sketch.digitsX}
-										y={sketch.digitsTop}
-										width={sketch.digitsWidth}
-										height={sketch.digitsRows}
-										fill="none"
-										stroke="currentColor"
-										stroke-dasharray="4 3"
-										stroke-opacity="0.8"
-									/>
-								{/if}
-								{#if draft.name && draft.rotation === 'side-by-side'}
-									<rect
-										x={sketch.nameX}
-										y={sketch.textTop + Math.max(0, (sketch.primaryRows - 14) / 2)}
-										width={sketch.nameWidth}
-										height="14"
-										fill="none"
-										stroke="currentColor"
-										stroke-dasharray="2 3"
-										stroke-opacity="0.6"
-									/>
-								{/if}
-								{#each sketch.lines as line (line.key)}
-									<!-- One box per optional line, seven rows and a blank row apart, along the bottom
-									     of the text band: the rows the picture's own row gives way to. -->
-									<rect
-										data-line={line.key}
-										x="0"
-										y={line.top}
-										width={frame?.width ?? 256}
-										height={line.rows}
-										fill="currentColor"
-										fill-opacity="0.15"
-										stroke="currentColor"
-										stroke-opacity="0.5"
-									/>
-								{/each}
-							</svg>
-							<p class="mt-1 text-[10px] opacity-60">{t('layout.sketch_caption')}</p>
+			{#if showing !== undefined}
+				{@const one = showing}
+				{@const draft = draftAt(one)}
+				{@const kind = kindOf(one)}
+				{@const frame = frameOf(one)}
+				{@const height = heightOf(one)}
+				{@const fit = kind === 'panel' && height > 0 ? fitOf(draft, height) : null}
+				{@const sketch = kind === 'panel' && height > 0 ? sketchOf(draft, frame?.width ?? 256, height) : null}
+				{@const tally = kind === 'panel' && height > 0 ? linesTally(draft, height) : null}
+
+				<article class="flex flex-col gap-3" data-binding={one.id} data-kind={kind}>
+					<!-- Which binding this is, and the one reset that puts all of it back. -->
+					<div class="flex flex-wrap items-center gap-2 rounded border px-3 py-2">
+						<span class="text-sm font-semibold">{printerOf(one)}</span>
+						<span class="font-mono text-[11px] opacity-60">{segmentOf(one)}</span>
+						{#if kind === 'panel'}
+							<Badge variant="outline" size="sm">{t('layout.panel_chip', { width: frame?.width ?? 0, height })}</Badge>
+						{:else if kind === 'strip'}
+							<Badge variant="outline" size="sm">{t('layout.strip_chip', { pixels: frame?.width ?? 0 })}</Badge>
+						{:else}
+							<Badge variant="outline" size="sm">{t('layout.shape_unknown_chip')}</Badge>
 						{/if}
+						<div class="ml-auto flex flex-wrap items-center gap-1">
+							<Badge variant={one.overridden ? 'secondary' : 'outline'} size="sm">
+								{one.overridden ? t('layout.yours') : t('layout.default')}
+							</Badge>
+							{#if dirty(one)}
+								<Button variant="link" size="sm" disabled={busy} onclick={() => (drafts[one.id] = draftOf(one))}>
+									{t('layout.discard')}
+								</Button>
+							{/if}
+							{#if one.overridden}
+								<Button variant="ghost" size="sm" disabled={busy} onclick={() => void reset(one)}>
+									{t('layout.reset')}
+								</Button>
+							{/if}
+						</div>
 					</div>
 
-					{#if frame !== undefined}
-						<div class="flex flex-wrap items-end gap-3">
-							{#if pictureOf(frame) !== ''}
+					{#if (faults[one.id] ?? '') !== ''}
+						<p class="rounded border border-dashed px-2 py-1 text-xs" role="alert">{faults[one.id]}</p>
+					{/if}
+
+					{#if kind === 'panel'}
+						<!--
+							The picture kept in view, and the groups beside it. From `lg` the picture's
+							column is sticky, so it holds its place while the groups scroll or change
+							height — which they do, because the sharing group comes and goes.
+						-->
+						<div class="grid gap-4 lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
+							<!--
+								The column stretches to the row's height and the card inside it is
+								what sticks: a sticky element is held inside its own grid area, so
+								pinning the grid item itself has nowhere to travel.
+							-->
+							<div class="flex flex-col">
+								<section class="flex flex-col gap-2 overflow-hidden rounded border lg:sticky lg:top-4">
+									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+										<span class="text-sm font-medium">{t('layout.picture_heading')}</span>
+										<span class="ml-auto text-[11px] opacity-60">{t('layout.picture_what')}</span>
+									</div>
+
+									<div class="flex flex-col gap-2 px-3 pb-3">
+										{#if frame !== undefined && pictureOf(frame) !== ''}
+											<!--
+												The picture's own pixel size is carried on the element, so the
+												card keeps its height while the image decodes: a panel is four
+												times as wide as it is tall and must not be laid out square.
+											-->
+											<img
+												src={pictureOf(frame)}
+												alt={t('layout.picture_alt')}
+												width={frame.image?.width ?? frame.width}
+												height={frame.image?.height ?? frame.height}
+												class="w-full rounded border"
+												style="image-rendering: pixelated;"
+											/>
+											<p class="text-[10px] opacity-60">{t('layout.picture_caption')}</p>
+										{/if}
+
+										{#if frame !== undefined}
+											<div class="flex flex-col gap-1 text-[11px] opacity-70">
+												<span>{t('layout.picture_drawn', { age: ageText(t, frame.reading.observed_at) ?? t('common.just_now') })}</span>
+												{#if !aboutAJob(frame)}
+													<p>{t('layout.picture_no_job')}</p>
+												{/if}
+												{#if frame.note !== undefined && frame.note !== ''}
+													<p>{frame.note}</p>
+												{/if}
+											</div>
+										{/if}
+
+										{#if sketch !== null}
+											<svg
+												class="w-full"
+												viewBox="0 0 {frame?.width ?? 256} {height}"
+												role="img"
+												aria-label={t('layout.sketch_alt', { height, rows: sketch.barRows })}
+											>
+												<rect x="0" y="0" width={frame?.width ?? 256} height={height} fill="none" stroke="currentColor" stroke-opacity="0.4" />
+												{#if sketch.barRows > 0}
+													<rect
+														x="0"
+														y={sketch.barTop}
+														width={frame?.width ?? 256}
+														height={sketch.barRows}
+														fill="currentColor"
+														fill-opacity="0.18"
+														stroke="currentColor"
+														stroke-opacity="0.5"
+													/>
+												{/if}
+												{#if draft.percent}
+													<rect
+														x={sketch.digitsX}
+														y={sketch.digitsTop}
+														width={sketch.digitsWidth}
+														height={sketch.digitsRows}
+														fill="none"
+														stroke="currentColor"
+														stroke-dasharray="4 3"
+														stroke-opacity="0.8"
+													/>
+												{/if}
+												{#if draft.name && draft.rotation === 'side-by-side'}
+													<rect
+														x={sketch.nameX}
+														y={sketch.textTop + Math.max(0, (sketch.primaryRows - 14) / 2)}
+														width={sketch.nameWidth}
+														height="14"
+														fill="none"
+														stroke="currentColor"
+														stroke-dasharray="2 3"
+														stroke-opacity="0.6"
+													/>
+												{/if}
+												{#each sketch.lines as line (line.key)}
+													<!-- One box per optional line, seven rows and a blank row apart, along the bottom
+													     of the text band: the rows the picture's own row gives way to. -->
+													<rect
+														data-line={line.key}
+														x="0"
+														y={line.top}
+														width={frame?.width ?? 256}
+														height={line.rows}
+														fill="currentColor"
+														fill-opacity="0.15"
+														stroke="currentColor"
+														stroke-opacity="0.5"
+													/>
+												{/each}
+											</svg>
+											<p class="text-[10px] opacity-60">{t('layout.sketch_caption')}</p>
+										{/if}
+									</div>
+
+									<!-- The verdict, beside the picture rather than under the controls. -->
+									<div class="border-t px-3 py-2 text-xs {fit !== null && !fit.fits ? 'border-2' : ''}">
+										<div class="flex flex-wrap items-center gap-2">
+											<span class="font-medium">{t('layout.fit_heading')}</span>
+											{#if fit === null}
+												<Badge variant="outline" size="sm">{t('layout.fit_unknown_badge')}</Badge>
+											{:else if fit.fits}
+												<Badge variant="secondary" size="sm">{t('layout.fits')}</Badge>
+											{:else}
+												<Badge variant="warning" size="sm">{t('layout.does_not_fit')}</Badge>
+											{/if}
+										</div>
+										<p
+											class="mt-1 {fit !== null && !fit.fits ? 'font-medium' : 'opacity-70'}"
+											role={fit !== null && !fit.fits ? 'alert' : undefined}
+										>
+											{fit === null ? t('layout.fit_unknown') : fit.said}
+										</p>
+									</div>
+								</section>
+							</div>
+
+							<div class="flex flex-col gap-3">
+								<!-- Group 2: what the picture is made of. -->
+								<section class="overflow-hidden rounded border">
+									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+										<span class="text-sm font-medium">{t('layout.group_content')}</span>
+										<span class="ml-auto text-[11px] opacity-60">{t('layout.group_content_what')}</span>
+									</div>
+
+									<div class="grid gap-3 px-3 py-3 md:grid-cols-3">
+										<div class="flex flex-col gap-2">
+											<label class="flex items-center gap-2 text-sm">
+												<input
+													type="checkbox"
+													class="h-4 w-4"
+													checked={draft.bar}
+													disabled={busy}
+													onchange={(event) => edit(one, { bar: (event.currentTarget as HTMLInputElement).checked })}
+												/>
+												<span class="font-medium">{t('layout.bar')}</span>
+												<span class="text-[10px] opacity-60">{one.bar_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+											</label>
+
+											<label class="flex flex-col gap-1 text-sm">
+												<span class="text-xs opacity-70">
+													{t('layout.bar_band')}
+													<span class="text-[10px]">{one.bar_band_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												</span>
+												<select
+													class="rounded border px-2 py-1"
+													value={draft.bar_band}
+													disabled={busy || !draft.bar}
+													onchange={(event) =>
+														edit(one, { bar_band: (event.currentTarget as HTMLSelectElement).value as 'top' | 'bottom' })}
+												>
+													{#each ['top', 'bottom'] as band (band)}
+														<option value={band}>{bandLabel(band as 'top' | 'bottom')}</option>
+													{/each}
+												</select>
+											</label>
+
+											<label class="flex flex-col gap-1 text-sm">
+												<span class="text-xs opacity-70">
+													{t('layout.bar_rows')}
+													<span class="text-[10px]">{one.bar_rows_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												</span>
+												<input
+													type="number"
+													class="w-24 rounded border px-2 py-1"
+													min="1"
+													max="48"
+													value={draft.bar_rows}
+													disabled={busy || !draft.bar}
+													onchange={(event) => edit(one, { bar_rows: Number((event.currentTarget as HTMLInputElement).value) })}
+												/>
+												<span class="text-[10px] opacity-60">{t('layout.bar_rows_note')}</span>
+											</label>
+										</div>
+
+										<div class="flex flex-col gap-2">
+											<label class="flex items-center gap-2 text-sm">
+												<input
+													type="checkbox"
+													class="h-4 w-4"
+													checked={draft.percent}
+													disabled={busy}
+													onchange={(event) => edit(one, { percent: (event.currentTarget as HTMLInputElement).checked })}
+												/>
+												<span class="font-medium">{t('layout.percent')}</span>
+												<span class="text-[10px] opacity-60">{one.percent_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+											</label>
+
+											<label class="flex flex-col gap-1 text-sm">
+												<span class="text-xs opacity-70">
+													{t('layout.percent_scale')}
+													<span class="text-[10px]">{one.percent_scale_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												</span>
+												<select
+													class="rounded border px-2 py-1"
+													value={String(draft.percent_scale)}
+													disabled={busy || !draft.percent}
+													onchange={(event) =>
+														edit(one, { percent_scale: Number((event.currentTarget as HTMLSelectElement).value) as 3 | 4 | 5 })}
+												>
+													{#each SCALES as scale (scale)}
+														<option value={String(scale)}>{t('layout.scale', { scale })}</option>
+													{/each}
+												</select>
+											</label>
+										</div>
+
+										<div class="flex flex-col gap-2">
+											<label class="flex items-center gap-2 text-sm">
+												<input
+													type="checkbox"
+													class="h-4 w-4"
+													checked={draft.name}
+													disabled={busy}
+													onchange={(event) => edit(one, { name: (event.currentTarget as HTMLInputElement).checked })}
+												/>
+												<span class="font-medium">{t('layout.name')}</span>
+												<span class="text-[10px] opacity-60">{one.name_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+											</label>
+										</div>
+									</div>
+								</section>
+
+								<!--
+									Group 3: how they share the row. Only when there is more than one of
+									them to share it: with one thing on, a rotation control is a control
+									with nothing to rotate, and a greyed-out one is the clutter this
+									grouping exists to remove. Nothing is lost while it is away — the
+									route replaces the row whole, so the stored rotation and turn length
+									go back exactly as they came.
+								-->
+								{#if partsOn(draft) > 1}
+									<section class="overflow-hidden rounded border" data-group="share">
+										<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+											<span class="text-sm font-medium">{t('layout.group_share')}</span>
+											<span class="ml-auto text-[11px] opacity-60">{t('layout.group_share_what')}</span>
+										</div>
+
+										<div class="flex flex-wrap items-end gap-3 px-3 py-3 text-sm">
+											<label class="flex flex-col gap-1">
+												<span class="text-xs opacity-70">
+													{t('layout.rotation')}
+													<span class="text-[10px]">{one.rotation_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												</span>
+												<select
+													class="rounded border px-2 py-1"
+													value={draft.rotation}
+													disabled={busy}
+													onchange={(event) =>
+														edit(one, {
+															rotation: (event.currentTarget as HTMLSelectElement).value as 'take-turns' | 'side-by-side',
+														})}
+												>
+													{#each ROTATIONS as rotation (rotation)}
+														<option value={rotation}>{rotationLabel(rotation)}</option>
+													{/each}
+												</select>
+											</label>
+
+											<label class="flex flex-col gap-1">
+												<span class="text-xs opacity-70">
+													{t('layout.rotate_seconds')}
+													<span class="text-[10px]">{one.rotate_seconds_origin === 'store' ? t('layout.yours') : t('layout.default')}</span>
+												</span>
+												<input
+													type="number"
+													class="w-20 rounded border px-2 py-1"
+													min="1"
+													value={draft.rotate_seconds}
+													disabled={busy || draft.rotation === 'side-by-side'}
+													onchange={(event) => edit(one, { rotate_seconds: Number((event.currentTarget as HTMLInputElement).value) })}
+												/>
+											</label>
+										</div>
+
+										{#if draft.rotation === 'side-by-side'}
+											<p class="border-t px-3 py-2 text-[11px] opacity-70">
+												{one.rotation_note ?? t('layout.side_by_side_what')}
+												{#if !(draft.percent && draft.name)}
+													{' '}{t('layout.side_by_side_needs_both')}
+												{/if}
+											</p>
+										{/if}
+									</section>
+								{/if}
+
+								<!--
+									Group 4: the seven optional lines. Each is one switch, each says whether
+									the value in force is yours or the default, and the count under the
+									heading is the rows they have taken out of the text band — because
+									that is what decides whether the picture still fits. When the set
+									cannot fit, the refusal is in words here, naming the lines with no
+									room; the verdict beside the picture carries the arithmetic.
+								-->
+								<section class="overflow-hidden rounded border">
+									<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 dark:bg-white/10">
+										<span class="text-sm font-medium">{t('layout.lines_heading')}</span>
+										<span class="ml-auto text-[11px] opacity-60">
+											{t('layout.lines_count', { on: linesOn(draft).length, rows: stackHeight(linesOn(draft).length) })}
+										</span>
+									</div>
+
+									<div class="flex flex-col gap-2 px-3 py-3">
+										<p class="text-[11px] opacity-60">{t('layout.lines_note')}</p>
+
+										<div class="grid gap-1 md:grid-cols-2">
+											{#each LINES as line (line.key)}
+												<label class="flex items-center gap-2 text-sm" title={t(line.what)}>
+													<input
+														type="checkbox"
+														class="h-4 w-4"
+														checked={draft[line.key]}
+														disabled={busy}
+														onchange={(event) => edit(one, { [line.key]: (event.currentTarget as HTMLInputElement).checked })}
+													/>
+													<span>{t(line.label)}</span>
+													<span class="text-[10px] opacity-60">
+														{(one[LINE_ORIGIN[line.key]] as Origin) === 'store' ? t('layout.yours') : t('layout.default')}
+													</span>
+												</label>
+											{/each}
+										</div>
+
+										{#if draft.ends && one.zone === ''}
+											<p class="text-[11px]" role="note">{t('layout.line_ends_no_zone')}</p>
+										{/if}
+
+										{#if tally !== null && tally.missed.length > 0}
+											<p class="rounded border border-dashed px-2 py-1 text-xs" role="alert" data-refusal="lines">
+												{t('layout.lines_refused', {
+													rows: tally.stack,
+													left: tally.left,
+													missed: lineNames(tally.missed, true),
+												})}
+											</p>
+										{/if}
+									</div>
+								</section>
+
+								<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
+							</div>
+						</div>
+					{:else if kind === 'strip'}
+						<!--
+							The strip rendering, deliberately almost empty: the fill, what it starts from,
+							what 0 % and 100 % do, and the brightness only a whole strip writes. The four
+							panel controls are absent because a strip is one dimension — and the page says
+							that, rather than leaving a person to read the absence as a fault.
+						-->
+						<div class="flex flex-col gap-2 rounded border px-3 py-3 text-sm">
+							<p>{t('layout.strip_what')}</p>
+
+							{#if frame !== undefined && pictureOf(frame) !== ''}
 								<img
 									src={pictureOf(frame)}
-									alt={t('layout.picture_alt')}
-									class="w-48 rounded border"
+									alt={t('layout.strip_picture_alt', { light: frame.light.name })}
+									width={frame.image?.width ?? frame.width}
+									height={frame.image?.height ?? frame.height}
+									class="w-full max-w-[32rem] rounded border"
 									style="image-rendering: pixelated;"
 								/>
 							{/if}
-							<div class="flex flex-col gap-1 text-[11px] opacity-70">
-								<span>{t('layout.picture_caption')}</span>
-								<span>{t('layout.picture_drawn', { age: ageText(t, frame.reading.observed_at) ?? t('common.just_now') })}</span>
-								{#if !aboutAJob(frame)}
-									<p>{t('layout.picture_no_job')}</p>
-								{/if}
-								{#if frame.note !== undefined && frame.note !== ''}
-									<p>{frame.note}</p>
-								{/if}
-							</div>
+
+							<ul class="flex flex-col gap-1 text-xs opacity-80">
+								<li>{t('layout.strip_fill', { lit: frame?.frame.lit ?? 0, total: frame?.frame.total ?? 0 })}</li>
+								<li>{t('layout.strip_zero')}</li>
+								<li>{t('layout.strip_full')}</li>
+								<li>{brightnessOf(one)}</li>
+							</ul>
+
+							<p class="text-[11px] opacity-60">{t('layout.strip_fill_note')}</p>
+							<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
+							{#if one.overridden}
+								<p class="text-[11px] opacity-60">{t('layout.strip_row_yours')}</p>
+							{/if}
 						</div>
+					{:else}
+						<p class="text-sm opacity-70">{t('layout.shape_unknown')}</p>
 					{/if}
-
-					<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
-				{:else if kind === 'strip'}
-					<!--
-						The strip rendering, deliberately almost empty: the fill, what it starts from, what
-						0 % and 100 % do, and the brightness only a whole strip writes. The four panel
-						controls are absent because a strip is one dimension — and the page says that,
-						rather than leaving a person to read the absence as a fault.
-					-->
-					<div class="flex flex-col gap-2 text-sm">
-						<p>{t('layout.strip_what')}</p>
-
-						{#if frame !== undefined && pictureOf(frame) !== ''}
-							<img
-								src={pictureOf(frame)}
-								alt={t('layout.strip_picture_alt', { light: frame.light.name })}
-								class="w-full max-w-[32rem] rounded border"
-								style="image-rendering: pixelated;"
-							/>
-						{/if}
-
-						<ul class="flex flex-col gap-1 text-xs opacity-80">
-							<li>{t('layout.strip_fill', { lit: frame?.frame.lit ?? 0, total: frame?.frame.total ?? 0 })}</li>
-							<li>{t('layout.strip_zero')}</li>
-							<li>{t('layout.strip_full')}</li>
-							<li>{brightnessOf(one)}</li>
-						</ul>
-
-						<p class="text-[11px] opacity-60">{t('layout.strip_fill_note')}</p>
-						<p class="text-[11px] opacity-60">{t('layout.side_by_side_quiet')}</p>
-						{#if one.overridden}
-							<p class="text-[11px] opacity-60">{t('layout.strip_row_yours')}</p>
-						{/if}
-					</div>
-				{:else}
-					<p class="text-sm opacity-70">{t('layout.shape_unknown')}</p>
-				{/if}
-			</article>
-		{/each}
-
-		{#if rows.length === 0}
-			<p class="text-sm opacity-70">{t('layout.no_bindings')}</p>
+				</article>
+			{/if}
 		{/if}
 
 		<div class="flex flex-col gap-1 text-xs opacity-70">
