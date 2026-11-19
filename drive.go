@@ -258,7 +258,31 @@ type writer struct {
 	// proof, because a datagram cannot be read back. See pixels.go.
 	handedBack bool
 
+	// layout is the operator's arrangement of the panel: a bar in a band, the percentage, the job's
+	// name. The zero value draws nothing of its own, so a writer built without one behaves exactly
+	// as this module did before the setting existed — which is what every test that does not ask
+	// for a layout gets, and what an operator who switches every part off gets too.
+	layout layout
+
+	// composed is the picture the panel is holding as pixels this module drew, and nil when the
+	// panel is on its own segments. It is not the event slot: an event holds the light for a
+	// duration and then gives it back, while this is the steady picture and has no deadline — it
+	// lasts until the print it describes ends. See composedPanel.
+	composed *composedPanel
+
 	wake chan struct{}
+}
+
+// composedPanel is the picture the panel is holding as pixels this module drew, and when the next
+// push of it is due.
+//
+// The push is not a repaint of something that changed: it is what keeps live mode alive, because
+// this firmware leaves realtime 2500 ms after the last datagram and draws its own segments again.
+// So a composed picture costs one push a second for as long as a print runs, and the arithmetic is
+// in pixels.go beside pixelRepeat.
+type composedPanel struct {
+	picture panelPicture
+	repaint time.Time
 }
 
 // newWriter prepares a writer for one controller's whole strip. It sends nothing until run
@@ -499,6 +523,125 @@ func (w *writer) run(ctx context.Context) {
 		// first: a frame that arrived during the window is held here, in the one slot,
 		// and never queued.
 		frame := w.latest.Swap(nil)
+
+		// A composed picture — a bar, digits, a job's name — is pixels this module drew, and
+		// this firmware draws pixels only while a stream is live: it leaves realtime 2500 ms
+		// after the last datagram. So a panel holding one is pushed again every pixelRepeat
+		// for as long as the picture is the one the layout draws, and a pass with nothing new
+		// from the printer waits for that push rather than for the heartbeat. The frames the
+		// driver keeps deciding wait in the one slot, newest first, exactly as they do behind an
+		// event: the panel is told the newest thing that is true, once a second.
+		if w.composed != nil {
+			picture := w.composed.picture
+
+			if frame != nil {
+				picture.frame = *frame
+			}
+
+			if !w.drawablePanel(picture.frame) {
+				// The print ended, the reading went stale, or the operator's layout no longer
+				// draws a job: the panel goes back to its own segments, and the frame that takes
+				// it back is the plain one below. handedBack is what makes the writer read the
+				// controller afterwards, past the firmware's own timeout, and prove it left
+				// realtime — the only proof this transport allows.
+				w.composed = nil
+				w.handedBack = true
+				frame = &picture.frame
+			} else {
+				if frame == nil {
+					if wait := w.composed.repaint.Sub(w.now()); wait > 0 {
+						select {
+						case <-ctx.Done():
+							return
+						case <-w.wake:
+						case <-w.after(wait):
+						}
+
+						continue
+					}
+				}
+
+				picture.at = w.now()
+
+				if err := w.repeatComposed(picture); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+
+					// A controller that has stopped taking datagrams is tried on the same
+					// doubling window as one that has stopped taking bodies: a push a second
+					// against a light that is not answering is the storm this module was taught
+					// not to make. While the window is open the panel keeps whatever it last
+					// took, which for an unreachable controller is the establishing body.
+					failures++
+
+					wait := backoffFor(failures)
+					retryAt = w.now().Add(wait)
+
+					w.logFailure(failures, wait, err)
+
+					continue
+				}
+
+				if failures > 0 {
+					w.logf("%s: the light is answering again after %d failed writes", name, failures)
+				}
+
+				failures, retryAt = 0, time.Time{}
+
+				w.composed.picture = picture
+				w.composed.repaint = w.now().Add(pixelRepeat)
+
+				// The plain path's memory is not evidence about pixels: it compares the colour
+				// and the fill of a frame, and neither is what is on the panel.
+				last, lastOK = nil, w.now()
+
+				continue
+			}
+		}
+
+		// The other direction: a frame that is about a job, on a panel whose layout draws
+		// something. The picture is painted once through the event's own painter — the
+		// establishing body, the pixels and the one read that says the controller took them —
+		// and then repeated, rather than painted again, for as long as it is the picture. Its one
+		// writing is recorded for /status; the once-a-second repeats are not, on the same rule the
+		// event's repeats keep: a field that ticks every second buries the transition it was read
+		// for.
+		if frame != nil && w.composed == nil && w.drawablePanel(*frame) {
+			picture := w.pictureOf(*frame)
+
+			if err := w.report(func() error { return w.enterComposed(ctx, picture) }); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+
+				failures++
+
+				wait := backoffFor(failures)
+				retryAt = w.now().Add(wait)
+
+				w.logFailure(failures, wait, err)
+
+				// The frame goes back in the slot. It was taken out to paint and the light did not take
+				// it, so the pass after the window has to have something to paint: without this the
+				// panel would keep the picture before it until the driver's next tick, and a failed
+				// entry would cost a whole second on every attempt that never quite lands.
+				w.latest.Store(frame)
+
+				continue
+			}
+
+			if failures > 0 {
+				w.logf("%s: the light is answering again after %d failed writes", name, failures)
+			}
+
+			failures, retryAt = 0, time.Time{}
+
+			w.composed = &composedPanel{picture: picture, repaint: w.now().Add(pixelRepeat)}
+			last, lastOK = nil, w.now()
+
+			continue
+		}
 
 		forced := false
 
@@ -802,6 +945,53 @@ func (w *writer) paint(ctx context.Context, frame render.Frame) error {
 	}
 
 	return w.light.SetSegments(ctx, segmentsFor(frame, geometry))
+}
+
+// drawablePanel reports whether a frame should be drawn as a composed picture: a panel, a layout
+// that draws something of its own, and a frame that is about a job in progress.
+//
+// All three, and the third is not decoration. A panel's resting picture — idle, finished, stopped,
+// an error, a printer that has gone quiet — is the state colour filling it, which is what the
+// operator has been looking at and what reads from across a room; the layout is the picture of a
+// print in progress, where a bar and a number mean something. It is also what keeps the controller
+// off realtime for the rest of the day: a composed frame is held live, and there is no reason to
+// hold a light live to show one colour.
+func (w *writer) drawablePanel(frame render.Frame) bool {
+	return w.panelOf().matrix() && w.layout.draws() && aboutAJob(frame)
+}
+
+// pictureOf is a frame as the operator's layout draws it at this moment.
+func (w *writer) pictureOf(frame render.Frame) panelPicture {
+	return panelPicture{frame: frame, layout: w.layout, at: w.now()}
+}
+
+// enterComposed paints a composed picture for the first time, through the event's own painter.
+//
+// It is that painter and not a copy of it, deliberately: the establishing body, the pixels and the
+// one read of /json/info that says the controller took them are three steps with three ways to be
+// wrong, and the preview route walks them through paintEvent. A second implementation here would
+// make "the preview draws exactly what a printing panel draws" a claim about two functions agreeing,
+// which is the kind of claim that stops being true the first time one of them is edited.
+func (w *writer) enterComposed(ctx context.Context, picture panelPicture) error {
+	_, err := w.paintEvent(ctx, event{picture: &picture})
+
+	return err
+}
+
+// repeatComposed draws the composed picture again at this moment and pushes it.
+//
+// The push is what keeps live mode alive: 2500 ms of silence and this firmware goes back to drawing
+// its own segments, which on this panel is one rectangle in the background colour. The picture is
+// drawn again rather than pushed from the bytes of the last push because the rotation is read from
+// the clock — the half that takes the panel changes on its own interval, and a repeat that re-sent
+// old bytes would hold the digits until the printer's progress next moved.
+func (w *writer) repeatComposed(picture panelPicture) error {
+	pixels, err := picture.draw(w.panelOf())
+	if err != nil {
+		return fmt.Errorf("the composed frame was not drawn: %w", err)
+	}
+
+	return w.pushWord(pixels)
 }
 
 // paintBorrowed draws one frame into the one segment this module borrowed, and into no
@@ -1572,6 +1762,15 @@ type frameView struct {
 	// Total is how many LEDs the range holds, and zero until the controller has
 	// said.
 	Total int `json:"total"`
+	// Percent is the completed part of the job in whole percent, and -1 when
+	// there is no percentage this build may present as current: no job on the
+	// bed, no live reading, or a progress the guarded reading refused. It is what
+	// a panel's layout draws in digits.
+	Percent int `json:"percent"`
+	// Name is the printer's own name for the job on the bed, and empty when
+	// there is none or the reading is not live. What a panel draws from it is the
+	// layout's business.
+	Name string `json:"name"`
 	// Reason names the rule that decided the frame.
 	Reason string `json:"reason"`
 }
@@ -1634,10 +1833,12 @@ func viewOf(snapshot printer.Snapshot, frame render.Frame) view {
 			Stale:      snapshot.Stale,
 		},
 		Frame: frameView{
-			Colour: colourView{R: frame.Colour.R, G: frame.Colour.G, B: frame.Colour.B},
-			Lit:    frame.Lit,
-			Total:  frame.Total,
-			Reason: string(frame.Reason),
+			Colour:  colourView{R: frame.Colour.R, G: frame.Colour.G, B: frame.Colour.B},
+			Lit:     frame.Lit,
+			Total:   frame.Total,
+			Percent: frame.Percent,
+			Name:    frame.Name,
+			Reason:  string(frame.Reason),
 		},
 	}
 }

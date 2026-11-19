@@ -139,6 +139,32 @@ func holdFrom(r *http.Request) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
+// percentFrom is the progress a preview of the composed panel asks for: a whole number 0 to 100,
+// and required.
+//
+// Required rather than defaulted, unlike hold. A hold has an answer the event itself gives — its
+// own minute — while a progress has none: a picture drawn at no progress at all would be a panel
+// with no digits and no bar, which is not a preview of anything the printer will do. And a caller
+// who typed `precent=41` must be told that nothing was drawn from it, rather than shown a picture
+// that quietly ignored the parameter.
+func percentFrom(r *http.Request) (int, error) {
+	given := strings.TrimSpace(r.URL.Query().Get("percent"))
+	if given == "" {
+		return 0, errors.New("percent is required: it is the progress to draw, as a whole number 0 to 100")
+	}
+
+	value, err := strconv.Atoi(given)
+	if err != nil {
+		return 0, fmt.Errorf("percent is %q, and it is a whole number 0 to 100", given)
+	}
+
+	if value < 0 || value > 100 {
+		return 0, fmt.Errorf("percent is %d, and a percentage is 0 to 100", value)
+	}
+
+	return value, nil
+}
+
 // finishedWordBackground is what the panel is painted behind the word.
 //
 // It is the colour the steady frame already gives the part of the range a job has not filled,
@@ -192,37 +218,89 @@ type event struct {
 	colour wled.RGB
 	// holds is how long the word keeps the light.
 	holds time.Duration
+
+	// picture is the composed panel frame this event draws instead of a word: the operator's
+	// layout, the frame it draws, and the moment its rotation is read at. It is nil for the word
+	// and for the patterns.
+	//
+	// It is here rather than in a second path through the writer because everything expensive
+	// about an event is the machinery around the picture — the establishing body, the
+	// once-a-second repeat that keeps live mode alive, the deadline and the hand-back — and a
+	// second path would be a second place for each of those to be wrong. A preview of the panel's
+	// own picture is therefore an event like the word is, and the steady picture a printing panel
+	// holds is painted by the same function (writer.paintEvent) the preview goes through.
+	picture *panelPicture
 }
 
 // label is what this event is called in a log line and on the segment the establishing body
-// writes: the word, or the pattern's name.
+// writes: the word, or the pattern's name, or — for a composed frame — the one word a log line can
+// say about a picture that changes once a second.
 //
-// One name for both because they are the same fact — which picture the panel is holding — and the
-// log line, the /json/state name and the route's own parameter then all say the same word.
+// One name for all three because they are the same fact — which picture the panel is holding — and
+// the log line, the /json/state name and the route's own parameter then all say the same word. A
+// composed frame's establishing body clears the name instead of writing one (see paintEvent), so
+// this string reaches the log and never the controller's segment.
 func (ev event) label() string {
-	if ev.pattern != "" {
+	switch {
+	case ev.picture != nil:
+		return "composed"
+	case ev.pattern != "":
 		return ev.pattern
 	}
 
 	return ev.word
 }
 
-// noun is what kind of picture this event is, for a sentence a person reads: "word" or "pattern".
+// noun is what kind of picture this event is, for a sentence a person reads: "word", "pattern" or
+// "picture".
 func (ev event) noun() string {
-	if ev.pattern != "" {
+	switch {
+	case ev.picture != nil:
+		return "picture"
+	case ev.pattern != "":
 		return "pattern"
 	}
 
 	return "word"
 }
 
-// draw is the picture this event puts on the panel: a diagnostic pattern when it carries one, and
-// otherwise the word rasterised in the event's colour on the event's background.
+// segmentName is what the establishing body calls segment 0: the word this event spells, or the
+// pattern's name, and nothing at all for a composed frame.
+//
+// Nothing, because a composed frame is not a word: a name on that segment is a string a controller
+// may later draw with a text effect, and this firmware keeps a name through a body that does not
+// mention one — the failure §5.13 records, where "FINISHED" outlived its own event. The word keeps
+// its name because /json/state then says which word the panel is holding, which is the one thing
+// this transport cannot say for itself.
+func (ev event) segmentName() string {
+	if ev.picture != nil {
+		return ""
+	}
+
+	return ev.label()
+}
+
+// draw is the picture this event puts on the panel: a composed frame when it carries one, a
+// diagnostic pattern when it carries one of those, and otherwise the word rasterised in the event's
+// colour on the event's background.
 //
 // It returns the pixels rather than painting them, so that the one function that decides where a
-// word sits is internal/text and the one function that decides what a pattern looks like is
-// pattern.go, and the painter only carries the result.
-func (ev event) draw(geometry panel) ([]wled.RGB, error) {
+// word sits is internal/text, the one function that decides where a layout puts its parts is
+// layout.go, and the one function that decides what a pattern looks like is pattern.go. The painter
+// only carries the result.
+//
+// at is the moment the picture is drawn at, and only a composed frame reads it: its rotation is a
+// function of the clock, so a hold that lasts two minutes draws the name and the digits in turn
+// rather than freezing whichever half it started on. The picture is copied before the moment is
+// written into it, so that drawing is pure however many goroutines hold the event.
+func (ev event) draw(geometry panel, at time.Time) ([]wled.RGB, error) {
+	if ev.picture != nil {
+		picture := *ev.picture
+		picture.at = at
+
+		return picture.draw(geometry)
+	}
+
 	if ev.pattern != "" {
 		return patternFrame(ev.pattern, geometry)
 	}
@@ -398,11 +476,11 @@ func (w *writer) preview(ev event) error {
 	}
 
 	// The picture is laid out here and thrown away — 16,384 pixels once per request — so that
-	// a word which does not fit, or a pattern this build does not hold, is refused before the
-	// event is stored rather than after it has been offered to the writer. The painter lays it
-	// out again on the writer's own goroutine; the cost is one frame per preview, which is the
-	// cheapest thing in this file.
-	if _, err := ev.draw(geometry); err != nil {
+	// a word which does not fit, a pattern this build does not hold, or a layout whose bands do
+	// not fit this panel, is refused before the event is stored rather than after it has been
+	// offered to the writer. The painter lays it out again on the writer's own goroutine; the
+	// cost is one frame per preview, which is the cheapest thing in this file.
+	if _, err := ev.draw(geometry, w.now()); err != nil {
 		return fmt.Errorf("%w: %w", ErrPreviewNotDrawable, err)
 	}
 
@@ -514,27 +592,17 @@ func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 			ev.label(), ev.noun(), w.where)
 	}
 
-	frame, err := ev.draw(geometry)
+	frame, err := ev.draw(geometry, w.now())
 	if err != nil {
 		return nil, fmt.Errorf("the %q %s was not drawn: %w", ev.label(), ev.noun(), err)
 	}
 
-	if err = w.light.SetSegments(ctx, []wled.SegmentWrite{{
-		ID:       firstSegment,
-		First:    0,
-		Count:    geometry.width,
-		FirstRow: 0,
-		RowCount: geometry.height,
-		On:       true,
-		Colour:   finishedWordBackground,
-		Name:     ev.label(),
-	}, {
-		// The frame's remainder, switched off rather than coloured: an off segment draws nothing,
-		// so the word underneath it is not covered, and a body that left it on would put a black
-		// band over the right-hand end of the word.
-		ID: remainderSegment,
-		On: false,
-	}}); err != nil {
+	// One body for every picture this module paints over DDP, and the two ways it differs are the
+	// two the picture decides: the word travels as the segment's own name, because that is how
+	// /json/state says which word the panel is holding, and a composed frame is named nothing
+	// because a segment's name is a string a controller may later draw with an effect, and this
+	// module's steady body clears it again anyway (see stripSegments).
+	if err = w.light.SetSegments(ctx, establishingBody(geometry, ev.segmentName(), ev.picture != nil)); err != nil {
 		return nil, err
 	}
 
@@ -542,7 +610,37 @@ func (w *writer) paintEvent(ctx context.Context, ev event) ([]wled.RGB, error) {
 		return nil, fmt.Errorf("the %q %s's pixels did not reach %s: %w", ev.label(), ev.noun(), w.where, err)
 	}
 
-	w.confirmRealtime(ctx, ev)
+	w.confirmRealtime(ctx, ev.label(), ev.noun())
 
 	return frame, nil
+}
+
+// establishingBody is the one JSON body a picture pushed over DDP needs underneath it: segment 0
+// given the whole panel, switched on, in the background colour, and segment 1 — the frame's
+// remainder — switched off.
+//
+// Segment 1 is not tidiness. It is the frame's remainder, the black part of a progress bar, and the
+// panel draws segments in order — so a remainder left on from the frame before the picture is drawn
+// **over** the picture the moment live mode ends. Measured on the live panel the first time the word
+// ran: segment 1 held columns 28..256 in black and the word was a fragment on the left, which is the
+// same fragment the whole change exists to stop showing.
+//
+// name is what the segment is called and clear the empty string instead: `n` is carried because
+// /json/state then says which word the panel is holding, and cleared because a composed frame is not
+// a word and a name would outlive it on this firmware, which keeps a segment's name through a body
+// that does not mention one.
+func establishingBody(geometry panel, name string, clear bool) []wled.SegmentWrite {
+	segment := wled.SegmentWrite{
+		ID:        firstSegment,
+		First:     0,
+		Count:     geometry.width,
+		FirstRow:  0,
+		RowCount:  geometry.height,
+		On:        true,
+		Colour:    finishedWordBackground,
+		Name:      name,
+		ClearName: clear,
+	}
+
+	return []wled.SegmentWrite{segment, {ID: remainderSegment, On: false}}
 }

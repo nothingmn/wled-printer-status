@@ -70,6 +70,13 @@ type runner struct {
 	// starts writers that must land on the same brightness the settings asked for. See
 	// setSchedule.
 	schedule *brightnessSchedule
+
+	// layout is the operator's arrangement of a panel, as the settings describe it. It travels with
+	// a set for the same reason the schedule does: a change made through the routes rebuilds every
+	// writer, and a writer built without the layout would take the panel back to the picture it had
+	// before the setting existed — in the middle of a print, with nothing on the instance to say
+	// why. See setLayout.
+	layout layout
 }
 
 // set is the set in force, as a copy: the caller gets the bindings and not the lock.
@@ -101,6 +108,19 @@ func (r *runner) setSchedule(schedule *brightnessSchedule) {
 	defer r.mu.Unlock()
 
 	r.schedule = schedule
+}
+
+// setLayout records the operator's arrangement of a panel, for the writers the next build starts.
+//
+// Guarded by the same lock as a change, and for the same reason: a change made through the routes
+// builds its writers from whatever this holds, and a layout written while a change is in flight
+// would otherwise reach half of them. configure calls it before apply, so the watch it starts is
+// built from the layout the settings it just judged describe.
+func (r *runner) setLayout(shape layout) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.layout = shape
 }
 
 // origin is where the set in force came from, in the words the routes answer with.
@@ -261,6 +281,7 @@ func (r *runner) build(parent context.Context, set bindings) (context.CancelFunc
 		logf:      r.logf,
 		tick:      r.tick,
 		schedule:  r.schedule,
+		layout:    r.layout,
 	}
 
 	if len(set) > 1 {

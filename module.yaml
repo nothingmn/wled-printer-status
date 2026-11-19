@@ -169,6 +169,53 @@ options:
     default: "-1"
     summary: The number of the one segment to drive on a multi-segment controller, leaving the controller's other segments, its brightness and its power alone. -1 drives the whole strip, which is what this module has always done.
 
+  # The arrangement of a PANEL — a 2D matrix, not a strip. On a strip a frame is one run of LEDs and
+  # there is nothing to arrange, so this setting is read and unused there (§5.4).
+  #
+  # The operator asked for it in his own words: "we could also show the percentage complete, we could
+  # render the name of the print job itself, and a progress bar", "every X number of seconds to swap
+  # over to the name of the print itself", and "be able to choose what we want displayed, for example
+  # to be able to choose a progress bar, say taking up the TOP OR BOTTOM 1 to X pixels across".
+  #
+  # Its type is `object`, which the settings pane draws as a block of JSON in a text area — the
+  # manifest declares nine value shapes and a block of keys is one of them. Every key is optional and
+  # absent means the default, so the whole setting may be left alone:
+  #
+  #   {"bar": true, "bar_band": "bottom", "bar_rows": 12,
+  #    "percent": true, "name": true, "remaining": false, "rotate_seconds": 15}
+  #
+  #   bar             draw a progress bar in a band of the panel. Default true.
+  #   bar_band        "top" or "bottom" — which end of the panel the band is at. Default "bottom".
+  #   bar_rows        how many rows the band takes, 1 to 48 of a 64-row panel. Default 12, which
+  #                   leaves 52 rows for the text. More than 48 is refused: at least 16 rows must
+  #                   stay for the text, or there is no picture left to read.
+  #   percent         the job's progress in digits, such as 41%, at the largest scale that fits the
+  #                   band and never larger than the word FINISHED. Default true.
+  #   name            the job's own name, on the other half of the rotation. Upper-cased, with the
+  #                   characters the font does not hold turned into spaces, and cut at the last word
+  #                   that fits 21 characters across a 256-wide panel. Default true.
+  #   remaining       time remaining. Default false, and true is REFUSED: this build draws none, and a
+  #                   key that asked for a picture and got silence would be a setting that lies.
+  #   rotate_seconds  how long each half holds the panel. Default 15.
+  #
+  # A key this code does not read refuses the start, and so does a value it cannot act on — a band it
+  # does not know, a bar_rows outside 1 to 48, a rotation of no seconds — with the field and the
+  # value in the sentence the instance shows.
+  #
+  # Every part can be switched off, and a layout with bar, percent and name all false draws nothing of
+  # its own: the panel takes the plain frame it has always had — one colour filling it — which is how
+  # an operator puts his panel back exactly as it was before this setting existed.
+  #
+  # The picture is drawn as pixels this module owns, over DDP, for as long as a print is running (§5.4,
+  # §5.7): a panel cannot be given text any other way, and a light that is already holding a print's
+  # picture is live anyway. A frame that is not about a job in progress — idle, finished, stopped, an
+  # error, a printer that has gone quiet — is the state colour filling the panel, unchanged.
+  - key: layout
+    type: object
+    default: "{}"
+    summary: The arrangement of a panel, as one JSON object with the keys bar, bar_band, bar_rows, percent, name, remaining and rotate_seconds. Empty is the default layout — a twelve-row bar at the bottom, the percentage and the job's name rotating every fifteen seconds — and every part can be switched off, which puts the panel back to the plain frame it had before.
+
+
   # The printers this module shows, one line each, and the setting to reach for when there is
   # more than one printer. It wins over the four keys above when it is written: a list is
   # the only shape that can say "two printers", and half a list beside a controller_address

@@ -592,8 +592,14 @@ assign.
 **Proved by.** The panel shows the job name as Prusa Connect reports it, in characters a person
 can read.
 
-**Refuted by.** A name that is truncated into nonsense, or absent when the job has one. What
-happens past 48 characters — truncate, scroll, or cut at a word — is **open** (Q-10).
+**Refuted by.** A name that is truncated into nonsense, or absent when the job has one.
+
+**A default this build runs on, and still his to change.** A name longer than the panel holds — which is
+every Prusa file name, since a 256-wide panel holds 21 characters at the scale the name is drawn — is
+upper-cased, has every character this module's font does not hold turned into a space, and is cut at the
+last whole word that fits: `MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode` draws as `MK4IS 0.4N 0.2MM PLA`. It is
+not scrolled, which would be a frame rate, and not abbreviated, which would be a guess. Q-10 is not closed
+by this: the three answers are still available and the fourth was chosen here so the feature could ship.
 
 ### R-29 · A dense panel can show a progress bar · `operator`
 
@@ -619,6 +625,11 @@ X pixel rows tall, across the width.
 
 **Refuted by.** A bar pinned to one edge with no choice, or one that does not span the width.
 
+**What this build runs on.** X is 48 rows: a third of a 64-row panel is left for the text, which is the
+smallest band the digits stay readable in. Top or bottom is one key, `bar_band`, and a value naming neither
+refuses the start. Q-9 asked which is the default before anyone chooses; this build says the bottom, twelve
+rows, and the setting is his to change.
+
 ### R-31 · The remaining rows can rotate between the percentage and the job name · `operator`
 
 **Requirement.** The rows not taken by the bar show the percentage, and optionally swap, every X
@@ -632,7 +643,12 @@ seconds, to the job's name.
 chosen interval.
 
 **Refuted by.** Both shown at once in a space that fits one, or a swap that never happens.
-**The interval X is open** (Q-8).
+
+**What this build runs on.** X is fifteen seconds, set by `rotate_seconds`, and each half holds the whole
+text band — there is one text band and not one region per part, because the manifest cannot express a
+region. The interval is the same for every panel this module drives, since it is one setting per instance.
+Q-8 is still his: fifteen is a value chosen here, named in one constant, and one key away from being
+something else.
 
 ### R-32 · Words are drawn where this module can draw them · `derived`, amended 2026-11-18
 
@@ -704,6 +720,14 @@ panel), and a region has to be expressible as one of those plus text where text 
 changed without touching the module's source.
 
 **Refuted by.** A layout that only exists as constants in Go, or that is lost on upgrade.
+
+**What exists now, and what it is not.** The panel's arrangement is data: the `layout` setting is one JSON
+object carrying which parts are drawn, which end the bar is at, how thick it is, and how long the rotation
+holds — it survives an upgrade, an operator can edit it, and the picture is composed from it at draw time.
+That is R-35's shape in the only vocabulary the manifest has (§5.8: nine closed types, and an object is a
+block of JSON in a text area), and it is not the composer: the parts are fixed and their sizes are bounded,
+rather than regions each of which may be filled by anything. R-36 is untouched — there is still no editor
+for it, so the sizes and the parts are edited as JSON or not at all.
 
 ### R-36 · The composer needs the module's UI half · `derived`
 
@@ -846,7 +870,10 @@ than deferred.
 
 Every decision the operator has not made, and what each one blocks. Questions he has since answered
 stay in the list with his words beside them, so a later reader can see what was asked and what closed
-it rather than finding a question silently gone. **Fourteen remain open; three are answered.**
+it rather than finding a question silently gone. **Ten remain open; three he has answered; four have a
+default this build runs on**, and those four are marked "runs on a default" rather than answered: a
+number this seat chose so that a feature could ship is not the operator's decision, and he can change
+every one of them with a settings key.
 
 1. **Q-1 · The colours he did not name.** `READY`, `BUSY`, `PAUSED`, `FINISHED`, `STOPPED`,
    `UNKNOWN`. Blocks: the mapping table being complete, and therefore R-10's "every state maps to
@@ -888,17 +915,27 @@ it rather than finding a question silently gone. **Fourteen remain open; three a
    apply at all.
 8. **Q-8 · The rotation interval X.** How many seconds the panel holds the percentage before
    swapping to the job name, and whether the interval is the same for every region. Blocks: R-31.
+   **Runs on a default:** fifteen seconds, `rotate_seconds`, one interval for the panel because there
+   is one setting per instance. His to change.
 9. **Q-9 · Default bar placement and depth.** Top or bottom by default, and how many rows, before
    the operator chooses. Blocks: what a panel shows on first install, before anyone composes it.
+   **Runs on a default:** the bottom, twelve rows — `bar_band` and `bar_rows`, with 48 rows as the
+   ceiling. His to change.
 10. **Q-10 · A job name longer than the panel can carry.** Truncate with an ellipsis, scroll it, or cut
     at a word boundary. Blocks: R-28's acceptance observation, since matching the reported name is not
     achievable past what the panel's width holds — eight characters at the scale the one word uses, and
     fewer at a larger one, so the limit is the panel and not a firmware field (the 48-character segment
-    name that used to be the ceiling is no longer how text is drawn; see R-32).
+    name that used to be the ceiling is no longer how text is drawn; see R-32). **Runs on a default:**
+    cut at the last whole word that fits, 21 characters at a 256-wide panel and a scale of 2, with the
+    font's missing characters turned into spaces. His to change, and the other two answers are still
+    open to him.
 11. **Q-11 · What the panel shows when progress is unknown.** A job that has just started may report
     no percentage at all. Dashes, an empty bar, the job name alone, or the previous figure with an
     age beside it — the last of those is what R-37 asks for elsewhere, which may be the answer, but
-    it is not this seat's to give. Blocks: the percentage region in R-27.
+    it is not this seat's to give. Blocks: the percentage region in R-27. **Runs on a default:** the
+    job's name alone, with no digits and an empty bar. A figure this module may not present as current
+    is not drawn at all rather than drawn as `0 %`, which is what an unknown progress and a paused
+    print at zero have to be told apart by.
 12. **Q-12 · What the module offers when fifteen controllers are visible.** Only a typed address, or
     a list to pick from — and if a list, built how, given that discovery cannot run from the module's
     network (M-2, M-5)? Blocks: the settings surface behind R-02.

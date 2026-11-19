@@ -169,6 +169,75 @@ then doubling to half a minute — and a picture that changes during that wait i
 controller answers again rather than added to a pile of attempts. The log says so once per change of
 wait, not once per attempt.
 
+## The panel's layout: a bar, the percentage, and the job's name
+
+A strip can say one thing: a colour, and how much of the run is filled. A panel can say more, and the
+`layout` setting says what:
+
+```json
+{"bar": true, "bar_band": "bottom", "bar_rows": 12,
+ "percent": true, "name": true, "remaining": false, "rotate_seconds": 15}
+```
+
+That is the default, and an instance that never writes the box runs on exactly those values. The keys are
+the arrangement, and each one is a part of the picture rather than a mode:
+
+| key | what it does | default |
+| --- | --- | --- |
+| `bar` | a progress bar in a band of the panel, filled to the job's own fraction of the width | `true` |
+| `bar_band` | `top` or `bottom`: which end of the panel the band is at | `bottom` |
+| `bar_rows` | how many rows the band takes, 1 to 48 of a 64-row panel | `12` |
+| `percent` | the progress in digits, such as `41%` | `true` |
+| `name` | the job's own name, on the other half of the rotation | `true` |
+| `remaining` | time remaining — **refused**, this build draws none | `false` |
+| `rotate_seconds` | how long each half holds the panel | `15` |
+
+Three things about it are worth knowing before you write one.
+
+**A layout is judged before the module starts.** A key this build does not read, a band it does not know,
+a `bar_rows` outside 1 to 48, a rotation of no seconds, or `remaining: true` refuses the start with the
+field and the value in the sentence — and so does a bar thicker than the panel the frame is drawn on. A
+bar clamped to fit would be a picture nobody asked for, drawn without saying so.
+
+**Every part can be switched off.** A layout with `bar`, `percent` and `name` all false draws nothing of
+its own, and the panel takes the plain frame it had before this setting existed: one colour filling it,
+over one JSON request. That is the opt-out.
+
+**The text is drawn here, at sizes worked out for your panel.** A 5×7 glyph at a scale of 2 is 10×14
+pixels; at 5 it is 25×35. On a 256×64 panel with a 12-row bar, 52 rows are left: the digits take the
+largest scale that fits and is never larger than the word `FINISHED` the panel already draws — a scale of
+5, which makes `41%` 85 pixels wide and 35 tall — and the job's name takes a scale of 2, which is 21
+characters across the panel. A name is longer than that: `MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode` is 38
+characters. So it is upper-cased, every character this module's font does not hold becomes a space
+(underscores, mostly), and the result is cut at the last whole word that fits — the example becomes
+`MK4IS 0.4N 0.2MM PLA`. Not scrolled, because a scrolling word is a frame rate and this module does not
+stream; not abbreviated, because a wrong abbreviation is worse than a short name. The head of a slicer's
+file name is the part that identifies the job.
+
+**What it costs.** A picture with text cannot go over the JSON API on this firmware, so a printing panel's
+frame goes out as pixels over DDP: 16,384 pixels, 35 datagrams, about 50 kB — and that frame is pushed
+again **once a second** for as long as the print runs, because the controller leaves live mode 2500 ms
+after the last datagram. 35 datagrams and about 50 kB a second is the steady-state cost of a printing
+panel. It is not the JSON write budget: a datagram never reaches the controller's web server. The
+controller is held in realtime for the duration of the print and released — back to its own segments,
+with a read that proves it — when the print finishes, when the reading goes stale, when the printer
+disconnects, or when the module cannot reach it. A frame that is not about a job in progress — idle,
+finished, stopped, an error, a printer that has gone quiet — is the state colour filling the panel,
+unchanged, over JSON.
+
+You can see the picture without running a print:
+
+```bash
+curl -s -X POST "$base/preview-frame?percent=41&name=MK4IS&hold=120"
+{"controller":"http://10.0.0.136","percent":41,"name":"MK4IS","halves":["41%","MK4IS"],
+ "layout":{...},"holds_seconds":120,"rotation_seconds":15}
+```
+
+It draws exactly what a printing panel draws with those values — same layout, same scales, same colours,
+same route through the writer — and `halves` tells you what the rotation will show, in order. `percent` is
+required and is a whole number 0 to 100; `hold` works as it does on the other two previews (default 60,
+ceiling 300, refused past it).
+
 ## Looking at the finished word without waiting for a print
 
 A person who wants to know what his panel will do when a print ends should not have to run a print to find
@@ -609,6 +678,16 @@ per-LED write at all, and the picture goes over DDP instead, where the same fram
 touches the controller's web server. The event's own rate is chosen against the controller rather than
 against this budget — one repeat a second for a still picture, so that it outlives WLED's 2500 ms realtime
 timeout — and it is still not a stream: the bytes never change.
+
+**A printing panel pays that rate for the length of the print.** A frame with a bar and text in it is
+pixels, and pixels are drawn only in realtime, so the composed picture is pushed again once a second for as
+long as the job runs — 35 datagrams and about 50 kB a second, on the panel's own WiFi, for however many
+hours the print takes. That is the price of the feature and it is stated here rather than discovered on a
+meter: three glyphs of text are not expressible as segment geometry on this firmware (AGENTS.md §5.4), and
+a picture that is not repeated is a picture that vanishes two and a half seconds after it is drawn. The
+JSON side stays at one write per change of picture — the establishing body goes out once when the composed
+picture takes the panel and the plain frame once when it gives it back — so the controller's web server
+sees exactly what it saw before this feature existed.
 
 ## What it deliberately will not do
 

@@ -84,6 +84,11 @@ type watchConfig struct {
 	// wrote none. It reaches a whole-controller writer only: a binding that borrows a segment
 	// is never handed one, because a brightness is controller-wide. See writer.retune.
 	schedule *brightnessSchedule
+
+	// layout is the operator's arrangement of a panel. Every writer gets it, borrowed segment or
+	// not: it is what a panel's picture is composed from, and a borrowed segment cannot be a panel
+	// at all (writer.refusePanel), so the layout is simply never read on one.
+	layout layout
 }
 
 // start runs one watch: a source, a writer and a driver per binding, one client and one gate per
@@ -162,6 +167,7 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 			pen.where = b.Address
 
 			pen.gate = door
+			pen.layout = c.layout
 
 			if c.record != nil {
 				report := c.record

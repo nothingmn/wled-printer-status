@@ -77,6 +77,29 @@ holds the whole light, and keeps holding it.
   300 the request is refused (`PREVIEW_HOLD_OUT_OF_RANGE`) rather than clamped, because a hold quietly
   shortened is a look the caller was told he had. Three minutes is what the ladder needs — time to walk to
   the panel and read it.
+- The setting `layout` arranges a panel: `{"bar": true, "bar_band": "bottom", "bar_rows": 12, "percent":
+  true, "name": true, "remaining": false, "rotate_seconds": 15}`. That is the default and an instance that
+  never writes the box runs on it. The bar takes a band at the top or the bottom, 1 to 48 rows thick,
+  filled to the job's own fraction of the width; the percentage is drawn in digits at the largest scale the
+  band allows and never larger than the word `FINISHED`; the job's name takes the other half of the
+  rotation. A name longer than the panel holds — every Prusa file name — is upper-cased, has every
+  character this module's font does not hold turned into a space, and is cut at the last whole word that
+  fits, which is 21 characters at a 256-wide panel: `MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode` draws as
+  `MK4IS 0.4N 0.2MM PLA`. It is not scrolled and not abbreviated. A key the module does not read, a band it
+  does not know, a `bar_rows` outside 1 to 48, a rotation of no seconds, or `remaining: true` refuses the
+  start with the field and the value in the sentence; a bar thicker than the panel it is drawn on is
+  refused the same way rather than cropped. Every part can be switched off, and a layout with all three
+  off draws nothing of its own: the panel takes the plain frame it had before, over JSON, which is the
+  opt-out.
+- `POST /preview-frame?percent=41&name=MK4IS&hold=120` draws that picture now, with the values given, so
+  the composed layout can be looked at without a print. It goes through the same writer, the same
+  establishing body, the same once-a-second repeat and the same hand-back as the other two previews, and it
+  draws from the same function a printing panel draws from, so the two cannot drift. `percent` is required
+  and is a whole number 0 to 100; `name` is optional; `hold` behaves as it does elsewhere. It answers `202`
+  with the progress, the name as the panel will actually draw it, both halves of the rotation in order and
+  the layout in force, and refuses with `PREVIEW_FRAME_INVALID` for a progress it cannot read.
+- `GET /status` now carries `percent` — the job's progress in whole percent, or `-1` when there is no
+  percentage the module may present as current — and `name`, the printer's own name for the job.
 - `GET /wled-printer-status` answers one line and the principal the host authorized.
 - The setting `message` sets the line that route answers with.
 - The setting `bindings` carries the whole topology as one JSON list: one line per printer, each with its
@@ -99,8 +122,8 @@ holds the whole light, and keeps holding it.
   on its own page under Settings, Extensions, beside the settings it already had. It lists every printer
   with the light it is drawn on, the segment, and whether that light is answering; it adds a printer,
   changes where one is shown, and removes one, with the printers and controllers offered as the choices
-  `GET /printers` and `GET /controllers` report rather than as ids typed in. It is additive: the eight
-  settings are still the whole configuration, and a module with no bundle loaded — the bundle refused, its
+  `GET /printers` and `GET /controllers` report rather than as ids typed in. It is additive: the settings
+  are still the whole configuration, and a module with no bundle loaded — the bundle refused, its
   library range outside the app's — drives the light exactly as before. It writes through the same routes,
   so it saves nothing either, and the tab says so on every screen.
 - The binding routes refuse with codes of their own — `BINDING_NOT_FOUND`, `BINDING_REFUSED`,
@@ -113,6 +136,17 @@ holds the whole light, and keeps holding it.
 
 ### Changed
 
+- **A printing panel now shows a bar, the percentage and the job's name.** Until now a printing job filled
+  the whole panel green with a bar growing across it. It is now the composed picture the `layout` setting
+  describes: a bar in a band at the bottom twelve rows thick, the digits of the progress, and the job's own
+  name on the other half of a fifteen-second rotation — all in the state colour on the panel's own
+  background. It goes out as pixels over DDP rather than as segment geometry, because text on this panel
+  cannot be geometry, and it is pushed again once a second for as long as the print runs: 35 datagrams and
+  about 50 kB a second, which is what a picture held in realtime costs. The controller is released — back
+  to its own segments, with a read that proves it — when the print ends, when the reading goes stale, when
+  the printer disconnects, or when the module cannot reach it. Every other picture is unchanged: idle,
+  finished, stopped and an error are still the state colour filling the panel, over one JSON request, and a
+  strip is untouched, because a strip has no second dimension to arrange anything in.
 - **A finished light stays finished when the printer goes quiet.** Until now a printer that stopped
   reporting was painted as a light that had lost contact — dim red — whatever it had last said, so a
   finished print whose bed was still cooling moved a value every minute or two, went stale again 30 s
@@ -138,7 +172,10 @@ holds the whole light, and keeps holding it.
   panel wide enough for it: there is no message setting, no clock, and nothing on a strip.
 - **No animations.** No pulse, no fade, no movement: a state is one colour and a fill, and the one word
   that is drawn sits still.
-- **No layout composer.** The picture is the module's; the operator does not arrange it.
+- **No layout composer.** The arrangement is seven values — which parts are drawn, which end the bar is at,
+  how thick it is, how long the rotation holds — and not a free arrangement of regions with something
+  filling each. There is no editor for it: the box is JSON in the settings pane, it is one per instance and
+  not one per binding, and the parts are fixed even though their sizes and positions are not.
 - **No screen beyond the bindings tab.** The bundle is that one tab: no page of its own in the sidebar, no
   section on a printer's card, and no animation editor. The printer and the segment are still written by
   hand in `bindings` when nobody wants to open the tab, and that remains the only durable shape.

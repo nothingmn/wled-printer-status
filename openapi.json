@@ -469,6 +469,98 @@
         }
       }
     },
+    "/preview-frame": {
+      "post": {
+        "operationId": "preview-composed-frame",
+        "summary": "Draw the panel's own composed picture now, with the progress and name given",
+        "description": "Draws the layout this instance is running — the progress bar in its band, the percentage in digits, the job's name — with the percent and name the caller supplies, so that the composed picture can be looked at without waiting for a print. It is the same machinery every other preview uses: the same writer, the same establishing body, the same once-a-second repeat over DDP, the same bounded hold and the same hand-back. That is the point of it — what it draws is what a printing panel draws, from the same function, at the layout and scales that instance is running; a preview that could drift from the real picture would be a lie about a light. The host takes operate_resource on the module's instance before this is called. Refused when the instance is not driving exactly one light, when that light is one borrowed segment of a controller somebody else also drives, when it is a strip or its panel cannot hold the layout's bands, and when percent is missing or is not a whole number from 0 to 100.",
+        "parameters": [
+          {
+            "name": "percent",
+            "in": "query",
+            "required": true,
+            "description": "The progress to draw, as a whole number from 0 to 100. Required: a preview with no progress has no digits and no bar, which is not the picture a printing printer draws. A missing or out-of-range value is refused (PREVIEW_FRAME_INVALID) rather than defaulted.",
+            "schema": {"type": "integer", "minimum": 0, "maximum": 100}
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "description": "The job name to draw. Optional, and absent draws no name. The panel upper-cases it, turns every character its font does not hold into a space, and cuts it at the last word that fits across the panel, so the answer's name is what will appear rather than what was asked for.",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "hold",
+            "in": "query",
+            "required": false,
+            "description": "How many seconds the picture keeps the light, as a whole number. Absent, it is 60. Above 300 the request is refused (PREVIEW_HOLD_OUT_OF_RANGE) rather than clamped.",
+            "schema": {"type": "integer", "minimum": 1, "maximum": 300, "default": 60}
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The picture was offered to the light. It is painted within a tick and holds for holds_seconds, rotating as the layout says.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "controller": {"type": "string", "description": "The controller it is fired at, as the instance's settings name it."},
+                    "percent": {"type": "integer", "description": "The progress being drawn, as it was asked for."},
+                    "name": {"type": "string", "description": "The job name as the panel will draw it: upper-cased, without the characters the font does not hold, and cut to what fits. Empty when no name was asked for."},
+                    "halves": {
+                      "type": "array",
+                      "description": "What the rotation shows, in the order it shows them, so that a caller holding the light for two minutes is told what he will see.",
+                      "items": {"type": "string"}
+                    },
+                    "layout": {
+                      "type": "object",
+                      "description": "The layout this instance is running, which is the arrangement the picture is drawn in.",
+                      "properties": {
+                        "bar": {"type": "boolean", "description": "Whether a progress bar is drawn."},
+                        "bar_band": {"type": "string", "description": "Which end of the panel the bar's band is at: top or bottom."},
+                        "bar_rows": {"type": "integer", "description": "How many rows the bar's band takes."},
+                        "percent": {"type": "boolean", "description": "Whether the percentage is drawn in digits."},
+                        "name": {"type": "boolean", "description": "Whether the job's name is drawn."},
+                        "rotate_seconds": {"type": "integer", "description": "How long each half holds the panel."}
+                      },
+                      "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds"]
+                    },
+                    "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."},
+                    "rotation_seconds": {"type": "integer", "description": "How long each half of the rotation holds the panel while the preview runs."}
+                  },
+                  "required": ["controller", "percent", "name", "halves", "layout", "holds_seconds", "rotation_seconds"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request does not say what progress to draw (PREVIEW_FRAME_INVALID), or names a hold outside the range these previews will run (PREVIEW_HOLD_OUT_OF_RANGE). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          },
+          "409": {
+            "description": "This light cannot carry the picture: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or the controller reported no matrix or a panel whose rows the layout's bands do not fit (PREVIEW_NOT_DRAWABLE). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          },
+          "503": {
+            "description": "The module is not driving exactly one light yet (PREVIEW_NOT_RUNNING). Nothing was fired.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "read-status",
@@ -527,9 +619,11 @@
                         },
                         "lit": {"type": "integer", "description": "How many LEDs, counted from the first, carry the completed part of the job. Zero means the whole range is the colour."},
                         "total": {"type": "integer", "description": "How many LEDs the range holds, and zero until the controller has said."},
+                        "percent": {"type": "integer", "description": "The completed part of the job in whole percent, or -1 when there is no percentage this module may present: no job on the bed, no live reading, or a progress the guarded reading refused. Not the same as zero, which a paused print at 0 % reports honestly."},
+                        "name": {"type": "string", "description": "The name the printer gives the job on the bed, such as MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode, and empty when there is none or the reading is not live. It is the printer's own string: what a panel draws from it is the layout's business."},
                         "reason": {"type": "string", "description": "The rule that decided this frame, such as progress or disconnected. For a log line and for a test, never for a person looking at the light."}
                       },
-                      "required": ["colour", "lit", "total", "reason"]
+                      "required": ["colour", "lit", "total", "percent", "name", "reason"]
                     },
                     "last_send": {
                       "type": ["object", "null"],

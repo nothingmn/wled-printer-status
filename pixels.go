@@ -209,19 +209,31 @@ func (w *writer) pushWord(frame []wled.RGB) error {
 	return push.Send(frame)
 }
 
-// republish pushes the picture a hold is already showing again, unchanged.
+// republish pushes the picture a hold is already showing again.
 //
-// This is the whole of what keeps the word on the panel: the controller drops live mode after
-// realtimeTimeout of silence, so a still picture is pushed again once a second for as long as
-// it holds. The bytes are the ones the hold started with — the picture does not move, which is
-// why nothing here rebuilds it.
+// This is the whole of what keeps a picture on the panel: the controller drops live mode after
+// realtimeTimeout of silence, so a still picture is pushed again once a second for as long as it
+// holds. For the word and for the patterns the bytes are the ones the hold started with — the
+// picture does not move, which is why nothing here rebuilds it. A composed frame is the exception:
+// its rotation is a function of the clock, so it is drawn again at the moment it goes out and the
+// hold's own copy is replaced with what the panel now holds.
 func (w *writer) republish(held *heldEvent) error {
 	push, err := w.pixelSender(w.panelOf())
 	if err != nil {
 		return err
 	}
 
-	return push.Send(held.frame)
+	frame := held.frame
+
+	if held.picture != nil {
+		if frame, err = held.event.draw(w.panelOf(), w.now()); err != nil {
+			return err
+		}
+
+		held.frame = frame
+	}
+
+	return push.Send(frame)
 }
 
 // until is how long the writer may wait before looking again: the earlier of the hold's end and
@@ -254,18 +266,18 @@ func (w *writer) until(held *heldEvent, wait time.Duration) time.Duration {
 // firmware reports no per-LED colours, so "live=true" is the whole of what the device will say
 // about the picture — and "live=false" is the one failure worth a line, because it means the
 // panel is drawing its own segments and not the pixels just sent. The line names the picture by
-// the word or the pattern it is, so that a pattern which did not take is not reported as the
-// finished word.
-func (w *writer) confirmRealtime(ctx context.Context, ev event) {
+// what it is — the word, the pattern's name, or "composed" — so that a pattern which did not take is
+// not reported as the finished word.
+func (w *writer) confirmRealtime(ctx context.Context, label, noun string) {
 	info, err := w.light.Info(ctx)
 
 	switch {
 	case err != nil:
 		w.logf("%s: the %q %s's pixels were pushed to %s and whether the panel took realtime cannot be read: %v",
-			name, ev.label(), ev.noun(), w.where, err)
+			name, label, noun, w.where, err)
 	case !info.Live:
 		w.logf("%s: the %q %s's pixels were pushed to %s and the controller reports live=false: the panel is drawing its own segments and not the %s",
-			name, ev.label(), ev.noun(), w.where, ev.noun())
+			name, label, noun, w.where, noun)
 	}
 }
 

@@ -105,6 +105,18 @@ var (
 		"hold",
 	))
 
+	// PreviewFrameInvalid is a preview of the composed panel asked for with a progress that is not a
+	// percentage, or with none at all. It is a 400 and not a 409 for the reason the pattern's refusal
+	// is one: nothing about the light is wrong, the request does not say what to draw. Nothing was
+	// fired by it.
+	PreviewFrameInvalid = fault.Register(faultDomain, "PREVIEW_FRAME_INVALID", http.StatusBadRequest, fault.Document(
+		"This preview does not say what progress to draw",
+		"percent is required and is a whole number from 0 to 100. name is optional and is the job name to draw, which the panel upper-cases and cuts to the columns it has. Nothing was fired and the light was not changed.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"percent",
+	))
+
 	// BindingNotFound is a read, a change or a delete of a binding this module is not driving.
 	// A binding is named by the device id of the printer it shows, so the refusal names the id
 	// that missed and says where the list is.

@@ -197,6 +197,21 @@ type Settings struct {
 	// module's quiet default. A zone that is written but will not load refuses the start.
 	Timezone string `json:"timezone"`
 
+	// Layout is the operator's arrangement of a panel: a progress bar in a band at the top or the
+	// bottom, the percentage in digits, and the job's name on the other half of a rotation.
+	//
+	// It is raw JSON for the reason Bindings is — a `list` or an `object` is the only shape a
+	// manifest can offer for a block of settings, and the settings pane draws one as a one-line
+	// JSON box (AGENTS.md §5.8). Absent or `{}` is the default layout: a bar at the bottom twelve
+	// rows thick, the percentage and the name rotating every fifteen seconds. Every part can be
+	// switched off, and a layout with everything off puts the panel back exactly as it was before
+	// this setting existed.
+	//
+	// It is judged at configure, before any writer is built, so a bar too thick for a panel, a
+	// misspelt key, or a part this build does not draw refuses the start with the field named
+	// rather than being discovered on a light nobody is looking at. See layout.go.
+	Layout json.RawMessage `json:"layout"`
+
 	// Segment is the one segment of a multi-segment controller this module drives when no
 	// `bindings` list is written: the operator's own numbering, as the controller reports it.
 	// The default, -1, drives the whole strip as this module always has, and any number the
@@ -246,6 +261,10 @@ func (s Settings) validate() error {
 		return err
 	}
 
+	if err := s.checkLayout(); err != nil {
+		return err
+	}
+
 	if len(s.Bindings) > 0 {
 		_, err := parseBindingEntries(s.Bindings)
 
@@ -290,6 +309,26 @@ func (s Settings) checkSchedule() error {
 // writers are built from cannot be two different readings of the same two fields.
 func (s Settings) wantedSchedule() (*brightnessSchedule, error) {
 	return parseBrightnessSchedule(s.BrightnessSchedule, s.Timezone)
+}
+
+// checkLayout judges the layout setting and keeps nothing. configure reads it again for the layout
+// the writers are built from, which is the same handful of lines read once at start.
+//
+// It is judged for both shapes of the bindings setting, like the schedule and for the same reason:
+// a layout is one per instance, it describes a panel rather than a binding, and a start that
+// ignored a bar_rows of 60 would put the panel up and leave the frame undrawable for ever.
+func (s Settings) checkLayout() error {
+	_, err := s.wantedLayout()
+
+	return err
+}
+
+// wantedLayout is the layout these settings describe, or the default layout when they describe none.
+//
+// One function for both callers, so that the settings a start is judged by and the layout the
+// writers are built from cannot be two different readings of the same field.
+func (s Settings) wantedLayout() (layout, error) {
+	return parseLayout(s.Layout)
 }
 
 // The state a running instance holds.
@@ -491,6 +530,16 @@ func configure(ctx context.Context, sent Settings) error {
 	}
 
 	live.setSchedule(schedule)
+
+	// The arrangement of a panel, in the one form the writers read. A layout this build cannot act
+	// on has already refused the start in validate, before anything is built and before the light
+	// is touched; this is the reading the writers are given.
+	shape, err := sent.wantedLayout()
+	if err != nil {
+		return err
+	}
+
+	live.setLayout(shape)
 
 	listing, cancel := context.WithTimeout(ctx, resolveTimeout)
 	wanted, err := wantedBindings(listing, fleet, sent)
@@ -727,6 +776,76 @@ func routes() http.Handler {
 			// How long the word keeps the light, in whole seconds: the number a person needs to
 			// know when to look, and to know how long he has to look.
 			"holds_seconds": int(ev.holds / time.Second),
+		})
+	})
+
+	// The panel's own picture, drawn with the values the caller gives, so that the composed layout
+	// can be looked at without a print. It is the same machinery the two routes above use — the
+	// same writer, the same establishing body, the same once-a-second repeat over DDP, the same
+	// deadline and the same hand-back — because everything else about it is the point: what it
+	// draws is what a printing panel draws, or the picture would be a lie about a light.
+	//
+	// percent is required and name is not: a caller who asks for a preview of the composed layout
+	// without naming a progress has not said what to draw, and a route that answered with a picture
+	// of nothing would be a route that quietly ignored a misspelt parameter.
+	mux.HandleFunc("POST /preview-frame", func(w http.ResponseWriter, r *http.Request) {
+		target := previewNow()
+		if target == nil {
+			refuse(w, r, PreviewNotRunning.New(
+				"this module is not driving exactly one light, so there is nothing to preview the panel's picture on"))
+
+			return
+		}
+
+		holds, err := holdFrom(r)
+		if err != nil {
+			refuse(w, r, holdRefusal(r, err))
+
+			return
+		}
+
+		percent, err := percentFrom(r)
+		if err != nil {
+			refuse(w, r, PreviewFrameInvalid.
+				New(err.Error()).
+				With(fault.StringParam("percent", strings.TrimSpace(r.URL.Query().Get("percent")))))
+
+			return
+		}
+
+		geometry := target.pen.panelOf()
+		jobName := strings.TrimSpace(r.URL.Query().Get("name"))
+
+		// The frame a printing printer at this progress would have decided, drawn by the layout this
+		// instance is running. Both halves come from the same function the steady path uses.
+		picture := target.pen.pictureOf(previewFrame(percent, jobName, geometry.width*geometry.height))
+
+		if err = target.pen.preview(composedEvent(picture, holds)); err != nil {
+			if errors.Is(err, ErrPreviewBorrowedSegment) {
+				refuse(w, r, PreviewBorrowedSegment.New(err.Error()))
+
+				return
+			}
+
+			refuse(w, r, PreviewNotDrawable.New(err.Error()))
+
+			return
+		}
+
+		bands, _ := target.pen.layout.bandsOn(geometry)
+
+		answer(w, http.StatusAccepted, map[string]any{
+			"controller": target.where,
+			"percent":    percent,
+			// The name as the panel will draw it, which is not the name that was asked for: upper
+			// cased, without the characters this font does not hold, and cut to what fits.
+			"name": picture.name(geometry.width, nameScale(bands.textRows)),
+			// What the rotation shows, in the order it shows them, so that a caller holding the
+			// light for two minutes is told what he will see rather than what he would see now.
+			"halves":           picture.halves(geometry, bands),
+			"layout":           target.pen.layout.view(),
+			"holds_seconds":    int(holds / time.Second),
+			"rotation_seconds": int(target.pen.layout.rotate / time.Second),
 		})
 	})
 

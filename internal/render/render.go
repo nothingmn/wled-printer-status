@@ -14,6 +14,7 @@ package render
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
@@ -140,6 +141,22 @@ type Frame struct {
 	// Total is how many LEDs the range holds.
 	Total int
 
+	// Percent is the completed part of the job in whole percent, as this build may present it, and
+	// **-1 when it has no percentage to present**: no job on the bed, no live reading, a printer
+	// that has gone quiet, or a progress the guarded reading refused. It is not the same as zero —
+	// a paused print at 0 % has a number and a printer that has said nothing does not — which is
+	// why the absent value is negative rather than the field's zero.
+	//
+	// It is what a panel's layout draws in digits, and it is the same number Lit is computed from:
+	// one reading, two ways of saying it.
+	Percent int
+
+	// Name is the name the printer gives the job, such as MK4IS_0.4n_0.2mm_PLA_MK4IS_1h52m.gcode,
+	// and empty when there is none or when the reading is not live. It is the printer's own
+	// string, unedited: what a panel can do with it — upper case, the characters the font holds,
+	// the length that fits — is the layout's business and not this package's.
+	Name string
+
 	// Reason names the rule that fired.
 	Reason Reason
 }
@@ -199,7 +216,7 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 		total = 0
 	}
 
-	frame := Frame{Total: total}
+	frame := Frame{Total: total, Percent: noPercent}
 
 	// Rule 1 first. Everything below is a claim about the printer now, and these
 	// two conditions are the ones under which no such claim may be made.
@@ -239,12 +256,19 @@ func Decide(snapshot printer.Snapshot, at time.Time, cfg Config) Frame {
 	if !ok {
 		// The guarded reading refused. Nothing is filled: 0 % would be a figure
 		// nobody measured and 100 % a guess about a job that may not have started.
+		//
+		// The name still travels: it is a fact the printer reported about the job on
+		// the bed, and a panel that can show which job it is knows something true even
+		// while it knows no percentage. Percent stays -1, so no digits are drawn.
 		frame.Reason = ReasonProgressUnknown
+		frame.Name = jobName(snapshot)
 
 		return frame
 	}
 
 	frame.Lit = lit(progress, total)
+	frame.Percent = wholePercent(progress)
+	frame.Name = jobName(snapshot)
 	frame.Reason = ReasonProgress
 
 	// A paused print is stopped where it stood, and a pause at 0 % is still a pause:
@@ -336,6 +360,51 @@ func staleAt(snapshot printer.Snapshot, at time.Time) bool {
 	}
 
 	return at.Sub(snapshot.LastChange) > printer.StaleAfter
+}
+
+// noPercent is Frame.Percent when there is no percentage to present. It is negative so that the
+// field's zero stays the honest 0 % of a print that has not moved.
+const noPercent = -1
+
+// wholePercent is a progress figure as the whole percent a panel's digits show.
+//
+// It rounds rather than floors, which is the opposite of lit's choice and for the reason the unit
+// differs: an LED of a 48-LED strip is over two percent, so flooring keeps the bar from claiming
+// more than the printer said, while a digit is the number itself and a panel that showed "40 %" for
+// 40.6 is a display rounding a reading — which is what a percentage is. The bar and the digits can
+// therefore differ by the one unit between them, and the digits are what a person quotes.
+//
+// A figure outside 0..100 is clamped rather than refused, as lit clamps it: a firmware that reports
+// 101 % must not put an unreadable number on a panel.
+func wholePercent(progress float64) int {
+	if !(progress >= 0) {
+		// NaN, as well as the negative a firmware should never send.
+		return 0
+	}
+
+	return int(math.Round(min(progress, 100)))
+}
+
+// jobName is the name the printer gives the job on the bed: the name it shows for the file when it
+// reports one shortened, and otherwise the file's own name without its directory.
+//
+// Empty when the printer has reported neither, which is a printer that has not said what it is
+// printing and not a job without a name.
+func jobName(snapshot printer.Snapshot) string {
+	if display := strings.TrimSpace(snapshot.Job.Display.Value); display != "" {
+		return display
+	}
+
+	path := strings.TrimSpace(snapshot.Job.Path.Value)
+	if path == "" {
+		return ""
+	}
+
+	if slash := strings.LastIndexAny(path, `/\`); slash >= 0 && slash+1 < len(path) {
+		return path[slash+1:]
+	}
+
+	return path
 }
 
 // lit is how many of total LEDs a progress figure fills.
