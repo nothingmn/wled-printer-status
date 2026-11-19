@@ -855,10 +855,15 @@ func TestAnExpiredPauseReadsAsNotPausedAndNothingHadToRun(t *testing.T) {
 func TestAPauseOnABorrowedZoneHandsItBackAndAWholeLightIsSwitchedOff(t *testing.T) {
 	under := newWave3UnderTest(t, mixedPrinters(), mixedBindings(), "", at(), "America/Denver")
 
-	// The desk strip's segment 3 as its owner left it. A borrow captures exactly this.
+	// The desk strip's segment 3 as its owner left it. A borrow captures exactly this. The write is
+	// taken under the fake's own lock because the watch already running on it has a writer that reads
+	// the state on its own goroutine: setting the field bare is a data race, and the race detector
+	// says so.
+	under.light.mu.Lock()
 	under.light.state = wled.State{On: true, Segments: []wled.Segment{
 		{ID: 3, Start: 0, Stop: 8, On: true, Name: "Desk zone"},
 	}}
+	under.light.mu.Unlock()
 
 	if err := under.watch.apply(context.Background(), mixedBindings()); err != nil {
 		t.Fatalf("the watch did not restart over the desk strip: %v", err)

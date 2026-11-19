@@ -631,21 +631,25 @@ func (api tableAPI) createWindow(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, body)
 }
 
-// requireZone refuses a window write on a module whose `timezone` setting names no zone, with the
-// setting's own sentence: a window that cannot be judged is a window that must not be stored.
+// requireZone refuses a window write on a module whose `timezone` setting names no zone, with a
+// sentence about the window that was sent: a window that cannot be judged is a window that must not
+// be stored.
+//
+// The sentence is this route's own rather than loadZone's, because loadZone's is written for a person
+// who has just pasted a `brightness_schedule` and needs to know which of two settings to fix — and a
+// caller here has not written that setting, so telling him it is written would send him looking at the
+// wrong place. Both name the zone and an accepted value, which is the part that matters.
 func (api tableAPI) requireZone() error {
-	zone, err := api.judgedZone()
-	if err != nil {
-		return err
+	if api.zoneName() == "" {
+		return fmt.Errorf(
+			"a window cannot be written until this module knows which clock to judge it against, and the timezone setting names no zone: write an IANA name such as America/Denver. This process runs inside the Prusa Connect container, whose own clock is almost always UTC, so a window judged there would fire seven hours away from the evening it was written for")
 	}
 
-	if zone == nil {
-		_, err = loadZone("")
+	// A zone that is written is checked, because a misspelt one accepted today is a window refused
+	// tomorrow — on the save that adds the first window, after the operator had been told it was fine.
+	_, err := loadZone(api.zoneName())
 
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // updateWindow is PUT /windows/{index}: one window replaced whole, in place.
