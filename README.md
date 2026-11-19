@@ -491,8 +491,11 @@ there: two writers to one controller do interleave, because WLED has one small w
 nothing about concurrent writes. What answers that now is one client per controller with one gate in
 front of it — writes to one box take turns — while each binding still decides its own frame.
 
-The address is **typed in, not discovered**. Automatic discovery does not work from inside a container
-on Docker's default bridge — see below — and the module does not attempt it.
+The address is **typed in, not discovered**. mDNS does not reach a container on a Docker bridge until the
+host is told to carry it there — [`docs/mdns-in-docker.md`](docs/mdns-in-docker.md) is that change, one
+setting on the host, and the browse it makes possible has been measured working from inside the module's
+own container. What the module does not do yet is browse for lights itself; the address you write is the
+one it uses.
 
 ### Two printers, two controllers: the Bindings screen
 
@@ -675,33 +678,42 @@ trailing slash needed.
 
 ## Finding your controller from Docker
 
-Automatic discovery — mDNS on UDP 5353 — does not cross into a container on the default bridge, in
-either direction. This was measured rather than assumed:
+Automatic discovery — mDNS on UDP 5353 — does not cross into a container on a Docker bridge by default,
+in either direction. That is a **host** setting rather than a container one: the host has to be told to
+carry the traffic, and once it is, a browse from inside the container works with the module still on its
+own bridge. [`docs/mdns-in-docker.md`](docs/mdns-in-docker.md) is that setting, the check, the failure
+modes and the one-line undo.
+
+Both states were measured on the operator's host rather than assumed:
 
 | what was tried | result |
 | --- | --- |
-| mDNS browse from inside the container | **0** controllers |
-| a raw 15 s listen on UDP 5353 inside the container | **0** packets |
-| the same 12 s browse, host networking | **4** of 15 broadcasting controllers |
+| mDNS browse from inside the container, stock host | **0** controllers |
+| `net.ipv4.conf.*.mc_forwarding` set to 1 | **impossible here** — the file is read-only, and the kernel refuses a multicast-routing socket |
+| mDNS browse from inside the container, after `enable-reflector=yes` on the host | **19** controllers, by name, address and `mac` |
+| the same browse on a bridge created *after* that change and named in no config | **19** controllers |
 | `GET /json/info` from inside the container, 10 rounds | **10 of 10** answered |
 
-Discovery finds nothing while plain unicast HTTP to the same address on the same network works every
-time. That is why the module takes a typed address: the reliable path is the one that already works.
+A browse that returns a light's name but no address is the reflector answering from the host's cache:
+the browse has to ask for SRV and TXT after the PTR, and then for the host's address. The document above
+has a small program that does that in the right order.
 
-If you want the browse anyway — to find the address in the first place — the container has to share the
-host's network namespace:
+What has **not** changed is this module: it still takes a typed address and does not browse. The sentence
+on the Lights screen says what discovery needs rather than promising it is coming, because the container
+side is the next piece of work.
+
+Giving the container the host's network namespace used to be the only way to browse from it, and is no
+longer needed for that:
 
 ```yaml
-# docker-compose.override.yml — for a discovery browse, not for the module
+# docker-compose.override.yml — was needed for a discovery browse, is not any more
 services:
   prusa_connect:
     network_mode: host
 ```
 
-That is not free. Host networking means the container shares the host's interfaces: it sees every port
-the host has, it can bind a host port, and the `ports:` entries in your compose file stop mapping
-anything — whatever reached the container by published port now has to reach the host's own address. Use
-it to find a controller, then go back to the bridge and type the address in.
+It is still not free if you use it for something else: the container shares the host's interfaces, it can
+bind a host port, and the `ports:` entries in your compose file stop mapping anything.
 
 Once you have a candidate address, confirm you have the right device before trusting it, from anywhere on
 the network:

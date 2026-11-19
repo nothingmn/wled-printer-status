@@ -332,7 +332,7 @@
       "get": {
         "operationId": "list-lights",
         "summary": "The lights this module knows",
-        "description": "Every light this module knows, whether or not a binding sits on it: the address as the operator wrote it, and what the light said about itself the last time it was read — the name it calls itself, its firmware, its pixel count, and whether it is a panel or a strip. This is the list the Lights screen draws a card per entry from, and it is docs/product-requirements.md §2.6's 'one card per light' made true: a light somebody owns is a fact whether or not anything is shown on it. Nothing here asks a light anything, so a light that is unplugged answers with what it last said and probed_at is the age of that reading. The note carries the one thing a reader must not have to work out: finding lights on the network is not switched on yet, the way to add one today is to type its address, and opening that path is planned work. The host takes view_resource on the module's instance before this is called.",
+        "description": "Every light this module knows, whether or not a binding sits on it: the address as the operator wrote it, and what the light said about itself the last time it was read — the name it calls itself, its firmware, its pixel count, and whether it is a panel or a strip. This is the list the Lights screen draws a card per entry from, and it is docs/product-requirements.md §2.6's 'one card per light' made true: a light somebody owns is a fact whether or not anything is shown on it. Nothing here asks a light anything, so a light that is unplugged answers with what it last said and probed_at is the age of that reading. The note carries the one thing a reader must not have to work out: finding lights needs mDNS carried across the host's Docker bridge (docs/mdns-in-docker.md), this module does not browse for them yet, and the way to add one today is to type its address. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The lights this module knows, in the order they were added.",
@@ -348,7 +348,7 @@
                     },
                     "count": {"type": "integer", "description": "How many lights the list holds."},
                     "persisted": {"type": "boolean", "description": "True when the list is the one in this module's own configuration store, so the next start reads it. False means no document could be read, and then nothing here can be kept either."},
-                    "note": {"type": "string", "description": "What this module has to say about the list: that network discovery is not switched on yet, that typing an address works now, and that opening discovery is planned."}
+                    "note": {"type": "string", "description": "What this module has to say about the list: that finding lights needs mDNS carried across the host's Docker bridge (docs/mdns-in-docker.md), that this module does not browse yet, and that typing an address works now."}
                   },
                   "required": ["lights", "count", "persisted", "note"]
                 }

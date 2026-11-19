@@ -434,11 +434,12 @@ func TestALightWithNoPrinterIsALight(t *testing.T) {
 		t.Fatalf("GET /lights probed %v, want no read of any light", fleet.asked)
 	}
 
-	// And the screen is told, in the answer, that discovery is not switched on — the sentence a
-	// person reads instead of a card that can never fill.
+	// And the screen is told, in the answer, what discovery needs — mDNS carried across the Docker
+	// bridge — and that typing an address is the way today: the sentence a person reads instead of a
+	// card that can never fill.
 	note, _ := body["note"].(string)
-	if !strings.Contains(note, "not switched on yet") || !strings.Contains(note, "type") {
-		t.Fatalf("the note reads %q, want the sentence about discovery and the typed address", note)
+	if !strings.Contains(note, "mDNS") || !strings.Contains(note, "Docker bridge") || !strings.Contains(note, "type") {
+		t.Fatalf("the note reads %q, want the sentence about what discovery needs and the typed address", note)
 	}
 }
 

@@ -33,11 +33,12 @@
 //
 // # What this file does not do
 //
-// No discovery. Finding lights on the network is not switched on in this build, and the reason is
-// measured rather than guessed: the module runs inside Prusa Connect's container on a Docker bridge
-// where multicast forwarding is off, so no mDNS query leaves it (the operator's own entry, and the
-// work that turns it on). The Lights screen says that in one sentence and points at the typed
-// address, which works now.
+// No discovery. Finding lights on the network is not what this build does, and the reason is measured
+// rather than guessed: the module runs inside Prusa Connect's container on a Docker bridge, and mDNS
+// reaches that bridge only when the host reflects it there — which the operator's host now does, with
+// a browse from inside the container listing nineteen lights by name and address
+// (docs/mdns-in-docker.md). What is missing is the browse in this process, so the Lights screen says
+// what discovery needs in one sentence, and points at the typed address, which works now.
 package main
 
 import (
@@ -439,25 +440,25 @@ type lightsAnswer struct {
 	// Persisted says the list is the one in this module's own store, so the next start reads it.
 	Persisted bool `json:"persisted"`
 
-	// Note is the sentence the screen shows about finding lights on the network: there is no
-	// discovery in this build, and the reason is a measured one rather than a decision — the module
-	// runs inside Prusa Connect's container on a bridge multicast does not cross yet. Turning that
-	// on is planned work, so the note says so and points at the typed address, which works now.
+	// Note is the sentence the screen shows about finding lights on the network: there is no browse
+	// in this build, and what a browse needs is the host carrying mDNS across the Docker bridge —
+	// measured working on the operator's host, and written down in docs/mdns-in-docker.md. The note
+	// names that requirement rather than promising the feature, and points at the typed address,
+	// which works now.
 	Note string `json:"note"`
 }
 
 const (
 	// lightsPersistedNote is read by a page that has lights.
-	lightsPersistedNote = "Finding lights on the network is not switched on yet: this module runs inside Prusa Connect's " +
-		"container, and the network it sits on does not carry the discovery traffic that would list them, so the way to " +
-		"add a light today is to type its address. Opening that path is planned work."
+	lightsPersistedNote = "Finding lights on the network needs mDNS from your LAN to reach this container: the host has to " +
+		"pass that traffic across its Docker bridge (docs/mdns-in-docker.md). This module does not browse for them yet, " +
+		"so the way to add a light today is to type its address."
 
-	// lightsEmptyNote is the same fact for a list with nothing in it, plus the two things a person
-	// can do about it — one now, one later — because an empty screen with no sentence reads as a
-	// broken screen.
-	lightsEmptyNote = "This module knows no lights yet. Finding lights on the network is not switched on yet: this module " +
-		"runs inside Prusa Connect's container, and the network it sits on does not carry the discovery traffic that would " +
-		"list them, so type a light's address and it will be read and added. Opening discovery is planned work."
+	// lightsEmptyNote is the same fact for a list with nothing in it, plus the thing a person can
+	// do about it now — because an empty screen with no sentence reads as a broken screen.
+	lightsEmptyNote = "This module knows no lights yet. Finding lights on the network needs mDNS from your LAN to reach this " +
+		"container: the host has to pass that traffic across its Docker bridge (docs/mdns-in-docker.md). Until this module " +
+		"browses, type a light's address and it will be read and added."
 )
 
 // listLights is GET /lights: every light this module knows, in the operator's order.

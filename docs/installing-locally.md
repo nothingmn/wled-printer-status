@@ -1753,6 +1753,10 @@ core's config volume, and the next install can silently use it. Remove it.
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read
   its record at start and will not read it again. The install is not finished until the restart, and the
   readiness route is what says it came back.
+- **Finding a light is a typed address, not a browse.** This module does not browse for lights, and the
+  network a container sits on does not carry mDNS by default; a host can be told to carry it, and
+  [`docs/mdns-in-docker.md`](mdns-in-docker.md) is that setting with the check and the undo. Until the
+  module browses, `POST /lights` with an address is how a light is added.
 - **Three failures in an hour switch the module off, and it stays off until a person switches it on.** The
   count covers a crash, a failed start and going over the memory budget — not a light that cannot be
   reached, which this module logs and survives. `core.modules_switch_off` sets other numbers for every

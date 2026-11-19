@@ -139,8 +139,8 @@ export interface LightsBody {
   lights: KnownLight[];
   count: number;
   persisted: boolean;
-  /** That network discovery is not switched on yet, that typing an address works, and that
-   * opening discovery is planned. */
+  /** That finding lights needs the host to carry mDNS across its Docker bridge, that this module
+   * does not browse yet, and that typing an address works. */
   note: string;
 }
 

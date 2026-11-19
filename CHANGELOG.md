@@ -47,9 +47,10 @@ written with.
   refers to it. Its route id is unchanged, and so are the light routes it calls.
 - `GET /controllers/{name}` and the snapshot, preset and identify routes accept a light this module
   knows but drives nothing on, so a light added with no printer on it can still be read.
-- The screen says, in one sentence, that finding lights on the network is not switched on yet, that
-  typing an address works now, and that turning discovery on is planned work. No empty "discovered
-  lights" card.
+- The Lights screen's sentence is now about what discovery **needs** rather than about what is coming:
+  mDNS has to be carried across the host's Docker bridge, which the operator's host now does and
+  [`docs/mdns-in-docker.md`](docs/mdns-in-docker.md) writes down. Typing an address still works, and
+  this module still does not browse for lights itself. No empty "discovered lights" card.
 
 ### Upgrading
 

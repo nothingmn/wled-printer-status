@@ -385,7 +385,7 @@
 
   "devices.title": "Lights",
   "devices.intro": "One card per light: what the hardware is, its own segments, its own presets, the tests that prove the pixels and the copies this module keeps. A light is on this page whether or not a printer is shown on it — which printer sits on which light is Bindings' business, not this page's.",
-  "devices.discovery_note": "Finding lights on the network is not switched on yet: this module runs inside Prusa Connect's container, and the network it sits on does not carry the discovery traffic that would list them. Typing a light's address works now, and turning discovery on is planned work.",
+  "devices.discovery_note": "Finding lights on the network needs mDNS from your LAN to reach this container: the host has to pass that traffic across its Docker bridge (docs/mdns-in-docker.md). This module does not browse for them yet, so typing a light's address is the way today.",
   "devices.add_label": "Add a light by its address",
   "devices.add_placeholder": "10.0.0.253 or http://10.0.0.253",
   "devices.add_button": "Read it and add it",

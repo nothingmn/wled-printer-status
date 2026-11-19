@@ -563,7 +563,9 @@ func TestTheLightsRouteIsOnTheProcesssOwnMux(t *testing.T) {
 		t.Fatalf("count reads %d and the list holds %d", body.Count, len(body.Lights))
 	}
 
-	if !strings.Contains(body.Note, "not switched on yet") {
-		t.Fatalf("the note reads %q, want the sentence about discovery not being switched on", body.Note)
+	// The sentence names what discovery needs — the host carrying mDNS across the Docker bridge —
+	// rather than saying it is coming, and it still points at the typed address.
+	if !strings.Contains(body.Note, "mDNS") || !strings.Contains(body.Note, "type") {
+		t.Fatalf("the note reads %q, want the sentence about what discovery needs and the typed address", body.Note)
 	}
 }
