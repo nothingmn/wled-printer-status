@@ -1,6 +1,7 @@
 # Handoff — wled-printer-status
 
-Written 2026-11-19 by the wave that installed `69cc791` on the operator's two lights. **Read this first,
+Written 2026-11-19 by the wave that installed `531e73c` on the operator's two lights — the release that
+fixed a held word's hand-back, which is the last defect a live deploy measured. **Read this first,
 then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant to stand alone: if
 something is missing from it, the incoming agent has no other context.
 
@@ -29,17 +30,18 @@ early beta. The point of it is a light somebody walks past, not a screen somebod
 | Module's own store | `/config/config.d/module-data/wled-printer-status/config.json`, **schema version 5** |
 | Panel | `morpheus` `http://10.0.0.136` — 256 × 64, 16,384 pixels, WLED `14.7.0-mdev` |
 | Strip | `CyberDesk` `http://10.0.0.253` — 48 LEDs, six named zones, WLED `16.0.1` |
-| The running release | `/config/config.d/wled-release-69cc791` (built from `69cc791`) |
-| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-3c12d89.md` and its archive are the step back from what runs |
-| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-3c12d89-20261119T1215Z/` |
+| The running release | `/config/config.d/wled-release-531e73c` (built from `531e73c`) |
+| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-69cc791.md` and its archive are the step back from what runs |
+| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-69cc791-20261119T1238Z/` |
 | Signing key | `/home/robchartier/.prusa-signing/wled-printer-status/signing-key.pem`, `0600` in a `0700` dir — **never copy, print or commit it** |
 
-**State at the time of writing:** the tree is clean and level with `origin/main`; `git log --oneline -5`
-says where `HEAD` stands. **The deployed release was built from `69cc791`**, and every commit above it is
-documentation or tests — `69cc791`'s own two are tests, so the binary on the host is `5104b90`'s byte for
-byte (`2f3daf3e…`, proved by building both and comparing), while this document and the install-log entry
-sit above the deploy and change no code. **376 top-level tests** (`go test ./... -count=1 -v | grep -E
-'^--- PASS: Test'`), green plain and under `-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
+**State at the time of writing:** the tree is clean; `git log --oneline -5` says where `HEAD` stands. **The
+deployed release was built from `531e73c`** and its installed `linux_amd64` digest is
+`17189a45fcd9094b88dfab6c2bfb2dc0b277b124eab79fd69a564686da61d6a3`; the commits above it are
+documentation, and the UI bundle was not rebuilt because nothing under `ui/` changed between the previous
+release and this one — the shipped `ui/index.js` is `a46ac73b…`, proved `cmp`-identical rather than assumed.
+**378 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and under
+`-race`. Version **0.1.0**, installed and driving **two** lights under **one** printer, store at **schema 5**
 with two bindings and five empty tables, tag `v0.1.0` pushed, **zero GitHub releases** (so `release.yml`
 has never run).
 
@@ -181,10 +183,6 @@ from the module's own `ui/`.
   code mapped, which has not been done.
 - **Snapshot retention.** Snapshots are taken before every restore and never pruned: how many are kept, for
   how long, and who deletes them is an open question, not a bug.
-- **The word's return.** A state's word shows within a second and comes off by itself, but the panel can
-  stay black — the establishing body, with the word's name still on segment 0 — for up to about fifteen
-  seconds before the steady frame is repainted (§6). Measured three times: at the hold's end once, 13 s and
-  15 s late twice. Worth a look before the operator's eyes find it.
 
 ## 6. Measured facts — the expensive knowledge
 
@@ -193,6 +191,17 @@ Each cost real time to learn; none should be re-derived.
 - **The controller's pixels cannot be read back.** `/json/state` has no `i` array, `/peek` is 404, and
   `pwr` reads **0 even with the whole panel solid red**. A picture is verified by eye, by the DDP capture
   in §3, or not at all.
+- **But the panel's own segments are the right instrument for "is it black".** Whatever `live` is doing,
+  `/json/state` carries the body the panel falls back to the instant live mode ends, and that body is the
+  colour the wall shows. So reading `/json/state` ten times a second across a hold's end answers "was
+  there a black gap" without a capture and without an eye — measured that way, a word's hand-back lands
+  0.07–0.29 s after the stroke (`531e73c`) and was missing entirely before it.
+- **A frame equal to the last one delivered is not proof the light is showing it.** The writer suppresses
+  an unchanged picture to save traffic, and a held word takes the light with its own establishing body plus
+  DDP pixels — so the frame "already shown" is not on the wall while the word is up. That suppression was
+  the black panel: the steady frame at a hold's end was never written, and whether the panel came back in
+  0 s or 15 s depended only on where the sixty-second heartbeat sat. A picture that is not a frame must
+  say so (`overwritten` in `drive.go`), the way the event path clears `last` for the same reason.
 - **Every picture goes over DDP, patterns included.** `paintEvent` writes one establishing body — segment 0
   given the whole geometry, in the background colour, named with the picture's word and otherwise with its
   name cleared; segment 1 the frame's remainder, off — and then pushes pixels. Which is why `/json/state`
@@ -249,7 +258,8 @@ intends.
 ## 9. Where the evidence is
 
 - `docs/installing-locally.md` — the install log, run by run, with the commands and their output. The
-  sixteenth run is this deploy: `69cc791`, binary `2f3daf3e…`, store 4 → 5.
+  ninth run is this deploy: `531e73c`, binary `17189a45…`, store unchanged at 5, and the panel read
+  across the stroke of a held word.
 - `docs/handoff.md` (this file) — the starting point, and §5's open list.
 - `docs/program/portfolio.md` in the program-manager tree — the decision register, every entry with the
   operator's own words and the command output that proved it.

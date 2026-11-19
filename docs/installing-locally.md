@@ -1285,6 +1285,61 @@ both. Configuration did not move; only pixels did.
 the restart. Rolling back also gives up the ladder — `3c12d89` still refuses every preview route on a
 two-light install.
 
+**Ninth run, 2026-11-19 12:39Z, from `531e73c`.** The word's hand-back, which the run above left as a
+measured defect: a word set on a state already in force stood in front of a frame that had already been
+delivered, and when its hold ran out the steady frame was compared against that frame, found equal, and
+suppressed as "already shown" — leaving the panel on the word's black establishing body, name and all,
+until the next write that was not suppressed. How long that took was nothing but where the
+sixty-second heartbeat happened to sit: on the stroke once, 13 s and 15 s late twice. The writer now
+carries `overwritten`, set where a held word takes the light and cleared where a frame lands, and the
+suppression asks it first.
+
+The four binaries were built from `git archive HEAD`. **The UI bundle was not rebuilt**: `git diff --stat
+69cc791..HEAD -- ui/` is empty for this range, so the bundle the release carries is the installed one,
+and that was proved rather than asserted:
+
+```console
+$ sha256sum /tmp/ui-check/{installed,release}/ui/index.js
+a46ac73bf2bf5d224f9313f63e3059dd43a2f31d911d833dcfb7fb43859d118a  …/installed/ui/index.js
+a46ac73bf2bf5d224f9313f63e3059dd43a2f31d911d833dcfb7fb43859d118a  …/release/ui/index.js
+CMP-OK: installed ui/index.js is byte-identical to the installed release's
+$ … /ui/locales/en.json
+9e88bd7d4d7858db426321f98fc34c61cbc96bc616c69bbcfe940bc9e44d00a9  (both, cmp OK)
+$ sha256sum -c checksums.txt
+10 files: OK
+```
+
+`module add … -from /config/config.d/wled-release-531e73c -settings … -approve` answered
+`MODULE_ADD_EXIT=0`, `memory 32 MiB`, `enabled yes`, the same two egress lines run eight describes;
+`docker restart prusa_connect` at **12:39:52Z** was `healthy` at **12:40:09Z**, `/status` answered `200`,
+and the installed binary reads back `17189a45fcd9094b88dfab6c2bfb2dc0b277b124eab79fd69a564686da61d6a3`,
+which is the release's own line. The log said `schema version 5 (2 bindings)` and named both controllers.
+
+**The proof is the panel's own `/json/state` read ten times a second across the stroke**, because that
+document carries the body the panel falls back to the moment live mode ends — so it is black exactly while
+it says black, and green exactly while it says green. Two rounds, each with the hold the module stamped in
+its own log line:
+
+| round | `holds` | word's body written | hold ended (module's own words) | steady body written | late by |
+|---|---|---|---|---|---|
+| A | 60 s | 12:40:45.051 `col [0,0,0] n 'QA'` | `…T12:41:44Z` | **12:41:44.289** `col [0,170,0] n None` | **0.29 s** |
+| B | 30 s | 12:42:28.938 `col [0,0,0] n 'QA'` | `…T12:42:58Z` | **12:42:58.069** `col [0,170,0] n None` | **0.07 s** |
+
+Round B is the shape the defect was measured in — a thirty-second hold set fifteen seconds after the
+panel was last painted, so the heartbeat was still fifteen seconds away at the stroke — and it is the one
+that used to be black for the rest of that cycle. The segment name is cleared in the same body, which is
+the other half of the hand-back on this firmware.
+
+**What was left running.** Both lights solid green at brightness 128 (`[0,170,0]`) with no segment name,
+`live=false`, no pause (`/pause` → `paused false`), the state table empty again (`DELETE /states/FINISHED`
+→ `removed true`, row `overridden false`), the store at version 5 with two bindings and no rows, and both
+controllers' `/json/cfg` **byte-identical** to the copies taken before the install.
+
+**The way back** is `69cc791`, copied out before the install as
+`/home/robchartier/wled-rollback/wled-release-0.1.0-69cc791-20261119T1238Z.tar.gz` with
+`ROLLBACK-69cc791.md` beside it. Unlike the `3c12d89` note, this restore needs no store step: both builds
+read schema 5, so the saved document is for a damaged file and not for a version mismatch.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
