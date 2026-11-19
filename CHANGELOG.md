@@ -10,6 +10,25 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## Unreleased
+
+### Fixed
+
+- **"Put a printer on a light" is drawn only when it can act.** The whole block on Right now — the
+  heading, both columns, the defaults and the footnote — is absent unless a printer has no light **and**
+  a light has room for one. It used to draw itself with a Lights column reading "0 with room" and a
+  paragraph explaining there was nowhere to put a printer: a control that could not do anything.
+- **Dropdown lists are readable in dark mode.** The closed control was right and the open list was
+  white text on a white popup, because the list is drawn by the browser and painted from the page's
+  colour scheme, while this module's palette switches on the host's `.dark` class and never told the
+  browser which scheme it was in. Every select, input and textarea in the module now follows the
+  host's theme, including the three in the bind panel, which the library draws outside the module's
+  own markup.
+- **Three explanatory blocks are folded away until they are asked for, and open from the keyboard.**
+  Bindings' *What is refused, and why*, and Diagnostics' *The reasons it can give* and *The honest
+  limits*, are each a summary line that Enter or Space expands, with the open state announced; one
+  component draws all three, and none of them can start open.
+
 ## 0.3.0 — 2026-11-19
 
 Lights are a thing in this module. The screen called Devices is called **Lights**, and a light can be

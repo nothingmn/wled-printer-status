@@ -140,6 +140,29 @@
 			.filter((held) => held.room.room),
 	);
 
+	/** The printers nothing shows yet: §2.1's first condition, in his own words. */
+	const freePrinters = $derived(
+		printers.filter(
+			(one) => !lights.list.some((light) => light.bindings.some((held) => held.printer === one.id)),
+		),
+	);
+
+	/**
+	 * Whether the quick bind is offered at all.
+	 *
+	 * §2.1's section is a control, and a control is worth drawing only when it can act: it
+	 * needs a printer that is not already on a light *and* a light that still has room for
+	 * one. With either missing there is nothing in it to press, so the whole section --
+	 * heading, both columns, the defaults and the footnote -- is absent rather than drawn
+	 * with an explanation of why it cannot work.
+	 *
+	 * Both halves are read from what the module knows now: the printers the host holds,
+	 * less the ones GET /bindings already places, and the lights whose own segments and
+	 * bindings leave room. A light that would not answer has no room to offer, which is
+	 * also the honest answer for a printer it might hold.
+	 */
+	const canQuickBind = $derived(freePrinters.length > 0 && roomy.length > 0);
+
 	/** Where a printer already is, by the light's own name, for the column that offers it. */
 	const whereIs = (printer: Printer): string => {
 		const lightsShown = frames
@@ -434,41 +457,44 @@
 		<p class="text-xs opacity-60">{pictureNote}</p>
 	{/if}
 
-	<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
+	<!-- §2.1's quick bind, drawn only when it can act: a printer with no light and a light
+	     with room for one. With either missing there is nothing in it to press, so the whole
+	     section -- heading, both columns, the defaults and the footnote -- is not drawn. -->
+	{#if canQuickBind}
+		<h2 class="mt-2 text-sm font-semibold">{t('overview.quick_bind_heading')}</h2>
 
-	<div class="grid gap-3 md:grid-cols-2">
-		<div class="overflow-hidden rounded border">
-			<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-				<span>{t('overview.printers_heading')}</span>
-				<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: printers.length })}</span>
+		<div class="grid gap-3 md:grid-cols-2">
+			<div class="overflow-hidden rounded border">
+				<div class="flex items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+					<span>{t('overview.printers_heading')}</span>
+					<span class="ml-auto font-normal opacity-60">{t('overview.printers_count', { count: printers.length })}</span>
+				</div>
+				{#if printers.length === 0}
+					<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
+				{:else}
+					{#each printers as printer (printer.id)}
+						<button
+							type="button"
+							class={picked === printer.id
+								? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
+								: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
+							aria-pressed={picked === printer.id}
+							onclick={() => (picked = picked === printer.id ? null : printer.id)}
+						>
+							<span class="font-medium">{printer.name}</span>
+							<span class="text-xs opacity-60">{whereIs(printer)}</span>
+							{#if picked === printer.id}
+								<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
+							{/if}
+						</button>
+					{/each}
+				{/if}
 			</div>
-			{#if printers.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_printers')}</p>
-			{:else}
-				{#each printers as printer (printer.id)}
-					<button
-						type="button"
-						class={picked === printer.id
-							? 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 bg-black/5 dark:bg-white/10'
-							: 'flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-black/5 dark:hover:bg-white/10'}
-						aria-pressed={picked === printer.id}
-						onclick={() => (picked = picked === printer.id ? null : printer.id)}
-					>
-						<span class="font-medium">{printer.name}</span>
-						<span class="text-xs opacity-60">{whereIs(printer)}</span>
-						{#if picked === printer.id}
-							<span class="ml-auto text-xs opacity-60">{t('overview.picked')}</span>
-						{/if}
-					</button>
-				{/each}
-			{/if}
-		</div>
 
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-				<span>{t('overview.lights_heading')}</span>
-				<span class="font-normal opacity-60">{t('overview.lights_count', { count: roomy.length })}</span>
-				{#if roomy.length > 0}
+			<div class="overflow-hidden rounded border">
+				<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
+					<span>{t('overview.lights_heading')}</span>
+					<span class="font-normal opacity-60">{t('overview.lights_count', { count: roomy.length })}</span>
 					<Button
 						variant="secondary"
 						size="sm"
@@ -478,11 +504,7 @@
 					>
 						{t('overview.bind_them_all', { count: roomy.length })}
 					</Button>
-				{/if}
-			</div>
-			{#if roomy.length === 0}
-				<p class="px-3 py-3 text-sm opacity-70">{t('overview.no_lights_waiting')}</p>
-			{:else}
+				</div>
 				{#each roomy as held (addressOf(held.one))}
 					<div class="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0">
 						<span class="font-medium">{held.one.controller?.name}</span>
@@ -504,21 +526,21 @@
 						</span>
 					</div>
 				{/each}
-			{/if}
-			<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
+				<p class="border-t px-3 py-2 text-xs opacity-60">{t('overview.lights_source')}</p>
+			</div>
 		</div>
-	</div>
 
-	<div class="rounded border px-3 py-3 text-sm">
-		<p class="text-xs font-medium uppercase tracking-wide opacity-60">{t('overview.defaults_heading')}</p>
-		<ul class="mt-1 list-disc pl-5 text-sm">
-			<li>{t('overview.defaults_whole')}</li>
-			<li>{t('overview.defaults_brightness')}</li>
-			<li>{t('overview.defaults_colours')}</li>
-			<li>{t('overview.defaults_shape')}</li>
-			<li>{t('overview.defaults_events')}</li>
-		</ul>
-	</div>
+		<div class="rounded border px-3 py-3 text-sm">
+			<p class="text-xs font-medium uppercase tracking-wide opacity-60">{t('overview.defaults_heading')}</p>
+			<ul class="mt-1 list-disc pl-5 text-sm">
+				<li>{t('overview.defaults_whole')}</li>
+				<li>{t('overview.defaults_brightness')}</li>
+				<li>{t('overview.defaults_colours')}</li>
+				<li>{t('overview.defaults_shape')}</li>
+				<li>{t('overview.defaults_events')}</li>
+			</ul>
+		</div>
 
-	<p class="text-xs opacity-60">{t('overview.footnote')}</p>
+		<p class="text-xs opacity-60">{t('overview.footnote')}</p>
+	{/if}
 </section>

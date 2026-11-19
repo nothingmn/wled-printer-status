@@ -20,6 +20,9 @@
 	//     says where, and refuses one already on this light.
 	//   - **Nothing is invisible**: printers with no light of their own are listed with the
 	//     button that starts their binding.
+	//   - **The refusals are behind a disclosure** (disclosure.svelte), collapsed, because a
+	//     page whose job is the bindings should open on them rather than on the paragraph
+	//     explaining which ones it will turn down.
 	//
 	// The one list this screen cannot draw is the one the requirements call *discovered
 	// lights*: nothing in this build sweeps the network for lights, and a light only becomes
@@ -42,6 +45,7 @@
 		type StatusEntry,
 	} from './api';
 	import BindingDialog from './binding-dialog.svelte';
+	import Disclosure from './disclosure.svelte';
 	import { ageText, describe, segmentText } from './format';
 	import { heldHost } from './host';
 	import {
@@ -413,11 +417,10 @@
 		<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.unbound_note')}</p>
 	</div>
 
-	<div class="overflow-hidden rounded border">
-		<div class="border-b bg-black/5 px-3 py-2 text-sm font-medium dark:bg-white/10">
-			{t('bindings.refused_heading')}
-		</div>
-		<ul class="divide-y text-sm">
+	<!-- The refusals are read once and then never again, so they are folded away: the page
+	     opens on the bindings themselves, which is what it is for. -->
+	<Disclosure summary={t('bindings.refused_heading')}>
+		<ul class="divide-y">
 			<li class="flex flex-wrap justify-between gap-2 px-3 py-2">
 				<span>{t('bindings.refused_second')}</span>
 				<span class="text-xs opacity-60">{t('bindings.refused_second_why')}</span>
@@ -436,7 +439,7 @@
 			</li>
 		</ul>
 		<p class="border-t px-3 py-2 text-xs opacity-60">{t('bindings.no_test')}</p>
-	</div>
+	</Disclosure>
 
 	<p class="text-xs opacity-60">{t('bindings.not_saved')}</p>
 </section>

@@ -17,12 +17,18 @@
 	//
 	// The panel is mounted by the screen for one edit and thrown away when it closes, so
 	// its state starts from the seed the screen passes and never has to be reset.
+	//
+	// It carries `colourScheme` on its body div because of where it is drawn: the library
+	// portals a dialog to `<body>`, outside the module's own markup and therefore outside
+	// the shell's colour scheme and outside this module's own stylesheet. Without it, the
+	// three selects here are the three that stay white on white in the dark theme.
 	import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@prusa/connect-ui/primitives';
 
 	import type { Binding, BindingRequest, Printer, Segment } from './api';
 	import { segmentText } from './format';
 	import { heldHost } from './host';
 	import { addressOf, takerIn, type LightFacts } from './lights.svelte';
+	import { colourScheme } from './scheme';
 
 	interface Props {
 		/** The controller address to start on, empty for none. */
@@ -184,7 +190,7 @@
 			<DialogDescription>{t('bindings.dialog_intro')}</DialogDescription>
 		</DialogHeader>
 
-		<div class="flex flex-col gap-3 py-3">
+		<div class="flex flex-col gap-3 py-3" use:colourScheme>
 			{#if failure !== ''}
 				<div class="rounded border px-3 py-2 text-sm" role="alert">{failure}</div>
 			{/if}

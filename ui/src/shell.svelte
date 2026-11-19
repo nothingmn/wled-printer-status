@@ -15,6 +15,11 @@
 	//   - `Pause everything` sits in the header of every tab, because it is a panic
 	//     button and not a page feature: it is drawn here, once, above whichever screen
 	//     is showing, so no screen has to remember to carry it.
+	//
+	// The shell's root element is also where the module says which colour scheme its
+	// controls are in (scheme.ts). `color-scheme` inherits, so one declaration here
+	// reaches every select, input and textarea on every screen -- which is what makes an
+	// open dropdown's own list readable in the dark theme instead of white on white.
 	import { onMount } from 'svelte';
 
 	import { Button } from '@prusa/connect-ui/primitives';
@@ -30,6 +35,7 @@
 		refreshPauses,
 		resumeEverything,
 	} from './pause.svelte';
+	import { colourScheme } from './scheme';
 	import { SCREENS } from './screens';
 
 	const host = heldHost();
@@ -59,7 +65,7 @@
 	});
 </script>
 
-<section class="flex flex-col gap-3 p-4">
+<section class="flex flex-col gap-3 p-4" use:colourScheme>
 	<div class="flex flex-col gap-3 md:flex-row md:items-start md:gap-5">
 		<!-- The rail. A top strip on a phone that scrolls sideways; a column from md. -->
 		<nav

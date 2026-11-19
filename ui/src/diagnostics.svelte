@@ -27,6 +27,10 @@
 	//     It does not invent lines, and it does not scrape the container's log from a browser.
 	//   - **The honest limits**, stated on the page rather than left for somebody to discover.
 	//
+	// The reason table and the limits are reference, not the present tense, so both sit behind
+	// a collapsed disclosure (disclosure.svelte): the screen opens on the four tiles and the
+	// picture, which is what it is for, and the prose is one press away.
+	//
 	// Two things that are deliberately not here: the mockup's `Copy a diagnostic bundle`, which its own
 	// design record marks `needs API` (there is no route, and a button that gathers nothing is worse
 	// than no button), and the light-side entries of the mockup's feed — §2.7 locks the timeline to
@@ -36,6 +40,7 @@
 	import { Badge } from '@prusa/connect-ui/primitives';
 
 	import { moduleApi, type Frame } from './api';
+	import Disclosure from './disclosure.svelte';
 	import { ageText, cssColour, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
 	import { lights, loadLights } from './lights.svelte';
@@ -579,14 +584,11 @@
 			</div>
 		</div>
 
-		<!-- Every reason the module can give, with the current one marked. -->
-		<div class="overflow-hidden rounded border">
-			<div class="flex flex-wrap items-center gap-2 border-b bg-black/5 px-3 py-2 text-xs dark:bg-white/10">
-				<span class="font-medium">{t('diagnostics.reasons_heading')}</span>
-				<span class="opacity-60">{t('diagnostics.reasons_route')}</span>
-			</div>
+		<!-- Every reason the module can give, with the current one marked. Folded away: the
+		     tiles and the picture are the present tense, and this table is the reference. -->
+		<Disclosure summary={t('diagnostics.reasons_heading')} hint={t('diagnostics.reasons_route')}>
 			<p class="border-b px-3 py-2 text-xs opacity-70">{t('diagnostics.reasons_intro')}</p>
-			<table class="w-full border-collapse text-sm">
+			<table class="w-full border-collapse">
 				<thead>
 					<tr class="border-b text-left text-[10px] uppercase tracking-wide opacity-60">
 						<th class="px-3 py-1.5 font-semibold">{t('diagnostics.reason_column')}</th>
@@ -621,14 +623,12 @@
 					{/if}
 				</tbody>
 			</table>
-		</div>
+		</Disclosure>
 
-		<!-- The honest limits, stated rather than discovered. -->
-		<div class="overflow-hidden rounded border">
-			<div class="border-b bg-black/5 px-3 py-2 text-xs font-medium dark:bg-white/10">
-				{t('diagnostics.limits_heading')}
-			</div>
-			<ul class="text-sm">
+		<!-- The honest limits, stated rather than discovered — and folded away for the same
+		     reason: they are read once, and the screen opens on the picture. -->
+		<Disclosure summary={t('diagnostics.limits_heading')}>
+			<ul>
 				{#each LIMITS as limit (limit.key)}
 					<li class="flex flex-wrap items-baseline justify-between gap-2 border-b px-3 py-2 last:border-b-0">
 						<span>{t(limit.key)}</span>
@@ -636,6 +636,6 @@
 					</li>
 				{/each}
 			</ul>
-		</div>
+		</Disclosure>
 	{/if}
 </section>

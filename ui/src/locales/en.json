@@ -75,7 +75,6 @@
   "overview.bind": "bind",
   "overview.bind_one": "bind {printer}",
   "overview.bind_them_all": "bind them all ({count})",
-  "overview.no_lights_waiting": "Every light this module drives already has a printer on its whole light, so there is no room for another one here. Take a binding off, or add a light in Bindings.",
   "overview.whole_free": "whole light free",
   "overview.free_segments": "{free} of {total} segments free",
   "overview.lights_source": "These are the lights this module already drives. A light becomes known to it when a binding names its address — there is no sweep of the network in this build.",
