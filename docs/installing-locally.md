@@ -523,6 +523,106 @@ buffer it draws; nothing on this firmware reports individual colours, so whether
 right size, sits in the right place, and whether this panel's wiring maps row-major the way the frame
 assumes, are all questions for a person looking at the light. **Nobody has looked yet.**
 
+**Ninth run, 2026-11-19 00:01Z, from `5c42026`.** The change from *a binding is four settings* to *a
+binding is one line of a list*, and the routes an editor would call. Built from `git archive HEAD` for the
+reason run six gives, release `/config/config.d/wled-release-5c42026`, whose `linux_amd64` digest is
+`d89c63fdd167ccde7cce397838c5be74f1129a8571bf0d6f40ef69f8c4a50832`.
+
+The settings file was **not changed**: `controller_address` `http://10.0.0.136`, the printer id, brightness
+128, no `segment`. This run's question was whether a release that can carry several printers still runs
+one, from the settings an instance already has — and it does, in the same words as every run before it.
+That setting is no longer required in the manifest, so the install now prints `(string, no default)` for
+it and a sixth line for the list:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.1.0 \
+    -from /config/config.d/wled-release-5c42026 \
+    -settings /config/config.d/wled-settings.json -approve
+  checksums   5 files verified against checksums.txt
+  setting     controller_address (string, no default). The one WLED controller to drive when `bindings` is empty, as its base URL …
+  setting     bindings (list, default []). The printers this module shows, one line each, written as a JSON list of objects with a printer key and a controller key. …
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+MODULE_ADD_EXIT=0
+$ docker restart prusa_connect        # 00:01:33Z
+prusa_connect                          # healthy at 00:01:40Z — seven seconds
+$ curl -s localhost:8080/api/v1/readiness
+{"app":"served","discovery":"announcing","ready":true,"serving":4,"declared":4,"blocked":[],…}
+```
+
+The module came back as `pid=30` and said what it always says:
+
+```console
+… wled-printer-status 0.1.0 is serving on stdio as pid 30
+… wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128
+… wled-printer-status: the controller drives 16384 LEDs
+… wled-printer-status: the controller is a 256x64 panel, so a frame is drawn as a rectangle
+```
+
+**What the new routes answer on the live instance.** Every read below is the module's own, taken through
+the host's mount at `.../modules/com.github.aux.nothingmn.wled-printer-status/`:
+
+```console
+$ curl -s …/bindings
+{"bindings":[{"id":"07e893bb-…","position":1,"printer":"07e893bb-…","printer_name":"Hermes MK4",
+ "controller":"http://10.0.0.136","segment":-1,"whole":true,"brightness":128}],"count":1,
+ "source":"controller_address, printer, brightness and segment: the four settings that came before bindings",
+ "persisted":false}
+$ curl -s …/printers
+{"count":1,"total":1,"printers":[{"id":"07e893bb-…","name":"Hermes MK4","model":"MK4","connected":true,
+ "bound":{"controller":"http://10.0.0.136","segment":-1,"whole":true}}]}
+$ curl -s …/controllers
+{"controllers":[{"name":"10.0.0.136","address":"http://10.0.0.136","key":"http://10.0.0.136",
+ "whole":"07e893bb-…","segments":[],"printers":["07e893bb-…"]}],"count":1,"segments_known":false}
+```
+
+**The refusals, on the live instance.** Four requests that must change nothing, each answered by a code:
+
+```console
+POST /bindings {"printer":"07e893bb-…","controller":"http://10.0.0.136"}
+  409 BINDING_REFUSED  "printer 07e893bb-… is already shown by a binding: one printer is shown by one
+                        binding, so change that one with PUT /bindings/07e893bb-…"
+POST /bindings {"printer":"Ghost","controller":"http://10.0.0.136"}
+  409 BINDING_REFUSED  "no printer in this instance is called \"Ghost\""
+POST /bindings {"printer":"07e893bb-…","controler":"http://10.0.0.136"}      # a misspelt key
+  400 BINDING_BODY_INVALID  "the body is not one binding: json: unknown field \"controler\" …"
+PUT /bindings/nope {"controller":"http://10.0.0.136"}
+  404 BINDING_NOT_FOUND  {"params":{"printer":"nope"}, …}
+```
+
+**A change reaching the writer without a restart.** The one binding was written back unchanged —
+`PUT /bindings/07e893bb-…` with the controller, segment -1 and brightness 128 it already had — because a
+change that altered where the panel draws would have been a change to what the operator is looking at:
+
+```console
+$ date -u; curl -s -X PUT …/bindings/07e893bb-… -d '{"controller":"http://10.0.0.136","segment":-1,"brightness":128}'
+00:01:56Z
+ HTTP=200 {"applied":true,…,"persisted":false,"note":"This took effect now: the writer was stopped and
+ started again on the new set. It is not saved. …"}
+$ docker logs --since 60s prusa_connect | grep "watching printer"
+00:01:36.423Z  watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128   ← the start
+00:01:56.250Z  watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128   ← the PUT
+$ docker exec prusa_connect sh -c 'tr -c "[:print:]" " " < /proc/30/cmdline'
+config/config.d/modules/wled-printer-status/bin/wled-printer-status_linux_amd64                 ← same pid
+$ curl -s …/status
+… "last_send":{"at":"2026-11-19T00:01:57.269823185Z","ok":true} …
+$ curl -s …/bindings | jq -r .source
+a change made through this module's own routes, which the settings do not carry
+```
+
+Twenty seconds after the start, the watch was stopped and started again inside the same process, and the
+panel took the same frame a second later. `source` is what says the set in force is no longer the one the
+settings file carries — which is also the thing a restart undoes.
+
+**What this run does not prove.** Two printers on two controllers, because this instance holds one printer
+and the second controller belongs to the desk light that must not be written to. The `bindings` list is
+proven by the host's own manifest parser accepting it (`manifest.Parse` answered `ACCEPTED kind=sink
+version=0.1.0 options=6 egress=2` with `bindings type=list default="[]"`) and by the tests in the root
+package; getting it onto a live instance costs one `module add` and one restart, which this run did not
+spend twice. And **nobody has looked at the panel** — this change does not draw anything differently, and
+the frame it reports is the frame the run before it reported.
+
 ## 6. Restart the core once, and prove it is well
 
 ```console
