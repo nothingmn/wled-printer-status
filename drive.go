@@ -146,18 +146,16 @@ func logf(format string, args ...any) {
 // controller somebody else also uses has to read what that segment was and put it back
 // afterwards. Both are unused when this module drives the whole strip.
 //
-// Paint is here for the event layer, and it is the only call that puts a word on a panel: the
-// word is drawn in pixels by internal/text and written one LED at a time, because the
-// controller's own text effect does not honour the segment it is given on the firmware this
-// module was measured against. Every other call in this interface carries a rectangle or a
-// colour; this one carries the picture itself.
+// There is no call here that writes one colour per LED. There was: a segment's i array in a
+// JSON body, which was how the word was drawn before it moved to DDP. This firmware answered
+// every such body 200 and drew none of them, so the call is gone rather than kept as a floor
+// nobody stands on — pixels.go has the four measurements.
 type strip interface {
 	Info(ctx context.Context) (wled.Info, error)
 	State(ctx context.Context) (wled.State, error)
 	SetBrightness(ctx context.Context, brightness int) error
 	SetPower(ctx context.Context, on bool) error
 	SetSegments(ctx context.Context, segments []wled.SegmentWrite) error
-	Paint(ctx context.Context, first int, colors []wled.RGB, opts ...wled.PaintOption) error
 	RestoreSegment(ctx context.Context, segment wled.Segment) error
 }
 
@@ -1092,6 +1090,15 @@ func segmentsFor(frame render.Frame, geometry panel) []wled.SegmentWrite {
 // stripSegments is one frame on a controller that drives a single run of pixels: segment 0 the
 // run the job has completed, segment 1 the rest.
 //
+// Segment 0 also clears its name, and that is not tidiness. An event writes the word into the
+// segment's name — it is the only thing that puts it there, because a datagram carries none —
+// and on this firmware a body that writes a segment without "n" leaves the name it found
+// there. So without this a panel keeps "FINISHED" for as long as it is not written again, and
+// anything that later sets a text effect on that segment would draw the last print's word over
+// a picture about the current one. It rides in the body that was going out anyway: one key,
+// no extra request. Segment 1 is not named by any body this module writes, so there is nothing
+// of its own to clear.
+//
 // Three shapes, and each one written for a reason:
 //
 //   - nothing filled: segment 0 covers the whole range in the frame's colour, and segment
@@ -1105,13 +1112,13 @@ func segmentsFor(frame render.Frame, geometry panel) []wled.SegmentWrite {
 func stripSegments(frame render.Frame) []wled.SegmentWrite {
 	if frame.Lit <= 0 || frame.Lit >= frame.Total {
 		return []wled.SegmentWrite{
-			{ID: firstSegment, First: 0, Count: frame.Total, On: true, Colour: frame.Colour},
+			{ID: firstSegment, First: 0, Count: frame.Total, On: true, Colour: frame.Colour, ClearName: true},
 			{ID: remainderSegment, On: false},
 		}
 	}
 
 	return []wled.SegmentWrite{
-		{ID: firstSegment, First: 0, Count: frame.Lit, On: true, Colour: frame.Colour},
+		{ID: firstSegment, First: 0, Count: frame.Lit, On: true, Colour: frame.Colour, ClearName: true},
 		{
 			ID:     remainderSegment,
 			First:  frame.Lit,
@@ -1143,19 +1150,24 @@ func stripSegments(frame render.Frame) []wled.SegmentWrite {
 // what AGENTS.md §5.1 means by "if you write bounds, write four": an off segment draws nothing,
 // so the rectangle it keeps cannot be seen, and any rectangle named for it would be a claim
 // about where the fill ends that the frame does not make.
+//
+// Segment 0 clears its name for the reason stripSegments gives: the word an event puts in that
+// name would otherwise outlive the event on this firmware, which keeps a name through a body
+// that does not mention one.
 func panelSegments(frame render.Frame, geometry panel) []wled.SegmentWrite {
 	columns := fillColumns(frame, geometry)
 
 	if frame.Lit <= 0 || columns >= geometry.width {
 		return []wled.SegmentWrite{
 			{
-				ID:       firstSegment,
-				First:    0,
-				Count:    geometry.width,
-				FirstRow: 0,
-				RowCount: geometry.height,
-				On:       true,
-				Colour:   frame.Colour,
+				ID:        firstSegment,
+				First:     0,
+				Count:     geometry.width,
+				FirstRow:  0,
+				RowCount:  geometry.height,
+				On:        true,
+				Colour:    frame.Colour,
+				ClearName: true,
 			},
 			{ID: remainderSegment, On: false},
 		}
@@ -1163,13 +1175,14 @@ func panelSegments(frame render.Frame, geometry panel) []wled.SegmentWrite {
 
 	return []wled.SegmentWrite{
 		{
-			ID:       firstSegment,
-			First:    0,
-			Count:    columns,
-			FirstRow: 0,
-			RowCount: geometry.height,
-			On:       true,
-			Colour:   frame.Colour,
+			ID:        firstSegment,
+			First:     0,
+			Count:     columns,
+			FirstRow:  0,
+			RowCount:  geometry.height,
+			On:        true,
+			Colour:    frame.Colour,
+			ClearName: true,
 		},
 		{
 			ID:       remainderSegment,

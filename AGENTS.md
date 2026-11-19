@@ -64,7 +64,7 @@ Everything odd about this repository follows from that one sentence:
 | `internal/ddp/` | **The event's transport.** Frames of pixels over DDP/UDP to port 4048: the ten-byte header, the big-endian channel offset, the push flag on the last datagram and no other, 480 pixels a datagram. Steady frames still go over JSON, because only JSON reads back and carries a segment's name and geometry; the word goes over DDP because this firmware draws none of the per-LED colours a JSON body carries. Both paths are proved to draw the same frame by `ddp_agreement_test.go`. |
 | `internal/matrix/` | Lays a `render.Frame` out as pixels on a matrix, row-major, so the DDP path can be compared against the JSON one. Its fill boundary is a second copy of the painter's `fillColumns`; the two are held together by a test until the writer can call this one. |
 | `internal/printer/` | The printer half: a pure reducer (`printer.Apply`, `State.Snapshot`) and a `Source` that owns the bus subscription and the periodic device read. It holds no presentation and no policy. The offline-honesty rule lives here — see §5.3. |
-| `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in three tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`/`SetSegments`, `Paint`). Per-client mutex, 2 s default timeout. |
+| `internal/wled/` | An HTTP client for exactly one controller: `Info`, `State`, `Capabilities`, and the writes in two tiers (`SetEffect`/`SetSegmentName`, `SetSolid`/`SetRange`/`SetRectangle`/`SetSegments`). Per-client mutex, 2 s default timeout. There is no per-LED call: see §5.4 for the measurement that removed it. |
 | `faults.go` | The fault domain literal and every refusal code. The domain is **hardcoded** and must match the repository owner — see §7. |
 | `module.yaml` | The manifest: name, kind, version, licence, platforms, `options`, `egress`, `needs`, `openapi`. It requests **`observe`, and the reader that uses it is wired** — remove the grant only by removing the reader. **Its key set is closed** — see §5.9. |
 | `openapi.json` | The route fragment, every path relative to the mount. Held to `routesapi.ParseFragment` at launch. |
@@ -100,8 +100,8 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **201 tests**: 98 in the root package, 20 in
-`internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in `internal/ddp`, 6 in
+`gofmt -l .` printing any path is a failure. Today there are **199 tests**: 99 in the root package, 20 in
+`internal/printer`, 17 in `internal/render`, 38 in `internal/wled`, 14 in `internal/ddp`, 6 in
 `internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
 
@@ -163,8 +163,8 @@ drawn here instead: `internal/text` holds a 5×7 glyph table this repository own
 **Nothing in this module asks a controller to draw a string any more**, and a change that puts effect 122
 back because it "should work" is repeating a measurement this file already records.
 
-**And the pixels do not go over the JSON API either.** `Paint` — a state body whose segment carries an
-`i` array, one colour per LED — is accepted by this firmware and drawn by nothing. Measured on the same
+**And the pixels do not go over the JSON API either.** A state body whose segment carries an
+`i` array, one colour per LED, is accepted by this firmware and drawn by nothing. Measured on the same
 panel on 2026-11-18, four ways, each one a 200 with `{"success":true}` and no line in the log: a hundred
 pixels at LED 7680 with the segment frozen; the same with it unfrozen; the same with the segment's four
 bounds declared in the same body; and a chunk of sixty colours in case the accepted size was far smaller
@@ -172,8 +172,12 @@ than the 8 KiB budget believed. The operator looked twice at a panel that stayed
 carries no `i` key at all on `14.7.0-mdev` — the segment keys are listed in §8 — so a body that was
 accepted cannot even be read back to see what the controller made of it, while **geometry writes on the
 same endpoint do render**: the progress bar is segment bounds and it has always worked. So the word goes
-on the transport built for pictures, DDP, and `Paint` stays in `internal/wled` as an unused tier with its
-tests rather than as a road back. `pixels.go` has the rate, the frame and the proof.
+on the transport built for pictures, DDP, and the per-LED call is **deleted**, not parked: `internal/wled`
+has no `Paint` and the `strip` interface has no per-LED method. It was kept as an unused tier for a while
+after the measurement, and that was the mistake this section closes — an unused tier is a road back to a
+measurement somebody has already made twice, and the next agent finds a call and assumes it works.
+`pixels.go`'s package comment is where the four bodies are written down with the module that owns the
+word; §8 says what is still unproven about the picture.
 
 The 1D half of the rule is unchanged and cannot be fixed from here: a strip has no second dimension, so
 a word is impossible on it and its finished state is the solid green it already shows. Any 2D feature
@@ -191,9 +195,9 @@ written to `ix`; written to `sx` it looks like it is being set and never moves.
 
 **5.7 Write budget: 1–5 writes a second.** Never stream. Use the `transition` field to fade, so the
 controller interpolates instead of the module sending frames. Measured: a 48-LED strip answers in ~53 ms
-and a 256×64 panel in ~28 ms, so the wire is not the limit — WLED's single small web server is. A full
-16,384-pixel `Paint` is 19 requests at the 8 KiB default budget; that is a once-every-few-seconds floor,
-not an animation path.
+and a 256×64 panel in ~28 ms, so the wire is not the limit — WLED's single small web server is. A steady
+frame is one request carrying two segments, whatever the size of the panel, and that is the whole of what
+this module asks of that server: one write per change of picture, one repaint a minute on a still one.
 
 **That budget is the HTTP server's, and DDP is not on it.** A datagram never reaches the controller's web
 server, which is the one small task the number above is about, so the event's picture is pushed again
@@ -290,13 +294,18 @@ starting, a filament change) need their animation and duration decided by the op
 one, and a case invented here would be a requirement nobody agreed to. An entry whose picture is not a
 word needs a second body in `paintEvent` as well, and that is a design decision of its own.
 
-**And a name is not cleared everywhere.** The borrow work measured that a body writing a segment without
-its `n` clears that segment's name — WLED 16.0.1 on the desk light. The same steady body was written to
-the panel (WLED 14.7.0-mdev) after a `FINISHED` event and the name survived: segment 0 read
-`"n":"FINISHED"` with `fx` back to 0. So a body that must keep a name carries it, and build nothing that
-depends on a write without a name removing one. The event's establishing body carries the word as the
-segment's name for exactly this reason — it is also how `/json/state` still says `FINISHED` while the
-word is up in pixels — and the pixels after it name nothing.
+**And a name is not cleared by leaving it out.** The borrow work measured that a body writing a segment
+without its `n` clears that segment's name — WLED 16.0.1 on the desk light. The same steady body written
+to the panel (WLED 14.7.0-mdev) after a `FINISHED` event left `"n":"FINISHED"` on segment 0 with `fx` back
+to 0, so the word outlived the event it belonged to. Measured on the panel on 2026-11-18, both halves: a
+body carrying `{"seg":[{"id":0,"n":""}]}` answered `{"success":true}` and `/json/state` then reported no
+`n` at all, while the same body with `n` left out answered the same and reported the name it had before.
+So **the empty string is the only way to say "this segment has no name"**, `SegmentWrite.ClearName` writes
+it, and the steady frame carries it on segment 0 — in the body it was sending anyway, so it costs a key
+and no request. That is what keeps a stale word from surviving an event and being drawn the moment
+anything sets a text effect on that segment. The event's establishing body still carries the word as the
+segment's name (it is also how `/json/state` says `FINISHED` while the word is up in pixels), and the
+pixels after it name nothing, because a datagram cannot carry a string.
 
 **5.14 A brightness schedule is judged in the zone the operator names, and a borrowed segment never follows one.**
 Two rules, one setting, and both were paid for in advance rather than learned: the failure each prevents is a
@@ -370,15 +379,28 @@ module's picture of the printer silently freezes, which looks exactly like a hea
 
 ## 8. What is unverified — say so, do not imply otherwise
 
-Nothing in this module has ever run against a live Prusa Connect host. Specifically:
+This module has run on the operator's own instance since 2026-11-18, and the install records in
+`docs/installing-locally.md` are the evidence: a real printer read, a real panel driven, real refusals
+answered on the instance. It has **never run on anybody else's**, and it has never been installed from the
+marketplace the way a stranger would. What follows is what is not proved even on the one host it has run on.
 
+- **The word has never been looked at.** This is the plain one, and every other line about the picture
+  defers to it: `FINISHED` has been put on the operator's panel and **nobody has said what they saw**. What
+  is proved is delivery and only delivery — `/json/info` reported `live: true` while the hold pushed and
+  `live: false` after it, so the datagrams arrived and the controller took them into the buffer it draws
+  instead of its segments. That a letter was lit, that the word is the size and shape `internal/text`
+  rasterises, and that this panel's wiring maps row-major the way `y*width+x` assumes are all **unverified**.
+  The operator's own experiment on the panel is unverified too, and it is his eyes that settle it: nothing
+  in this repository may describe the word as appearing until he has said so.
 - **The bus subscription has never carried a real printer's frames.** Its cadence, the origin narrowing
-  and the 30 s staleness horizon are proven against **fakes only**. A module's bus does not exist until
-  the module is installed and serving, which is why this has not been done yet.
+  and the 30 s staleness horizon are proven against **fakes only**. The source has been open on a live
+  instance beside a printing printer and the frames moved with it, but nothing in the record separates what
+  arrived on the subscription from what the periodic `device.get` read answered, so the subscription's own
+  behaviour is still a fake's.
 - **The writes have run against the panel, and its *pixels* cannot be read back.** Frames and the finished
   event have been installed and driven the operator's 256×64 panel since 2026-11-18, and `/json/state` reads
-  back the geometry each one leaves — segment 0's four bounds, the name, which segments are switched off —
-  and the module's own `last_send`. What it does not carry is the per-LED `i` array: on `14.7.0-mdev` the
+  back the geometry each one leaves — segment 0's four bounds, whether its name is there, which segments are
+  switched off — and the module's own `last_send`. What it does not carry is the per-LED `i` array: on `14.7.0-mdev` the
   segment keys are `bri c1 c2 c3 cct col frz fx grp id ix len m12 mY mi n o1 o2 o3 of on pal rY rev sel set
   si spc start startY stop stopY sx tp`, and WLED's websocket pixel read returned all-zero frames the one
   time it was tried here. So **a picture's pixels are unverified except by a person looking at the light**,

@@ -80,8 +80,10 @@ wled-printer-status_darwin_arm64: OK
 wled-printer-status_windows_amd64.exe: OK
 ```
 
-There is no `ui/` directory and no entry for one, because the manifest has no `ui` block: this module
-draws nothing in the app, so the release is the manifest and the binaries and nothing else.
+There is no `ui/` directory and no entry for one in the release this record installed, because the manifest
+that release carried had no `ui` block: this module drew nothing in the app then. The release is the
+manifest and the binaries and nothing else. (The bindings tab came later — see run nine — and a release
+that carries a bundle lists it in `checksums.txt` like every other file.)
 
 ## 3. Copy the release where the core can read it
 
@@ -140,12 +142,14 @@ name refuses the start.
 
 | key | what it is here |
 | --- | --- |
-| `controller_address` | `http://10.0.0.136` — required; the egress entry names this setting |
+| `message` | the default line; left at the manifest's own words |
+| `controller_address` | `http://10.0.0.136` — the one controller for an install that lists no `bindings`. It is **no longer required**: an instance that names several printers in `bindings` has no single address to name, and the module refuses to start only when neither is written. The egress entry names this setting |
 | `printer` | `07e893bb-b922-4ff0-9ad3-061b957400c3` — the device id, so a second printer arriving later cannot change what this instance watches |
 | `brightness` | `128` — written once at start and never moved afterwards, unless a schedule is written, where it is the value that stands between windows |
 | `brightness_schedule` | a list of windows, one per line (`from`, `to`, `brightness`, optional `days`); empty is the fixed brightness this instance has always run at |
 | `timezone` | the IANA zone a `brightness_schedule` is judged in, such as `America/Denver` — required whenever a schedule is written, and never defaulted to the container's clock |
-| `message` | the default line; left at the manifest's own words |
+| `segment` | one segment of a controller that carries several, or `-1` (the default) for the whole controller. A named segment is borrowed, drawn in, and given back; that mode writes no brightness and no power |
+| `bindings` | the whole topology as one JSON list — one line per printer with its `controller` and optionally its `segment` — and it wins over the four settings above it when written. The release in run nine is the one that reads it; no install in this record yet carries a settings file that lists more than one binding |
 
 ```console
 $ cat /tmp/wled-settings.json

@@ -6,7 +6,7 @@ behaviour proposal on 2026-11-18, so every row of §12 is closed and the colours
 marked `open` is a decision he has not made.
 
 **What this document is for.** The two halves of this module are built — a WLED client that
-can reach effects, text, geometry and per-LED painting, and a printer-state reducer that
+can reach effects, text as pixels this module draws, and geometry, and a printer-state reducer that
 refuses to present stale data as live — the marketplace plumbing is done, and `internal/render`
 now decides what the light shows for each printer state. This document is the decision surface
 behind that code and the record of what it may not decide. It records what the operator has
@@ -66,7 +66,7 @@ document does not contain one.
 | M-5 | The fleet is far larger than a two-controller household: **fifteen** WLED controllers were broadcasting during the measurement — `CyberDesk`, `morpheus`, `bed`, `lavalamp`, `RobsCloset`, `32x32Rig`, `MoonLamp`, `JapaneseLantern`, `TheGarageLeft`, `TheGarageRight`, `StarNFC`, `robsbox`, `Predator-Meditate`, `DamonAward`, `PrinterCameraLight`. | Any requirement that assumes the only controller in sight is the right one, or that the discovered device is unambiguous. |
 | M-6 | A printer that dies **keeps its last state forever** in Connect. The host carries ten state values and `OFFLINE` is not among them; detection of the loss takes roughly 60 s. | Any requirement that shows a progress figure as present tense for a printer the host no longer has a session for. |
 | M-7 | `internal/printer` already treats a connected printer that has gone quiet for 30 s as stale, clears `Job.Live`, and makes `LiveProgress`/`LiveRemaining` answer `ok=false`, while keeping `LastChange` and `Age` so last reported 94 % at 14:02 is sayable. | Requirements that contradict the package that is already built and tested. |
-| M-8 | Text on a 2D panel is only possible through a segment's `n` field with effect 122: max **48 characters**, glyph height **12 px** maximum, and only enlarged by grouping pixels. **Text is impossible on a 1D strip** — the firmware falls back to a solid colour. | Any requirement for a job name, a percentage or any word on a 1D strip. |
+| M-8 | **A word on a 2D panel is pixels this module draws.** No firmware feature carries it: effect 122 with the word in a segment's `n` field lit only the first few columns on the left of the operator's 256×64 panel at four groupings with every parameter written, and a per-LED `i` array in a JSON state body was answered `{"success":true}` four times and drawn by nothing (and `/json/state` on `14.7.0-mdev` has no `i` key to read back). The word therefore goes out as a DDP frame — 16,384 pixels, 35 datagrams, proved to arrive (`live: true`), never yet looked at. **Text is impossible on a 1D strip.** | Any requirement for a job name or any word on a 1D strip, or for text as a controller feature on a panel. |
 | M-9 | Write rate: ~**53 ms** round-trip to a 48-LED strip, ~**28 ms** to a 256×64 panel. **1–5 writes/s** is the comfortable band. WLED's own `transition` field is the smoother, not repeated writes. | Any requirement for smooth motion by fast repainting, or for a frame rate a LAN cannot carry. |
 | M-10 | The `Percent` effect fills a bar from **one parameter**; a bar can also be drawn by resizing a segment, which on a 2D panel gives 256 steps. | Requirements needing a bar shape the device cannot express either way. |
 | M-11 | Every 2D segment write must carry **all four bounds** (`start`, `stop`, `startY`, `stopY`) or the device collapses the rows onto one line. | Any requirement that permits a columns-only write to a panel. |
@@ -428,19 +428,26 @@ in the first version is **open** (Q-3).
 ### R-21 · An animation that cannot play is replaced, not skipped to black · `derived`
 
 **Requirement.** Where a controller has no usable effect for an animation, and where effects
-cannot be reached at all, the event still produces a visible change on the strip — a per-LED
-painting, or a colour change — rather than nothing.
+cannot be reached at all, the event still produces a visible change on the light — a colour change,
+or a picture this module computes itself — rather than nothing.
 
 **Operator's words.**
 > "best effort with the WLED stuff as well. worst case scenario is paint by pixel and not
 > animations/text effects"
 
-**Where this comes from.** His words set the floor; the tiers are what `internal/wled` already
-implements. The requirement is that the floor is always available, since per-LED painting works
-on any controller.
+**Where this comes from.** His words set the floor; the mechanism changed after the measurement.
+The tier he named — paint by pixel, one colour per LED in a JSON state body — turned out not to
+draw on the panel this module was built against: four bodies, each a `200`, each leaving the panel
+as it was, and `/json/state` carries no `i` key at all on `14.7.0-mdev` to read back. So the floor
+is no longer "per-LED painting works on any controller"; it is the two tiers that do work, effects
+and geometry, plus the module's own transport for a picture (DDP) where a picture is what is
+wanted. **This requirement is amended, not satisfied by the old reading**: a controller that can
+neither run an effect nor be given a colour rectangle has no event this module can show, and that
+is a gap rather than a promise. See M-8 and the transport note in §2.
 
-**Proved by.** A controller whose effect list is empty still shows a distinguishable event on
-print start.
+**Proved by.** A controller whose effect list is empty still shows a distinguishable change on a
+print start, through a colour or a rectangle; a panel takes the finished word over DDP, which the
+device confirms with `live: true` and nothing more.
 
 **Refuted by.** A dark strip at a print start because the animation was unavailable.
 
@@ -623,21 +630,28 @@ chosen interval.
 **Refuted by.** Both shown at once in a space that fits one, or a swap that never happens.
 **The interval X is open** (Q-8).
 
-### R-32 · Text is drawn only where the firmware can draw it · `derived`
+### R-32 · Words are drawn where this module can draw them · `derived`, amended 2026-11-18
 
-**Requirement.** Words on a panel are drawn through effect 122 with the string in the segment's
-name field, at most 48 characters, at a glyph height the panel can carry. No requirement in this
-product asks a 1D strip to display text.
+**Requirement.** Words on a panel are pixels this module computes and pushes over DDP — a glyph
+table `internal/text` owns, rasterised onto the panel — and not a controller feature. Effect 122 is
+not used: with the word as the segment's name it lit only the first few columns on the left of this
+panel at every grouping tried. No requirement in this product asks a 1D strip to display text.
 
-**Where this comes from.** M-8. His sentence "we could render the name of the print job itself"
-is a panel sentence — on a strip the firmware falls back to a solid colour, so a job name on a
-48-LED strip is not a smaller version of the feature, it is a different colour.
+**Where this comes from.** M-8, as amended. His sentence "we could render the name of the print job
+itself" is a panel sentence — on a strip the firmware falls back to a solid colour, so a job name on
+a 48-LED strip is not a smaller version of the feature, it is a different colour. The mechanism moved
+twice after that: effect 122 (does not work here), per-LED JSON (accepted and drawn by nothing), DDP
+(proved to arrive, and **never yet looked at**).
 
-**Proved by.** A request body carrying effect 122 and a segment name of 48 characters or fewer
-reaches the panel, and the text appears.
+**Proved by.** A panel takes a 35-datagram DDP frame of 16,384 pixels and `/json/info` reports
+`live: true` while it is pushed and `live: false` after. That is delivery.
 
-**Refuted by.** A 49-character name sent, a name sent to a strip in the expectation of text, or
-text attempted through any field other than the segment name.
+**Refuted by.** A name sent to a strip in the expectation of text, text attempted through the
+segment name and effect 122, or a per-LED body carrying the letters.
+
+**Not proved, and not to be described as working.** That the letters are lit, the right size, in the
+right place, or that the panel's wiring maps row-major the way the frame assumes. Only a person
+looking at the light settles it, and nobody has.
 
 ### R-33 · Every panel write names all four bounds · `derived`
 
@@ -870,9 +884,11 @@ it rather than finding a question silently gone. **Fourteen remain open; three a
    swapping to the job name, and whether the interval is the same for every region. Blocks: R-31.
 9. **Q-9 · Default bar placement and depth.** Top or bottom by default, and how many rows, before
    the operator chooses. Blocks: what a panel shows on first install, before anyone composes it.
-10. **Q-10 · A job name longer than 48 characters.** Truncate with an ellipsis, scroll it, or cut at
-    a word boundary. Blocks: R-28's acceptance observation, since matching the reported name is
-    not achievable past 48 characters.
+10. **Q-10 · A job name longer than the panel can carry.** Truncate with an ellipsis, scroll it, or cut
+    at a word boundary. Blocks: R-28's acceptance observation, since matching the reported name is not
+    achievable past what the panel's width holds — eight characters at the scale the one word uses, and
+    fewer at a larger one, so the limit is the panel and not a firmware field (the 48-character segment
+    name that used to be the ceiling is no longer how text is drawn; see R-32).
 11. **Q-11 · What the panel shows when progress is unknown.** A job that has just started may report
     no percentage at all. Dashes, an empty bar, the job name alone, or the previous figure with an
     age beside it — the last of those is what R-37 asks for elsewhere, which may be the answer, but

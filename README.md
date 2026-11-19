@@ -89,10 +89,11 @@ Both halves of that are built:
   switched off at 14:02 is still saying `PRINTING, 94%` in the server's state tree at 15:30, and this
   package is the code that refuses to repeat that as present tense.
 - **`internal/wled`** is an HTTP client for one controller. It reads the controller's facts and state,
-  and writes power, brightness, colour, a rectangle, or one colour per LED. Three tiers, tried in order,
-  so that a light which cannot animate can still show a colour and a light which cannot draw a rectangle
-  can still be given individual pixels — though on this panel the last of those three is accepted and
-  drawn by nothing, which is why the word does not use it.
+  and writes power, brightness, a colour or a rectangle — two tiers, effects and geometry. There is no
+  "one colour per LED" write in it: a JSON body carrying one is accepted by this panel's firmware and
+  drawn by nothing (four of them, every one a `200`, and the operator looked twice at a light that stayed
+  blank), so the call was removed rather than left unused. That is also why the finished word does not go
+  over this path — see the event section below.
 - **`internal/ddp`** is the transport for a picture: one frame is 35 UDP datagrams of raw colour to port
   4048, ten bytes of header each, the push flag on the last one so the controller draws the frame rather
   than each datagram as it lands.
@@ -142,7 +143,7 @@ sent it — a word is pixels in two dimensions, and the operator asked for his s
 neither is a segment borrowed from a controller somebody else also drives, because an animation nobody
 asked for is not something this module puts on another person's light.
 
-An event makes three writes and no more. One JSON body establishes the panel: segment 0 the whole of it,
+An event makes three requests and no more. One JSON body establishes the panel: segment 0 the whole of it,
 switched on, in the background colour, with the word as its name, and segment 1 — the frame's remainder —
 switched off, because a panel draws its segments in order and a remainder left on covers the word. That
 body is also the only thing that puts the word's name on the controller, since a datagram carries none.
@@ -150,8 +151,12 @@ Then one DDP frame carries the pixels, the whole panel, 35 datagrams, the push f
 read of `/json/info` says whether the controller took them. For the minute it holds, that same frame is
 pushed again **once a second** — the controller drops live mode 2500 ms after the last datagram, so one a
 second is two and a half times the margin and 35 datagrams a second is what a held picture costs. At the
-end the module stops pushing, writes the steady frame, waits out that timeout and reads the controller
-once more: `live: false` is the only evidence a datagram can never give by itself.
+end the module stops pushing and writes the steady frame — one request it would have written anyway — and
+that body **clears the name**, because this firmware keeps a segment's name through a write that does not
+mention one: without it the panel would carry `FINISHED` long after the minute, ready to be drawn the
+moment anything set a text effect on that segment. The clear is one key in a body already going out, not a
+second request. Then the module waits out that timeout and reads the controller once more: `live: false`
+is the only evidence a datagram can never give by itself.
 
 A write that fails is not retried on the next tick. The module waits — a second after the first failure,
 then doubling to half a minute — and a picture that changes during that wait is held and sent when the
@@ -243,8 +248,8 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **189 tests** — 86 in
-the root package, 20 in `internal/printer`, 17 in `internal/render`, 41 in `internal/wled`, 14 in
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **199 tests** — 99 in
+the root package, 20 in `internal/printer`, 17 in `internal/render`, 38 in `internal/wled`, 14 in
 `internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
 or a real controller:
 the light and the printer are both faked in the tests that need one, and the ones about a minute-long
@@ -272,8 +277,10 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
 for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
-follow that printer's event stream as itself, with nobody behind the call. It declares one outbound
-connection: the WLED controller named in `controller_address`, on port 80, from this process.
+follow that printer's event stream as itself, with nobody behind the call. It declares **two** outbound
+connections, both to the controller named in `controller_address` and both from this process: port 80,
+where the status colour and the progress are written as JSON state, and **UDP port 4048**, where the pixels
+of the finished word go over DDP once a second for the minute the word holds.
 
 ## Binding a printer to a light
 
@@ -534,12 +541,14 @@ nobody can read.
 **1 to 5 writes a second is the comfortable band.** Nothing should stream. Fades belong in a write's
 `transition` field, done by the controller, not in a run of writes from this module.
 
-The floor tier — one colour per LED — is the expensive one: a full 16,384-pixel repaint is **19 requests**
-at the default 8 KiB body budget. That is fine at one frame every few seconds and wrong for animation,
-which is why it is not how the word is drawn: pixels go over DDP instead, where the same picture is 35
-datagrams and never touches the controller's web server at all. The event's own rate is chosen against
-the controller rather than against this budget — one repeat a second for a still picture, so that it
-outlives WLED's 2500 ms realtime timeout — and it is still not a stream: the bytes never change.
+The JSON side is cheap now that a frame is one request: a steady picture costs one write when it changes
+and one a minute when it does not. What is **not** cheap is one colour per LED — a full 16,384-pixel
+repaint in that shape is 19 requests at an 8 KiB body budget, which is fine at one frame every few seconds
+and wrong for animation. That is one of the reasons the word is not drawn that way: this module has no
+per-LED write at all, and the picture goes over DDP instead, where the same frame is 35 datagrams and never
+touches the controller's web server. The event's own rate is chosen against the controller rather than
+against this budget — one repeat a second for a still picture, so that it outlives WLED's 2500 ms realtime
+timeout — and it is still not a stream: the bytes never change.
 
 ## What it deliberately will not do
 
@@ -550,8 +559,11 @@ outlives WLED's 2500 ms realtime timeout — and it is still not a stream: the b
 - **Priorities.** If a finished print and an overheating hotend both want the light, there is no
   arbitration, because nobody has decided what wins. That is one of the open questions in the
   requirements.
-- **WLED's realtime mode, presets and playlists.** The client never writes `{"live":true}` — it blanks the
-  strip — and never touches a preset or a playlist.
+- **WLED's live mode, presets and playlists.** The pixel transport is the one exception and it is the
+  reason the word exists: DDP puts the panel into the controller's own live mode for the minute the word
+  holds, which is what a datagram does by definition. It is not a JSON `{"live": true}` write — the client
+  never sends that, and never touches a preset or a playlist. When the hold ends the module stops pushing,
+  the controller drops live mode 2500 ms later, and its own segments are drawn again.
 - **Prusa's cloud.** It makes no outbound call to Prusa's servers; it reads what the Connect instance in
   front of it knows.
 

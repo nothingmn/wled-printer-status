@@ -24,10 +24,17 @@
 // segment's name, which is the only string that effect can draw. On the operator's panel it
 // does not honour the segment it is given: four different groupings, every parameter named, and
 // each attempt lit only the first few columns on the left of the 256-wide panel — the operator
-// watched all four and reported the same fragment. So the word is not a name and not an effect
-// any more. It is a glyph table this repository owns (internal/text), rasterised onto the panel
-// by this module and written one LED at a time through wled.Client.Paint. Nothing in this file
-// asks a controller to draw anything.
+// watched all four and reported the same fragment. The second build drew the word itself and
+// sent it one LED at a time through a JSON state body, which this firmware accepted and didn't
+// draw — four bodies, 200 each, nothing lit. So the word is not a name and not an effect any
+// more: it is a glyph table this repository owns (internal/text), rasterised onto the panel by
+// this package, and pushed as pixels over DDP (pixels.go). Nothing in this file asks a
+// controller to draw anything, and nothing sends a picture over the JSON API.
+//
+// The name is still written once per event, by the body that establishes the panel, because
+// it is how /json/state says which picture the panel is holding and a datagram cannot carry a
+// string. The steady frame that takes the light back clears it, so that no word outlives its
+// own hold — see stripSegments in drive.go.
 //
 // The list is deliberately one entry long. Print start and a filament change are both wanted
 // and neither has an animation or a duration decided, and inventing either would be a product
@@ -350,8 +357,10 @@ func (w *writer) deliverEvent(ctx context.Context, ev event) error {
 //     first time this event ran: segment 1 held columns 28..256 in black and the word was a
 //     fragment on the left, which is the same fragment this whole change exists to stop showing.
 //
-//     The name travels with it because /json/state then says which picture the panel is holding,
-//     and a body written without one clears the name that was there.
+//     The name travels with it because /json/state then says which picture the panel is holding.
+//     It is the establishing body that has to clear it again, not the frames after it: this
+//     firmware keeps a segment's name through a body that does not mention one, measured on the
+//     panel, which is why the steady body carries `"n":""` — see stripSegments in drive.go.
 //
 //  2. **Push the word as pixels.** One DDP frame — the whole panel, 16,384 pixels, 35 datagrams —
 //     in the event's colour where the rasteriser lit a pixel and in finishedWordBackground

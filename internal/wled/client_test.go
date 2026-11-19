@@ -1047,221 +1047,6 @@ func TestTheColourWritesCarryPanelRows(t *testing.T) {
 	}
 }
 
-// TestPaintWritesTheIndexAndHexColours proves the tier-3 encoding byte for byte: the
-// LED list names the index its first colour belongs to and then one six-digit hex
-// colour per LED, and it carries nothing else — no power, because switching a segment
-// on and painting it in the same body does not work.
-func TestPaintWritesTheIndexAndHexColours(t *testing.T) {
-	recorder := &capture{}
-	server := recorder.server(t)
-
-	err := client(t, server.URL).Paint(context.Background(), 7, []RGB{
-		{R: 255, G: 0, B: 0},
-		{R: 0, G: 255, B: 0},
-		{R: 0, G: 0, B: 255},
-	})
-	if err != nil {
-		t.Fatalf("Paint: %v", err)
-	}
-
-	if len(recorder.bodies) != 1 || recorder.methods[0] != http.MethodPost || recorder.paths[0] != "/json/state" {
-		t.Fatalf("Paint sent %v %v, want one POST /json/state", recorder.methods, recorder.paths)
-	}
-
-	want := `{"seg":[{"id":0,"i":[7,"FF0000","00FF00","0000FF"]}]}`
-	if recorder.bodies[0] != want {
-		t.Fatalf("Paint sent\n%s\nwant\n%s", recorder.bodies[0], want)
-	}
-}
-
-// TestPaintRefusesWhatItCannotSend proves the three refusals reach no controller: an
-// empty frame and a nil one have nothing to draw, a negative first LED is not an LED,
-// and a budget smaller than one colour would be broken by the first chunk rather than
-// honoured.
-func TestPaintRefusesWhatItCannotSend(t *testing.T) {
-	recorder := &capture{}
-	server := recorder.server(t)
-
-	clientUnderTest := client(t, server.URL)
-	oneColour := []RGB{{R: 1, G: 2, B: 3}}
-
-	for _, paint := range []struct {
-		name   string
-		first  int
-		colors []RGB
-		opts   []PaintOption
-		want   error
-	}{
-		{"an empty slice", 0, []RGB{}, nil, ErrEmptyPaint},
-		{"a nil slice", 0, nil, nil, ErrEmptyPaint},
-		{"a negative first led", -1, oneColour, nil, ErrInvalidRange},
-		{"a budget under one colour", 0, oneColour, []PaintOption{WithPaintByteBudget(34)}, ErrPaintBudget},
-		{"a zero budget", 0, oneColour, []PaintOption{WithPaintByteBudget(0)}, ErrPaintBudget},
-	} {
-		err := clientUnderTest.Paint(context.Background(), paint.first, paint.colors, paint.opts...)
-		if !errors.Is(err, paint.want) {
-			t.Fatalf("%s: Paint returned %v, want %v", paint.name, err, paint.want)
-		}
-	}
-
-	if len(recorder.bodies) != 0 {
-		t.Fatalf("a refused paint reached the controller %d times, want 0", len(recorder.bodies))
-	}
-}
-
-// TestPaintSplitsAFrameToStayInsideTheBudget proves the whole of the largest frame this
-// module drives: 16,384 colours go out in as many requests as the budget needs, every
-// body is inside the budget, each names the LED its first colour belongs to, and the
-// colours reassemble into the frame that was handed in, in order.
-func TestPaintSplitsAFrameToStayInsideTheBudget(t *testing.T) {
-	recorder := &capture{}
-	server := recorder.server(t)
-
-	const panelLEDs = 16384
-
-	colors := make([]RGB, panelLEDs)
-	for led := range colors {
-		colors[led] = RGB{R: uint8(led), G: uint8(led >> 8), B: 0x40}
-	}
-
-	if err := client(t, server.URL).Paint(context.Background(), 0, colors); err != nil {
-		t.Fatalf("Paint: %v", err)
-	}
-
-	if len(recorder.bodies) < 2 {
-		t.Fatalf("a %d-colour frame was sent in %d request(s), want it split", panelLEDs, len(recorder.bodies))
-	}
-
-	painted := 0
-
-	for request, body := range recorder.bodies {
-		if recorder.methods[request] != http.MethodPost || recorder.paths[request] != "/json/state" {
-			t.Fatalf("request %d was %s %s, want POST /json/state",
-				request, recorder.methods[request], recorder.paths[request])
-		}
-
-		if len(body) > DefaultPaintByteBudget {
-			t.Fatalf("request %d carries %d bytes, over the %d budget",
-				request, len(body), DefaultPaintByteBudget)
-		}
-
-		var decoded struct {
-			Segments []struct {
-				Pixels []json.RawMessage `json:"i"`
-			} `json:"seg"`
-		}
-
-		if err := json.Unmarshal([]byte(body), &decoded); err != nil {
-			t.Fatalf("request %d does not decode: %v: %s", request, err, body)
-		}
-
-		if len(decoded.Segments) != 1 || len(decoded.Segments[0].Pixels) < 2 {
-			t.Fatalf("request %d carries no led list: %s", request, body)
-		}
-
-		pixels := decoded.Segments[0].Pixels
-
-		var index int
-		if err := json.Unmarshal(pixels[0], &index); err != nil {
-			t.Fatalf("request %d does not name its first led: %v: %s", request, err, body)
-		}
-
-		if index != painted {
-			t.Fatalf("request %d starts at led %d, want %d: the frame would be out of order",
-				request, index, painted)
-		}
-
-		for offset, raw := range pixels[1:] {
-			var got string
-			if err := json.Unmarshal(raw, &got); err != nil {
-				t.Fatalf("request %d led %d is not a colour: %v", request, painted+offset, err)
-			}
-
-			if got != colors[painted+offset].hex() {
-				t.Fatalf("request %d led %d reads %s, want %s",
-					request, painted+offset, got, colors[painted+offset].hex())
-			}
-		}
-
-		painted += len(pixels) - 1
-	}
-
-	if painted != panelLEDs {
-		t.Fatalf("the requests painted %d leds, want %d", painted, panelLEDs)
-	}
-
-	// The split is arithmetic, not a guess: at 8 KiB a body holds 907 colours from a
-	// one-digit index, and 16,384 needs eighteen of those and a short last one.
-	if len(recorder.bodies) != 19 {
-		t.Fatalf("the frame went out in %d requests, want 19", len(recorder.bodies))
-	}
-
-	if len(recorder.bodies[0]) != paintBodyBytes(0, 907) {
-		t.Fatalf("the first request carries %d bytes, want the %d of 907 colours",
-			len(recorder.bodies[0]), paintBodyBytes(0, 907))
-	}
-
-	// A 48-pixel strip is one request, which is the other end of the same arithmetic.
-	if fits := paintColoursThatFit(0, DefaultPaintByteBudget); fits < 48 {
-		t.Fatalf("a %d-byte budget carries %d colours, want at least the 48 of a strip",
-			DefaultPaintByteBudget, fits)
-	}
-}
-
-// TestPaintChunkArithmeticIsExact proves the arithmetic the splitting rests on, at its
-// edges: the envelope a body spends before any colour, what one colour costs, how many
-// fit at a one-digit and at a five-digit index, and the two smallest budgets that can
-// and cannot carry a single colour.
-func TestPaintChunkArithmeticIsExact(t *testing.T) {
-	if paintEnvelope != 26 {
-		t.Fatalf("the per-led envelope is %d bytes, want 26", paintEnvelope)
-	}
-
-	if paintEntryBytes != 9 {
-		t.Fatalf("one colour costs %d bytes, want 9", paintEntryBytes)
-	}
-
-	for _, fit := range []struct {
-		index  int
-		budget int
-		want   int
-	}{
-		{0, 34, 0},     // the envelope and a colour is one byte more than this
-		{0, 35, 1},     // exactly one colour
-		{0, 8192, 907}, // the default budget at the frame's first led
-		{907, 8192, 907},
-		{16326, 8192, 906}, // a five-digit index leaves room for one colour fewer
-	} {
-		if got := paintColoursThatFit(fit.index, fit.budget); got != fit.want {
-			t.Fatalf("paintColoursThatFit(%d, %d) = %d, want %d",
-				fit.index, fit.budget, got, fit.want)
-		}
-	}
-
-	for _, body := range []struct {
-		index   int
-		colors  int
-		want    int
-		budget  int
-		inside  bool
-		comment string
-	}{
-		{0, 48, 458, 8192, true, "a 48-led strip in one request"},
-		{0, 907, 8189, 8192, true, "the most the default budget carries"},
-		{0, 908, 8198, 8192, false, "one more than the default budget carries"},
-	} {
-		if got := paintBodyBytes(body.index, body.colors); got != body.want {
-			t.Fatalf("paintBodyBytes(%d, %d) = %d, want %d: %s",
-				body.index, body.colors, got, body.want, body.comment)
-		}
-
-		if got := paintBodyBytes(body.index, body.colors) <= body.budget; got != body.inside {
-			t.Fatalf("%s: %d bytes inside a %d budget reads %v, want %v",
-				body.comment, paintBodyBytes(body.index, body.colors), body.budget, got, body.inside)
-		}
-	}
-}
-
 // catalogueBody is a 2D controller's GET /json, cut down to the lists this package
 // reads: the effect names, the palette names, and the fxdata that says which controls
 // each effect has. The effect ids are this document's own positions, which is what a
@@ -1519,6 +1304,64 @@ func TestSetSegmentsSwitchesASegmentOffWithoutAColour(t *testing.T) {
 
 	if len(recorder.bodies) != 1 || recorder.bodies[0] != want {
 		t.Fatalf("SetSegments sent %v, want one body\n%s", recorder.bodies, want)
+	}
+}
+
+// TestSetSegmentsClearsANameOnlyWhenAskedAndThenWithAnEmptyString is the one key that says
+// "this segment has no name", and the reason it has to exist: on the operator's panel
+// (14.7.0-mdev) a body that writes a segment without "n" keeps whatever name the segment
+// already had, so a steady frame after a FINISHED event left "n":"FINISHED" behind. Writing
+// the empty string clears it. Both halves were measured against the panel: the same body with
+// "n":"" answered {"success":true} and /json/state then reported no "n" at all, while the body
+// that omitted "n" answered the same and reported the name it had before.
+//
+// So there are three bodies, and a caller that meant "no name" cannot get one by saying
+// nothing: no key when nothing was asked, the name when a name was given, and "" when a clear
+// was. A name wins over a clear, because a caller that named the segment meant it.
+func TestSetSegmentsClearsANameOnlyWhenAskedAndThenWithAnEmptyString(t *testing.T) {
+	cases := []struct {
+		name     string
+		write    SegmentWrite
+		want     string
+		explains string
+	}{
+		{
+			name:     "nothing asked",
+			write:    SegmentWrite{ID: 0, First: 0, Count: 48, On: true, Colour: RGB{R: 0, G: 170, B: 0}},
+			want:     `{"seg":[{"id":0,"start":0,"stop":48,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0}]}`,
+			explains: "the key is absent: a controller keeps the name it holds",
+		},
+		{
+			name:     "a word",
+			write:    SegmentWrite{ID: 0, On: false, Name: "FINISHED"},
+			want:     `{"seg":[{"id":0,"on":false,"n":"FINISHED"}]}`,
+			explains: "the establishing body names the segment for the state read",
+		},
+		{
+			name:     "no name",
+			write:    SegmentWrite{ID: 0, On: false, ClearName: true},
+			want:     `{"seg":[{"id":0,"on":false,"n":""}]}`,
+			explains: "an empty string, which is what clears a name on this firmware",
+		},
+		{
+			name:     "both, and the name wins",
+			write:    SegmentWrite{ID: 0, On: false, Name: "FINISHED", ClearName: true},
+			want:     `{"seg":[{"id":0,"on":false,"n":"FINISHED"}]}`,
+			explains: "a caller that named the segment meant it",
+		},
+	}
+
+	for _, shape := range cases {
+		recorder := &capture{}
+		server := recorder.server(t)
+
+		if err := client(t, server.URL).SetSegments(context.Background(), []SegmentWrite{shape.write}); err != nil {
+			t.Fatalf("%s: SetSegments: %v", shape.name, err)
+		}
+
+		if len(recorder.bodies) != 1 || recorder.bodies[0] != shape.want {
+			t.Fatalf("%s: sent %v, want one body (the %s)\n%s", shape.name, recorder.bodies, shape.explains, shape.want)
+		}
 	}
 }
 

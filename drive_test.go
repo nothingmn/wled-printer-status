@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,18 +68,6 @@ type fakeStrip struct {
 	// restores is every segment written back to the controller, in the order it was
 	// written: the give-back a writer makes when it stops.
 	restores []wled.Segment
-
-	// pixels is every per-LED write: the LED it started at and the colours it carried. It is
-	// kept apart from paints because a frame is a rectangle and a word is a picture, and a test
-	// that counted both as "one write" could not say which had happened.
-	pixels []pixelCall
-}
-
-// pixelCall is one Paint request as a test reads it: the LED its first colour belongs to, and
-// the colours in the order the body carried them.
-type pixelCall struct {
-	first   int
-	colours []wled.RGB
 }
 
 func newFakeStrip() *fakeStrip {
@@ -202,93 +189,12 @@ func (f *fakeStrip) settleWrites() int {
 	return f.settled
 }
 
-// Paint records one per-LED write: the LED the first colour belongs to, and the colours, in
-// order.
-//
-// It takes the same failure and blocking a frame write takes, because a controller that will not
-// take a frame will not take a picture either, and an event that quietly half-succeeded would be
-// a panel with half a word on it. It does not split the slice the way wled.Client does: chunking
-// is the client's own arithmetic, and the bodies it produces are asserted as bytes against a
-// recording server in event_test.go.
-func (f *fakeStrip) Paint(ctx context.Context, first int, colors []wled.RGB, _ ...wled.PaintOption) error {
-	f.mu.Lock()
-
-	failed := f.broken
-	if !failed && f.failNext > 0 {
-		f.failNext--
-		failed = true
-	}
-
-	f.pixels = append(f.pixels, pixelCall{first: first, colours: append([]wled.RGB(nil), colors...)})
-
-	hold := f.hold
-
-	f.mu.Unlock()
-
-	select {
-	case f.painted <- struct{}{}:
-	default:
-	}
-
-	if hold != nil {
-		select {
-		case <-hold:
-		case <-ctx.Done():
-			return fmt.Errorf("waiting on the controller: %w", ctx.Err())
-		}
-	}
-
-	if failed {
-		return errors.New("the controller did not answer in time")
-	}
-
-	return nil
-}
-
-// pixelWrites is every per-LED write, as a copy.
-func (f *fakeStrip) pixelWrites() []pixelCall {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	return append([]pixelCall(nil), f.pixels...)
-}
-
-// pixelsIn is every panel pixel the per-LED writes left in colour, ascending: what a person
-// looking at the panel would see in that one colour.
-//
-// The writes are read in the order they were made and the last one to touch a pixel wins, which
-// is the order the controller applies them in.
-func (f *fakeStrip) pixelsIn(colour wled.RGB) []int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	last := map[int]wled.RGB{}
-
-	for _, write := range f.pixels {
-		for offset, painted := range write.colours {
-			last[write.first+offset] = painted
-		}
-	}
-
-	lit := make([]int, 0, len(last))
-
-	for index, painted := range last {
-		if painted == colour {
-			lit = append(lit, index)
-		}
-	}
-
-	slices.Sort(lit)
-
-	return lit
-}
-
-// wrote is how many requests of any kind reached the controller: a frame, or a picture.
+// wrote is how many frames reached the controller.
 func (f *fakeStrip) wrote() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return len(f.paints) + len(f.pixels)
+	return len(f.paints)
 }
 
 // State is the controller's segments, which is what a writer borrows from.
@@ -546,7 +452,7 @@ func TestTheBodyOfEveryShapeOfFrame(t *testing.T) {
 			name: "nothing filled",
 			lit:  0,
 			want: []wled.SegmentWrite{
-				{ID: 0, First: 0, Count: 48, On: true, Colour: render.ColourIdle},
+				{ID: 0, First: 0, Count: 48, On: true, Colour: render.ColourIdle, ClearName: true},
 				{ID: 1, On: false},
 			},
 		},
@@ -554,7 +460,7 @@ func TestTheBodyOfEveryShapeOfFrame(t *testing.T) {
 			name: "everything filled",
 			lit:  48,
 			want: []wled.SegmentWrite{
-				{ID: 0, First: 0, Count: 48, On: true, Colour: render.ColourIdle},
+				{ID: 0, First: 0, Count: 48, On: true, Colour: render.ColourIdle, ClearName: true},
 				{ID: 1, On: false},
 			},
 		},
@@ -562,7 +468,7 @@ func TestTheBodyOfEveryShapeOfFrame(t *testing.T) {
 			name: "half filled",
 			lit:  24,
 			want: []wled.SegmentWrite{
-				{ID: 0, First: 0, Count: 24, On: true, Colour: render.ColourIdle},
+				{ID: 0, First: 0, Count: 24, On: true, Colour: render.ColourIdle, ClearName: true},
 				{ID: 1, First: 24, Count: 24, On: true, Colour: unfilled},
 			},
 		},
@@ -572,7 +478,7 @@ func TestTheBodyOfEveryShapeOfFrame(t *testing.T) {
 			name: "same fill, another colour",
 			lit:  24,
 			want: []wled.SegmentWrite{
-				{ID: 0, First: 0, Count: 24, On: true, Colour: render.ColourError},
+				{ID: 0, First: 0, Count: 24, On: true, Colour: render.ColourError, ClearName: true},
 				{ID: 1, First: 24, Count: 24, On: true, Colour: unfilled},
 			},
 		},
@@ -656,7 +562,7 @@ func TestAStartingFrameIsOneWholePanelInTheWaitingYellow(t *testing.T) {
 			name: "the live panel",
 			want: wled.SegmentWrite{
 				ID: firstSegment, First: 0, Count: 256, FirstRow: 0, RowCount: 64,
-				On: true, Colour: render.ColourIdle,
+				On: true, Colour: render.ColourIdle, ClearName: true,
 			},
 			paint: func(t *testing.T) []wled.SegmentWrite {
 				t.Helper()
@@ -676,7 +582,7 @@ func TestAStartingFrameIsOneWholePanelInTheWaitingYellow(t *testing.T) {
 		},
 		{
 			name: "a controller with no matrix",
-			want: wled.SegmentWrite{ID: firstSegment, First: 0, Count: 16384, On: true, Colour: render.ColourIdle},
+			want: wled.SegmentWrite{ID: firstSegment, First: 0, Count: 16384, On: true, Colour: render.ColourIdle, ClearName: true},
 			paint: func(t *testing.T) []wled.SegmentWrite {
 				t.Helper()
 
@@ -1816,7 +1722,8 @@ func TestAPanelFrameAlwaysCoversTheWholePanel(t *testing.T) {
 // The three frames are the ones the live panel was proved with: 62 % — the frame that was green
 // and arrived dark — then a tenth and then all of it. Each is one request carrying two segments,
 // and the fill's rectangle ends at the column the arithmetic predicts with the remainder
-// starting there.
+// starting there. Segment 0 also carries `"n":""` in every shape, which is the name an event put
+// there being cleared; it is one key in a body that goes out anyway, not a second request.
 func TestAPanelBodyIsOneRequestWithFourBounds(t *testing.T) {
 	for _, shape := range []struct {
 		name string
@@ -1826,25 +1733,25 @@ func TestAPanelBodyIsOneRequestWithFourBounds(t *testing.T) {
 		{
 			name: "sixty-two percent",
 			lit:  10158,
-			want: `{"seg":[{"id":0,"start":0,"stop":159,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+			want: `{"seg":[{"id":0,"start":0,"stop":159,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0,"n":""},` +
 				`{"id":1,"start":159,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0}]}`,
 		},
 		{
 			name: "a tenth",
 			lit:  1638,
-			want: `{"seg":[{"id":0,"start":0,"stop":26,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+			want: `{"seg":[{"id":0,"start":0,"stop":26,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0,"n":""},` +
 				`{"id":1,"start":26,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,0,0]],"fx":0}]}`,
 		},
 		{
 			name: "everything",
 			lit:  16384,
-			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0,"n":""},` +
 				`{"id":1,"on":false}]}`,
 		},
 		{
 			name: "nothing",
 			lit:  0,
-			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0},` +
+			want: `{"seg":[{"id":0,"start":0,"stop":256,"startY":0,"stopY":64,"on":true,"col":[[0,170,0]],"fx":0,"n":""},` +
 				`{"id":1,"on":false}]}`,
 		},
 	} {
@@ -1900,6 +1807,8 @@ func TestAPanelBodyIsOneRequestWithFourBounds(t *testing.T) {
 //
 // It runs through the driver's own learning step, so what is asserted is what a real strip
 // produces: Info answers, the writer records the geometry, and the frame that follows is flat.
+// The flat body carries the same `"n":""` on segment 0 that the panel's does: a strip has no
+// word, but the same writer clears the name in the body it was writing anyway.
 func TestAStripControllerStillGetsTheFlatBody(t *testing.T) {
 	recorder := &wireCapture{}
 	server := recorder.server(t)
@@ -1925,7 +1834,7 @@ func TestAStripControllerStillGetsTheFlatBody(t *testing.T) {
 		t.Fatalf("paint: %v", err)
 	}
 
-	want := `{"seg":[{"id":0,"start":0,"stop":24,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0},` +
+	want := `{"seg":[{"id":0,"start":0,"stop":24,"startY":0,"stopY":0,"on":true,"col":[[0,170,0]],"fx":0,"n":""},` +
 		`{"id":1,"start":24,"stop":48,"startY":0,"stopY":0,"on":true,"col":[[0,0,0]],"fx":0}]}`
 
 	if len(recorder.bodies) != 1 || recorder.bodies[0] != want {

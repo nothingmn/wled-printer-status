@@ -41,37 +41,37 @@
 // bounds beside its LED bounds. SetRectangle, and the row options on SetSolid and
 // SetRange, are what make a write a rectangle on a panel.
 //
-// # The three tiers a status can be shown in
+// # The tiers a status can be shown in, and the one this package does not offer
 //
 // A controller's abilities are not assumed: they are read from the device and
 // used in order, so that a status which cannot be shown in the first way is shown
-// in the second and, if even that is impossible, in the third.
+// in the second.
 //
 //  1. An effect, with its parameters. SetEffect selects one of the effects the
 //     controller itself lists — Capabilities returns that list — and names its
 //     speed, intensity, three custom values, three check values and palette.
 //     Scrolling Text (id 122 on the current firmware) is the 2D panel's text
 //     carrier, and the string it draws is the segment's own name, written with
-//     SetSegmentName. This tier animates, and it is the only tier that puts text
-//     on a matrix.
+//     SetSegmentName. This tier animates.
 //  2. Computed colour or geometry: SetSolid, SetRange and SetRectangle paint a
 //     colour into a run, a band or a rectangle, so a progress bar is the geometry
-//     of a segment rather than a picture of one.
-//  3. Per-LED painting, Paint. It is the floor: whatever a controller can do, it
-//     can be given 1, 2 or 16,384 individual colours, so a status that cannot be
-//     shown as an effect or as a rectangle can still be shown at all. That is the
-//     only outcome this package refuses to accept, and it is why this tier exists
-//     even though it is the crudest.
+//     of a segment rather than a picture of one. SetSegments composes several of
+//     those into one body, which is how a fill and its remainder reach a
+//     controller in one request.
 //
-// # What per-LED painting costs
-//
-// The segment property i is not stored: a controller that loses power or is
-// rebooted comes back with whatever its saved preset says, so Paint has to be
-// re-sent after every reconnect. While painted, the segment's effect is frozen —
-// an animation cannot draw over a list of colours — and the list is cleared as
-// soon as an effect is selected again. A write that sets individual LEDs and
-// switches the segment on in the same body does not work, so Paint sends only i
-// and expects a segment that is already on and already at its brightness.
+// There was a third tier — a per-LED colour array in a segment's i property — and
+// it is not here, because on the firmware this module was built against
+// (14.7.0-mdev, the operator's 256x64 panel) it does not draw. Four bodies were
+// measured, each answered 200 with {"success":true} and each left the panel as it
+// was: a hundred pixels at LED 7680 with the segment frozen, the same unfrozen, the
+// same with all four segment bounds declared in the body that carried the pixels,
+// and a chunk of sixty colours in case the accepted size was far smaller than an
+// 8 KiB budget. /json/state carries no i key at all on that build, so not even a
+// read-back could say what the controller made of them. Geometry on the same
+// endpoint renders — the progress bar is segment bounds and always has — so the
+// picture went to the transport built for pictures instead (DDP, in the caller).
+// A call kept for a case nobody has is a road back to a measurement that has
+// already been made twice, which is why it was deleted rather than left unused.
 //
 // # What this package does not do
 //
@@ -138,12 +138,6 @@ const (
 	// bug it should see, and half a word on a panel is not a status.
 	MaxSegmentName = 48
 
-	// DefaultPaintByteBudget is how large one per-LED request body may be when the
-	// caller sets no budget. It is 8 KiB, comfortably inside both documented limits
-	// — about 10 KiB on an ESP8266 and about 24 KiB on an ESP32 — so a controller
-	// with the smaller one has room for the rest of the request beside the colours.
-	DefaultPaintByteBudget = 8 << 10
-
 	// The values of a segment's m12, which says how a one-dimensional effect is
 	// expanded onto a two-dimensional panel.
 	ExpandPixels = 0 // the effect drives individual pixels
@@ -195,16 +189,6 @@ var (
 	// ErrInvalidName means a segment name was empty or longer than MaxSegmentName.
 	// The request is not sent.
 	ErrInvalidName = errors.New("wled: not a usable segment name")
-
-	// ErrEmptyPaint means per-LED painting was asked for with no colours. There is
-	// nothing to draw and no request worth sending; a caller that reached here has
-	// computed an empty frame.
-	ErrEmptyPaint = errors.New("wled: no colours to paint")
-
-	// ErrPaintBudget means the byte budget left no room for even one LED's colour.
-	// The budget is a caller's promise about the controller it is talking to, so a
-	// budget that cannot carry a colour is refused rather than exceeded.
-	ErrPaintBudget = errors.New("wled: the paint budget cannot carry one led")
 )
 
 // TimeoutError is a request that ran out of time. Its Err carries the transport's
@@ -965,6 +949,19 @@ type SegmentWrite struct {
 	// at the controller — so a caller drawing inside a segment it does not own passes the name
 	// it read, on every body, whether the segment is drawn or not.
 	Name string
+	// ClearName writes the name as an empty string, which is the one way this module can say
+	// "this segment has no name" to a controller that keeps one.
+	//
+	// It is a field of its own because omitting "n" is not the same body: on the operator's
+	// panel (WLED 14.7.0-mdev) a write that leaves "n" out keeps the name the segment already
+	// had — a steady frame written after a FINISHED event left "n":"FINISHED" behind for as
+	// long as nothing named it again — while the desk light (16.0.1) clears it. Writing "n": ""
+	// clears it on both, measured: a body carrying {"seg":[{"id":0,"n":""}]} answered
+	// {"success":true} and /json/state then reported no "n" at all, where the same body with
+	// "n" left out reported the name it had before.
+	//
+	// Name wins when both are set: a caller that named the segment meant it.
+	ClearName bool
 }
 
 // validate reports whether this is a segment a controller can be asked for.
@@ -1048,6 +1045,11 @@ func (c *Client) SetSegments(ctx context.Context, segments []SegmentWrite) error
 
 		if segment.Name != "" {
 			naming := segment.Name
+			written.Name = &naming
+		} else if segment.ClearName {
+			// The empty string, not an omitted key: a body that leaves "n" out keeps the name
+			// the controller already holds on 14.7.0-mdev. See SegmentWrite.ClearName.
+			naming := ""
 			written.Name = &naming
 		}
 
@@ -1424,146 +1426,6 @@ func (c *Client) SetRectangle(ctx context.Context, bounds Bounds, color RGB, opt
 	}, nil)
 }
 
-// paintRequest is what the options to Paint fill in.
-type paintRequest struct {
-	budget int
-}
-
-// PaintOption adjusts one Paint call.
-type PaintOption func(*paintRequest)
-
-// WithPaintByteBudget sets the largest request body Paint may send, in bytes. The
-// default is DefaultPaintByteBudget, 8 KiB. A budget too small to carry one LED is
-// refused with ErrPaintBudget rather than exceeded.
-func WithPaintByteBudget(budget int) PaintOption {
-	return func(p *paintRequest) { p.budget = budget }
-}
-
-// Paint colours individual LEDs: colors[0] is LED number first, colors[1] the one
-// after it, and so on, which is WLED's segment property i.
-//
-// It is the floor under the other two tiers. Effects can animate and can carry text,
-// rectangles can draw a bar, but a controller that cannot do either can still be
-// given one colour per LED, so this is the call that makes "cannot be shown at all"
-// impossible. Everything it costs is in the package comment: the colours are not
-// saved across a reboot, they freeze the segment's effect, and the segment must
-// already be on and at its brightness — a body that switches a segment on and sets
-// its LEDs together does not work, so this one sends the LEDs alone.
-//
-// A frame longer than the byte budget is split into several requests, each starting
-// at the LED its first colour belongs to, so the order of the colours is preserved
-// across the whole frame and every body stays inside the budget. Each request is a
-// separate call to the controller, so another writer can land between two of them;
-// WLED has no transaction, and a caller that needs a frame to appear at once keeps it
-// within one chunk.
-//
-// An empty slice is refused with ErrEmptyPaint and no request is sent, and a first
-// below zero with ErrInvalidRange. first is the LED within the segment, which for
-// segment 0 — the only one this package writes — is the LED number on the device; on
-// a panel that is y*width + x.
-func (c *Client) Paint(ctx context.Context, first int, colors []RGB, opts ...PaintOption) error {
-	settings := paintRequest{budget: DefaultPaintByteBudget}
-
-	for _, option := range opts {
-		if option != nil {
-			option(&settings)
-		}
-	}
-
-	if len(colors) == 0 {
-		return fmt.Errorf("%w: the slice is empty", ErrEmptyPaint)
-	}
-
-	if first < 0 {
-		return fmt.Errorf("%w: first led %d", ErrInvalidRange, first)
-	}
-
-	remaining := colors
-	index := first
-
-	for len(remaining) > 0 {
-		fits := paintColoursThatFit(index, settings.budget)
-		if fits < 1 {
-			return fmt.Errorf("%w: %d bytes cannot carry the %d a body needs",
-				ErrPaintBudget, settings.budget, paintBodyBytes(index, 1))
-		}
-
-		count := min(fits, len(remaining))
-
-		segment := writeSegment{ID: firstSegment, Pixels: paintPixels(index, remaining[:count])}
-		if err := c.do(ctx, http.MethodPost, pathState, writeState{
-			Segments: []writeSegment{segment},
-		}, nil); err != nil {
-			return err
-		}
-
-		remaining = remaining[count:]
-		index += count
-	}
-
-	return nil
-}
-
-// paintEntryBytes is what one LED costs inside a paint body when it is written as the
-// hex colour WLED reads: a comma, a quote, six digits and a closing quote. Every
-// colour costs the same, which is what makes the chunk arithmetic exact rather than
-// estimated.
-const paintEntryBytes = len(`,"FFFFFF"`)
-
-// paintEnvelope is what a paint body spends on everything but its colours: the
-// wrapper, the segment id, the LED list, and the single index entry that says where
-// the list starts, counted with a one-digit index.
-var paintEnvelope = func() int {
-	raw, err := json.Marshal(writeState{
-		Segments: []writeSegment{{ID: firstSegment, Pixels: []any{0}}},
-	})
-	if err != nil {
-		// The body is a struct of integers and strings; this cannot happen, and a
-		// client that silently guessed at its own encoding would be worse than one
-		// that stops here.
-		panic("wled: the per-led body does not encode: " + err.Error())
-	}
-
-	return len(raw)
-}()
-
-// paintBodyBytes is how long the body for a chunk of colours would be if it started at
-// the LED index and carried that many colours.
-func paintBodyBytes(index, colors int) int {
-	return paintEnvelope + len(strconv.Itoa(index)) - 1 + colors*paintEntryBytes
-}
-
-// paintColoursThatFit is how many colours a chunk starting at the LED index can carry
-// inside a budget of that many bytes, or 0 when not even one fits. The index's own
-// digits are counted, so a chunk late in a 16,384-LED frame is measured against the
-// five-digit index it will actually be written with.
-func paintColoursThatFit(index, budget int) int {
-	room := budget - paintEnvelope - (len(strconv.Itoa(index)) - 1)
-	if room < paintEntryBytes {
-		return 0
-	}
-
-	return room / paintEntryBytes
-}
-
-// paintPixels is the segment's i property for one chunk: the index its first colour
-// belongs to, then each colour as six hex digits. Naming the index on every chunk,
-// including the first, is what lets a frame that was split be reassembled in order.
-func paintPixels(index int, colors []RGB) []any {
-	pixels := make([]any, 0, len(colors)+1)
-	pixels = append(pixels, index)
-
-	for _, color := range colors {
-		pixels = append(pixels, color.hex())
-	}
-
-	return pixels
-}
-
-// hex is the colour as WLED reads one inside a segment's i list: six uppercase hex
-// digits, no leading hash. It is the same shape parseHexColor accepts back.
-func (c RGB) hex() string { return fmt.Sprintf("%02X%02X%02X", c.R, c.G, c.B) }
-
 // EffectInfo is one effect a controller offers: the id to write, the name to show in a
 // list, and the effect's own flag string when the controller publishes one.
 type EffectInfo struct {
@@ -1688,8 +1550,7 @@ type writeState struct {
 
 // writeSegment is one segment of that body, in the order the WLED documentation
 // writes it: which segment, which LEDs, whether it is drawn, its colour, its effect
-// and that effect's parameters, then the geometry controls, then the name and the
-// per-LED list.
+// and that effect's parameters, then the geometry controls, then the name.
 //
 // Brightness is the segment's own, "bri" inside the segment rather than the strip's, and
 // only RestoreSegment writes it. It is here so that a segment which carried a brightness
@@ -1700,7 +1561,7 @@ type writeState struct {
 // that carries "start" and "stop" without "startY" and "stopY" is read as a flat range
 // of LED indices: the controller recomputes the segment's rows from those two numbers
 // and leaves the segment one row high, whatever rows it covered before. A write that
-// carries no bounds at all — a name, a per-LED list — does not touch the geometry.
+// carries no bounds at all — a name — does not touch the geometry.
 type writeSegment struct {
 	ID         int     `json:"id"`
 	Start      *int    `json:"start,omitempty"`
@@ -1724,7 +1585,6 @@ type writeSegment struct {
 	Transpose  *int    `json:"tp,omitempty"`
 	Expand1D   *int    `json:"m12,omitempty"`
 	Name       *string `json:"n,omitempty"`
-	Pixels     []any   `json:"i,omitempty"`
 }
 
 // do performs one request and is the only place this package talks to a

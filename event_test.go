@@ -256,6 +256,87 @@ func TestAnEventHoldsTheLightForItsOwnDurationAndNoLonger(t *testing.T) {
 	}
 }
 
+// TestTheFrameThatEndsTheEventClearsTheWordFromTheSegmentName is the debt the first live event
+// left behind: the word is a segment name while it holds, and on this firmware a body that does
+// not mention "n" keeps the name it found. So the frame that takes the light back has to say
+// "no name" explicitly — an empty string, not an omitted key — or the panel carries
+// "FINISHED" until something else names the segment.
+//
+// Nothing draws a segment's name while the steady frame holds a solid colour, which is why this
+// was invisible on the panel. It would not stay invisible: anything that set a text effect on
+// that segment later would draw the last print's word over a picture about the current one.
+//
+// It costs no request. The key rides in the body the writer was already sending.
+func TestTheFrameThatEndsTheEventClearsTheWordFromTheSegmentName(t *testing.T) {
+	strip := newPanelStrip()
+
+	clock := newFakeClock(time.Date(2026, time.November, 18, 22, 0, 0, 0, time.UTC))
+	pen := newWriter(strip, 128, quiet)
+	pen.setPanel(strip.info)
+	clock.watch(pen)
+
+	pushInto(pen)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pen.run(ctx)
+
+	steady := render.Frame{Colour: render.ColourFinished, Total: 16384, Reason: render.ReasonNoLiveJob}
+
+	pen.submit(steady)
+	strip.waitForPaints(t, 1)
+
+	// The word goes up: the establishing body names the segment, because /json/state is where a
+	// person reads which picture the panel is holding and a datagram can carry no string.
+	pen.fire(finishedWordEvent())
+
+	waitFor(t, "the word to be laid on the panel", func() bool { return paintings(strip) == 1 })
+
+	named := steadyPaints(strip)
+	if len(named) != 1 {
+		t.Fatalf("the panel was written %d frames before the word, want 1: %+v", len(named), named)
+	}
+
+	// The establishing body is the painting, and it is told apart from a frame by its name.
+	for _, call := range strip.shown() {
+		if len(call.segments) > 0 && call.segments[0].Name == finishedWord && call.segments[0].ClearName {
+			t.Fatalf("the body that put the word up also cleared the name it was setting: %+v", call.segments[0])
+		}
+	}
+
+	// The hold ends, and the frame that takes the light back is the newest thing the driver
+	// decided — the whole panel in the finished green, with no name on it. It is submitted here
+	// because that is what the driver does every tick: the writer's slot holds the newest frame
+	// for the length of the hold and writes it when the hold is over.
+	pen.submit(steady)
+	clock.Advance(finishedEventHolds)
+
+	waitFor(t, "the steady frame to come back at the end of the hold", func() bool {
+		return len(steadyPaints(strip)) == 2
+	})
+
+	back := steadyPaints(strip)[1].segments
+	if len(back) != 2 {
+		t.Fatalf("the frame after the event carries %d segments, want 2: %+v", len(back), back)
+	}
+
+	if back[0].Name != "" {
+		t.Fatalf("the frame after the event names the segment %q, want no name", back[0].Name)
+	}
+
+	if !back[0].ClearName {
+		t.Fatalf("the frame after the event does not clear the segment's name, so %q outlives the event: %+v",
+			finishedWord, back[0])
+	}
+
+	// Only the segment the word was named on. Segment 1 is never named by any body this module
+	// writes, so a clear there would be a claim about state it does not have.
+	if back[1].ClearName {
+		t.Fatalf("the remainder segment is told to clear a name it never had: %+v", back[1])
+	}
+}
+
 // TestAStripGetsNoEventAndKeepsItsSolidFrame is the strip half of the rule, through the driver
 // rather than through the decision: a 48-LED strip that finishes a print is written the solid
 // green it was already being written, and nothing else.
@@ -290,10 +371,6 @@ func TestAStripGetsNoEventAndKeepsItsSolidFrame(t *testing.T) {
 	// in its hand and no request to make.
 	if fired := pen.fired.Load(); fired != nil {
 		t.Fatalf("a strip was offered the %q event, want none", fired.word)
-	}
-
-	if writes := strip.pixelWrites(); len(writes) != 0 {
-		t.Fatalf("a strip was given %d per-LED writes, want none", len(writes))
 	}
 
 	waitFor(t, "the finished frame to reach the strip", func() bool {
@@ -353,10 +430,6 @@ func TestABorrowedSegmentIsNeverGivenTheEvent(t *testing.T) {
 	pen.fire(finishedWordEvent())
 	written.waitForCount(t, 2)
 
-	if writes := strip.pixelWrites(); len(writes) != 0 {
-		t.Fatalf("a borrowed segment was given %d per-LED writes, want none", len(writes))
-	}
-
 	if writes := strip.wrote(); writes != 0 {
 		t.Fatalf("the event wrote %d requests to a borrowed segment, want none", writes)
 	}
@@ -404,8 +477,8 @@ func TestARestartIsNotATransition(t *testing.T) {
 		t.Fatalf("a restart beside a finished print fired the %q event", fired.word)
 	}
 
-	if writes := strip.pixelWrites(); len(writes) != 0 || paintings(strip) != 0 {
-		t.Fatalf("a restart fired an event: %d per-LED writes, %d paintings", len(writes), paintings(strip))
+	if painted := paintings(strip); painted != 0 {
+		t.Fatalf("a restart fired an event: %d paintings", painted)
 	}
 
 	written.want(t)
@@ -424,10 +497,6 @@ func TestARestartIsNotATransition(t *testing.T) {
 
 	if fired := restartedPen.fired.Load(); fired != nil {
 		t.Fatalf("a restart fired the %q event, want none", fired.word)
-	}
-
-	if writes := strip.pixelWrites(); len(writes) != 0 {
-		t.Fatalf("a restart after a print fired an event: %d per-LED writes", len(writes))
 	}
 }
 

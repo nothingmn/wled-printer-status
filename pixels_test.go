@@ -217,13 +217,6 @@ func TestTheFinishedWordReachesThePanelAsDDPDatagrams(t *testing.T) {
 		t.Fatalf("the transport was opened %d times for one event, want once", dialled)
 	}
 
-	// And the word did not go over the JSON API at all. This is the regression the whole transport
-	// exists for: a per-LED body is accepted by this firmware and drawn by nothing, so a build that
-	// went back to one would look healthy and show a blank panel.
-	if writes := strip.pixelWrites(); len(writes) != 0 {
-		t.Fatalf("the event wrote %d per-LED JSON bodies: the panel draws none of them", len(writes))
-	}
-
 	packets := readDatagrams(t, conn, ddp.PacketsFor(16384))
 
 	picture := make([]wled.RGB, 16384)

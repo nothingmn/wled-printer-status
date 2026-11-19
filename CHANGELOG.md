@@ -59,8 +59,9 @@ holds the whole light, and keeps holding it.
   wait, and the recovery: five minutes of an unreachable light is six lines instead of three hundred.
 - A finished job spells `FINISHED` across a matrix panel, in the finished green, for a minute, and then
   hands the light back to the steady picture. The letters are the module's own: a 5x7 font it carries,
-  drawn one LED at a time. No controller effect is asked to draw anything. A strip is unchanged and keeps
-  its solid green.
+  laid out as pixels and pushed over DDP. No controller effect is asked to draw anything. A strip is
+  unchanged and keeps its solid green. The segment's name is cleared when the minute is up, so the word
+  does not outlive the event on a controller that keeps a name through a write that omits it.
 - `POST /preview-finished` shows that word now, for the same minute, so a person can look at what the
   light will do without waiting for a print to end. It answers `202` with the word, the controller and how
   long it holds, and refuses — with a registered code — when the light is a borrowed segment of somebody
@@ -87,7 +88,7 @@ holds the whole light, and keeps holding it.
   on its own page under Settings, Extensions, beside the settings it already had. It lists every printer
   with the light it is drawn on, the segment, and whether that light is answering; it adds a printer,
   changes where one is shown, and removes one, with the printers and controllers offered as the choices
-  `GET /printers` and `GET /controllers` report rather than as ids typed in. It is additive: the nine
+  `GET /printers` and `GET /controllers` report rather than as ids typed in. It is additive: the eight
   settings are still the whole configuration, and a module with no bundle loaded — the bundle refused, its
   library range outside the app's — drives the light exactly as before. It writes through the same routes,
   so it saves nothing either, and the tab says so on every screen.
