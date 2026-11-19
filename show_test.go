@@ -662,6 +662,13 @@ func TestAPauseOnABorrowedZoneHandsItBackAndPowersNothingOff(t *testing.T) {
 	table := &handTable{}
 
 	pen := newSegmentWriter(strip, 1, "http://10.0.0.253", quiet)
+
+	// The clock is the test's, not the machine's. This pause begins at a fixed instant and ends ten
+	// minutes later, so a writer reading the wall clock saw it already over by any real afternoon:
+	// the zone was never handed back, and the test failed for the calendar rather than for the rule.
+	clock := newFakeClock(at)
+	clock.watch(pen)
+
 	pen.store = table
 	pen.printer = "01J8DEVICE"
 
@@ -700,6 +707,91 @@ func TestAPauseOnABorrowedZoneHandsItBackAndPowersNothingOff(t *testing.T) {
 	}
 
 	// One painting before the pause and none after it: the zone is drawn in, then left as found.
+	if got := strip.wrote(); got != 1 {
+		t.Fatalf("the borrowed zone was painted %d frames, want the one before the pause", got)
+	}
+}
+
+// TestAPauseOnABorrowedZoneHandsItBackWhenThePrinterIsStale is the same locked rule with the one
+// excuse the module does not get to use: silence.
+//
+// A pause is the operator's word and not the printer's. It is read out of the store on every pass,
+// and nothing on that path asks how fresh the printer's reading is — so a printer that has said
+// nothing for longer than printer.StaleAfter must not leave somebody else's segment holding this
+// module's last frame. Staleness may only downgrade the picture (render.go says so in one sentence);
+// it may not turn a give-back into a hold.
+//
+// The frame is decided by render.Decide from a reading that last moved a second past that horizon,
+// so it is the frame a stale printer really produces rather than a colour a test chose.
+func TestAPauseOnABorrowedZoneHandsItBackWhenThePrinterIsStale(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	// The instant the pause lands: past the horizon, so the reading below is stale.
+	now := at.Add(printer.StaleAfter + time.Second)
+
+	strip := newFakeStrip()
+	strip.state = wled.State{Segments: []wled.Segment{
+		{ID: 0, Start: 0, Stop: 12, Name: "left", Effect: 3, Brightness: 90},
+		{ID: 1, Start: 12, Stop: 36, Name: "right", Effect: 3, Brightness: 90},
+		{ID: 2, Start: 36, Stop: 48, Name: "top", Effect: 3, Brightness: 90},
+	}}
+
+	table := &handTable{}
+
+	pen := newSegmentWriter(strip, 1, "http://10.0.0.253", quiet)
+
+	// Anchored past the staleness horizon, so the writer judges the frame and the pause at the same
+	// instant the fixture does — whatever the machine's own clock says.
+	clock := newFakeClock(now)
+	clock.watch(pen)
+
+	pen.store = table
+	pen.printer = "01J8DEVICE"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go pen.run(ctx)
+
+	stale := render.Decide(printingSnapshot(at, 62, "MK4IS"), now, render.Config{LEDs: 48})
+
+	if stale.Reason != render.ReasonStale {
+		t.Fatalf("the fixture's frame is %q at %v, not stale; this test would prove nothing about silence",
+			stale.Reason, now.Sub(at))
+	}
+
+	// The zone is being drawn in, in the dim red a stale printer is shown in.
+	pen.submit(stale)
+	strip.waitForPaints(t, 1)
+
+	if len(strip.givenBack()) != 0 {
+		t.Fatal("the zone was given back before anything was paused")
+	}
+
+	until := now.Add(10 * time.Minute)
+	table.pausing(storedPause{Scope: pauseGlobal, Chosen: pause10m, SetAt: now, Expires: &until})
+
+	// The driver's next tick, carrying news of the pause — and the same stale frame with it.
+	pen.submit(stale)
+
+	waitFor(t, "the borrowed zone to be given back while the printer is stale", func() bool {
+		return len(strip.givenBack()) == 1
+	})
+
+	given := strip.givenBack()[0]
+	if given.ID != 1 || given.Name != "right" || given.Start != 12 || given.Stop != 36 {
+		t.Fatalf("the zone was given back as %+v, want segment 1 exactly as it was found", given)
+	}
+
+	if got := strip.powerWrites(); len(got) != 0 {
+		t.Fatalf("the controller was switched %v, and a borrowed zone is handed back rather than powered off", got)
+	}
+
+	if got := strip.settleWrites(); got != 0 {
+		t.Fatalf("the controller was given %d brightness or power writes, and a borrowed zone gets neither", got)
+	}
+
+	// The one stale frame before the pause and nothing after it: the zone is left as found.
 	if got := strip.wrote(); got != 1 {
 		t.Fatalf("the borrowed zone was painted %d frames, want the one before the pause", got)
 	}
