@@ -1,10 +1,12 @@
 # Handoff — wled-printer-status
 
-Written 2026-11-19 by the wave that shipped and installed **`0.2.0`** (`905454f`, tag `v0.2.0`) on the
-operator's two lights — the release that puts the module's own page on it: seven screens, the moment and
-state tables, a layout per binding, several lights showing one printer, and the presets and identify
-routes. **Read this first, then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant
-to stand alone: if something is missing from it, the incoming agent has no other context.
+Written 2026-11-19 by the wave that shipped and installed **`0.5.0`** (`572cc61`, tag `v0.5.0`) on the
+operator's two lights — the release that puts every screen on one design system mapped onto the host's own
+variables, and the Lights screen at three levels with a light that can be ignored. Everything the module
+had by `0.2.0` is still here and still proved on the lights: seven screens, the moment and state tables, a
+layout per binding, several lights showing one printer, and the presets, identify and preview routes.
+**Read this first, then `AGENTS.md`, then `docs/product-requirements.md`.** This document is meant to
+stand alone: if something is missing from it, the incoming agent has no other context.
 
 The nine backend items this file used to list as *built as design, not code* are code now, deployed, and
 proved on the two lights. What is genuinely open is a short list at the end of §5 — read that before
@@ -28,26 +30,28 @@ early beta. The point of it is a light somebody walks past, not a screen somebod
 | Public remote | `github.com/nothingmn/wled-printer-status` |
 | Connect instance | Docker container `prusa_connect`; module CLI is `docker exec prusa_connect /prusa_connect module …` |
 | Module routes | `http://10.0.0.160:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/…` — **the `.aux.` matters, omit it and you get a 404** |
-| Module's own store | `/config/config.d/module-data/wled-printer-status/config.json`, **schema version 5** |
+| Module's own store | `/config/config.d/module-data/wled-printer-status/config.json`, **schema version 8** — written by `0.5.0`; a `0.4.0` build refuses it, so a rollback carries the store too |
 | Panel | `morpheus` `http://10.0.0.136` — 256 × 64, 16,384 pixels, WLED `14.7.0-mdev` |
 | Strip | `CyberDesk` `http://10.0.0.253` — 48 LEDs, six named zones, WLED `16.0.1` |
-| The running release | `/config/config.d/wled-release-905454f` (built from `905454f`, version `0.2.0`) |
-| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-531e73c.md` and its archive are the step back from what runs |
-| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of both lights are in `wled-rollback/lights-531e73c-20261119T1812Z/` |
+| The running release | `/config/config.d/wled-release-572cc61` (built from `572cc61`, version `0.5.0`) |
+| The way back | `/home/robchartier/wled-rollback/` — `ROLLBACK-c3ce253.md` and its archive (`0.4.0`) are the step back from what runs, and it has **both halves**: the `module add` line and the schema-7 store copy |
+| Device backups | `/home/robchartier/wled-backups/<device>-<timestamp>/`; the pre-install copies of all three lights are in `wled-rollback/lights-0.4.0-c3ce253-20261119T224944Z/` |
 | Signing key | `/home/robchartier/.prusa-signing/wled-printer-status/signing-key.pem`, `0600` in a `0700` dir — **never copy, print or commit it** |
 
-**State at the time of writing:** the tree is clean at `905454f`, level with `origin/main`. **The deployed
-release is `0.2.0`**, built from `905454f` and staged at `/config/config.d/wled-release-905454f`; its
-installed `linux_amd64` digest is
-`1b0629e3be718ec10d90fa16d510eb3cacdb2b7801c45153681ca61ead18f3a2`.
-The UI was **rebuilt** for this release — `ui/dist/ui/index.js` is 217,153 bytes and hashes to
-`4434ddc6261bd40ad2b9a62dd9304c0f316d857932ed766d113e099ffaa87872`, against the previous bundle’s
-`a46ac73b…` — and the asset the host serves was hashed and compared with the shipped file rather than
-assumed. **395 top-level tests** (`go test ./... -count=1 -v | grep -E '^--- PASS: Test'`), green plain and
-under `-race`. Version **0.2.0**, annotated tag `v0.2.0` at `905454f` pushed, `v0.1.0` untouched at
-`701d090`; installed and driving **two** lights under **one** printer, store at **schema 5** with two
-bindings and five empty tables, **zero GitHub releases** (so `release.yml` has never run). The bundle
-carries **seven screens** — the eighth the requirements name has no component yet, see §5.
+**State at the time of writing:** the tree is clean at `572cc61`, level with `origin/main`. **The deployed
+release is `0.5.0`**, built from `572cc61` and staged at `/config/config.d/wled-release-572cc61`; its
+`linux_amd64` binary hashes to
+`7760db0f4cf4bcb65fdbf2eefee6fd0ff3eedece10cc8fe6a7bf7ed64be310b8`, its bundle `ui/index.js` to
+`2b664c212b22bb1ccfe31d149d81b96364499bc9aaa44677a9d197065b2a5a40` (289,611 B) and its catalogue
+`ui/locales/en.json` to `6517b85fdda0a296a351d4f2ca8ea184dc8d0e0402ee755de70ef78f51a1d8c9` (54,014 B) —
+and all three were read back off the host, not assumed. The UI was **rebuilt from `git archive HEAD`**;
+the bundle it replaced was `5ab9236c…`. `svelte-check` gave **0 errors and 0 warnings** on that source,
+and `go build ./...`, `go vet ./...`, `go test ./... -count=1` (seven packages) and `gofmt -l` were clean
+on the release commit. Annotated tag `v0.5.0` at `572cc61` is pushed; `v0.1.0`–`v0.4.0` were not moved;
+**zero GitHub releases**, so `release.yml` has never run. Installed and driving **two** lights under
+**one** printer — `0.5.0`'s first start stepped the store from **schema 7 to 8** and kept both bindings,
+all three lights and the operator's single layout row. The bundle carries **seven screens**, all on the
+design system; `module.yaml` still says the requirements name eight.
 
 ## 3. How to build, and how to prove
 

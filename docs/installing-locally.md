@@ -2135,6 +2135,194 @@ The way back is `/home/robchartier/wled-rollback/ROLLBACK-962371f.md`: the `0.3.
 still on the volume as `wled-release-962371f`, its binary is `2a0a9593…`, and both lights were dumped to
 `/json/cfg`, `/presets.json` and `/json/state` before anything was installed, every file proved to parse.
 
+## 10. `0.5.0`: the design system, and a store step that changes the way back
+
+Everything since `0.4.0` is the look, plus one screen that got deeper. One token layer maps every colour,
+space, radius and type role onto the host's own CSS variables, eight primitives draw from it, and all
+seven screens were restyled onto them — so the module follows the instance's light or dark theme with none
+of its own colours written down. The Lights screen is three levels now (*Lights*, then In-Use / Available /
+Ignored, then one tab per light) and a light can be ignored. **The store moves to schema 8**, which is the
+one thing here an operator can trip over: a `0.4.0` build refuses a document this one writes, by name, so
+the way back is no longer a binary on its own.
+
+**Both halves of the version moved together, in one commit**, and the changelog gained two entries for
+changes that had shipped without one — the look, and a printer drawn as its name and its address:
+
+```console
+$ grep -n '^version:' module.yaml
+17:version: 0.5.0
+$ grep -n 'release = extension.Version' main.go
+128:	release = extension.Version("0.5.0")
+$ git log --oneline -1
+572cc61 0.5.0, and both halves say so
+$ git for-each-ref refs/tags --format='%(refname:short) %(objecttype) %(*objectname:short)'
+v0.1.0 tag 701d090
+v0.2.0 tag 905454f
+v0.3.0 tag 962371f
+v0.4.0 tag c3ce253
+v0.5.0 tag 572cc61
+```
+
+`v0.5.0` is the annotated tag on the release commit; the four before it sit where they sat. Gates on that
+commit, in the containers: `go build ./...` and `go vet ./...` clean, `gofmt -l` silent, `go test ./...
+-count=1` with all seven packages `ok`, and `svelte-check found 0 errors and 0 warnings`.
+
+**The release was built from `git archive HEAD`, and its bundle was rebuilt in the same act — by a script
+mounted into the container, never by a command with its body in the `ssh` string.** The container's `/tmp`
+is not the host's `/tmp`, so a gate written host-side is invisible to a container that expects it:
+
+```console
+$ ssh robchartier@10.0.0.160 'cat > /tmp/ui-gate.sh' < ui-gate.sh
+$ ssh robchartier@10.0.0.160 'wc -l /tmp/ui-gate.sh'
+11 /tmp/ui-gate.sh
+$ docker run --rm --user 1000:1000 -e HOME=/tmp -e CI=true \
+    -v /home/robchartier/prusa/wled-build-572cc61/src:/work \
+    -v /tmp/ui-gate.sh:/tmp/ui-gate.sh:ro -w /work \
+    node:22-bookworm /bin/sh /tmp/ui-gate.sh
+…          # pnpm install --frozen-lockfile, pnpm run check, pnpm run build — exit 0, or the build stops
+```
+
+The gate's own evidence, re-run against the same export with the build step left off, so the check's answer
+can be quoted rather than inferred from the exit status:
+
+```console
+Already up to date
+Done in 417ms using pnpm v11.3.0
+$ svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+```
+
+The four binaries came out of the same export in `golang:1.26.11` with `CGO_ENABLED=0` and `-trimpath`;
+`file` reads the linux one as *statically linked*, `ldd` answers *not a dynamic executable*. The release
+directory is `module.yaml`, `README.md`, `CHANGELOG.md`, `LICENSE`, `ui/` and the four binaries, its
+`checksums.txt` covers ten files, and `sha256sum -c` says **OK** for all ten.
+
+**The two bundle digests differ, and the new screens are in the shipped one.** The catalogue is a separate
+asset: the words a person reads live in `ui/locales/en.json`, the link builder and the tokens live in
+`ui/index.js`, so a single-file grep reads a correct release as broken. Both files, both counts:
+
+```console
+$ sha256sum release/ui/index.js release/ui/locales/en.json
+2b664c212b22bb1ccfe31d149d81b96364499bc9aaa44677a9d197065b2a5a40  release/ui/index.js        # 289,611 B
+6517b85fdda0a296a351d4f2ca8ea184dc8d0e0402ee755de70ef78f51a1d8c9  release/ui/locales/en.json # 54,014 B
+$ sha256sum /config/config.d/modules/wled-printer-status/bundle/ui/index.js   # what 0.4.0 served
+5ab9236cdee9206dbfc9445a49994e8c1e1158c7331be9fd5caeaeae7810babf  …/bundle/ui/index.js        # 250,573 B
+$ for s in Overview 'Last Updated' 'Right now' --wled-canvas --wled-panel; do
+    printf '%-14s index.js=%s en.json=%s\n' "$s" \
+      "$(grep -o -F -- "$s" release/ui/index.js | wc -l)" \
+      "$(grep -o -F -- "$s" release/ui/locales/en.json | wc -l)"; done
+Overview       index.js=0  en.json=3
+Last Updated   index.js=0  en.json=1
+Right now      index.js=0  en.json=0
+--wled-canvas  index.js=1  en.json=0
+--wled-panel   index.js=1  en.json=0
+```
+
+`Overview` and `Last Updated` are catalogue values; `Right now` is in neither file; the two token variables
+are in the JS, which is the new UI's own evidence that the restyle shipped rather than a restyled mockup.
+
+**Staged through the container, installed with no `-settings` and one restart.** `/config/config.d` is
+`0700 prusa:prusa`, so the release goes in with `docker cp` rather than a host-side copy. The files land
+owned by the build uid (`1000`) because the container's root is remapped and cannot `chown` them; they are
+world-readable and mode `755` on the binaries, which is what the module user needs — proved by reading the
+manifest and both bundle files back **as** that user before installing.
+
+```console
+$ docker cp ~/prusa/wled-build-572cc61/release prusa_connect:/config/config.d/wled-release-572cc61
+$ docker exec prusa_connect sh -c 'cd /config/config.d/wled-release-572cc61 && sha256sum -c checksums.txt'
+CHANGELOG.md: OK   LICENSE: OK   module.yaml: OK   README.md: OK
+ui/index.js: OK    ui/locales/en.json: OK
+wled-printer-status_darwin_arm64: OK   wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK    wled-printer-status_windows_amd64.exe: OK
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.5.0 \
+    -from /config/config.d/wled-release-572cc61 -approve
+installed com.github.aux.nothingmn.wled-printer-status/wled-printer-status as sink:wled-printer-status
+  files       config/config.d/modules/wled-printer-status
+  namespace   com.github.aux.nothingmn.wled-printer-status
+  checksums   10 files verified against checksums.txt
+  connects to 10.0.0.136 port 80,4048 from the process: …    # and 10.0.0.253, both as the manifest declares
+  granted     org:local#viewer@sink:wled-printer-status for observe. …
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+```
+
+The full namespace is required — `module add wled-printer-status@0.5.0` exits 1 with *"names no
+namespace"* — and there is no `-settings`, because the manifest declares no options and the store is this
+module's configuration.
+
+```console
+$ date -u +%H:%M:%SZ; docker restart prusa_connect; date -u +%H:%M:%SZ
+22:52:26Z
+prusa_connect
+22:52:27Z
+$ docker ps --filter name=prusa_connect --format '{{.Names}}  {{.Status}}'
+prusa_connect  Up 30 seconds (healthy)
+$ docker restart prusa_connect   # and that was the only one this install ran
+```
+
+**What it says about itself, straight after that restart** — and this time there *is* a `was upgraded`
+line, because the schema moved:
+
+```console
+msg="wled-printer-status: gave segment 5 \"Front 2\" back to http://10.0.0.253: pixels 38-48, …"
+msg="wled-printer-status 0.5.0 is serving on stdio as pid 14"
+msg="wled-printer-status: the configuration store at /config/config.d/module-data/wled-printer-status/config.json
+     was upgraded from schema version 7 to 8"
+msg="wled-printer-status: the set this start runs is the one in this module's own store at
+     /config/config.d/module-data/wled-printer-status/config.json, schema version 8 (2 bindings);
+     the settings are a migration source and are not applied again"
+msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128"
+msg="wled-printer-status: watching printer 07e893bb-… and driving segment 5 of http://10.0.0.253, …"
+msg="the child process is serving" … plugin_version=0.5.0 contract=1.1.0
+     mount=/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+msg="the module's files are serving" … mount=…/ui/ draws=true
+msg=readiness ready=true serving=7 declared=7 …
+```
+
+The store across that start, read out of the volume before and after:
+
+```console
+before: version 7 | bindings 2 | lights 3 | layouts 1 | pauses 0 | sha256 884e841d…
+after : version 8 | bindings 2 | lights 3 | layouts 1 | pauses 0 | sha256 a0bfcb81…
+        layout rows: [binding 07e893bb…, remaining=True, percent=True]
+        lights: 10.0.0.136 ignored=False | 10.0.0.253 ignored=False | 10.0.0.99 ignored=False
+```
+
+Two bindings on the one printer — the panel whole at segment `-1` and brightness 128, the strip on segment
+`5` — three known lights, and the operator's single layout row still carrying `remaining: true`. Nothing
+is paused. The step added the `ignored` flag to each light and changed no value.
+
+**The proofs, each with its answer:**
+
+| read | answer |
+|---|---|
+| `GET /status` | `200`, both bindings `PRINTING`, frame `[0,170,0]`, `reason: progress`, `percent 85`, `remaining_seconds 960`, `stale false`, `last_send.ok: true` on both |
+| `GET /frames` | `200`, **two** frames: panel 256 × 64, strip 10 × 1, both `reason: progress`, `percent 85` |
+| `GET /lights` | `200`, `count 3`, `persisted true` — `morpheus` 10.0.0.136, `CyberDesk` 10.0.0.253, `DamonAward` 10.0.0.99, every one `ignored: false` |
+| `GET /bindings` | `200`, `count 2`, both ids as the document holds them |
+| `GET /pause` | `paused: false`, `pauses: []` |
+| `GET …/ui/ui/index.js` | `200`, 289,611 B, `2b664c21…` — **the shipped file**, byte for byte |
+| `GET …/ui/ui/locales/en.json` | `200`, 54,014 B, `6517b85f…` — the shipped catalogue |
+| `GET /settings/extensions/…` | `200 text/html`, 3,431 B |
+| the strip itself, `GET http://10.0.0.253/json/state` | segment 5 `on: true`, `col: [[0,170,0], …]`, pixels 38–46, so the borrowed segment is showing the module's colour |
+
+The panel's frame arrives over DDP, so `GET /frames` is the only description of what it is drawing; its
+`/json/state` segment stays the establishing body in black and is not evidence either way. No identify and
+no preview was fired, and nothing was cleared — the operator fires and clears those himself.
+
+One observation, recorded because it is in this restart's log and is not this release's doing:
+`modules promise more memory than the pool holds promised_mib=3168 pool_mib=1536`. The module's own ask is
+unchanged at 32 MiB, which is its measured high-water mark plus headroom; the figure is the sum over six
+installed modules against the instance's pool, and it appeared before this install as well.
+
+The way back is `/home/robchartier/wled-rollback/ROLLBACK-c3ce253.md`: the `0.4.0` release is still on the
+volume as `wled-release-c3ce253`, its binary is `7985ed85…` and its bundle `5ab9236c…`, and **that document
+has two halves because this release has two** — the `module add` line and the schema-7 store copy. Restoring
+the binary alone leaves the module installed and not starting.
+
 ## Two facts a reader has to know
 
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read
