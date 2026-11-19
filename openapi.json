@@ -1696,6 +1696,78 @@
         }
       }
     },
+    "/devices/{name}/presets": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The light's name on these routes: its address without the scheme, so that it is one path segment. http://10.0.0.136 is 10.0.0.136 here, and GET /controllers carries it as name.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "list-presets",
+        "summary": "The presets the light itself holds, by slot and name",
+        "description": "A light's own preset table, read from the controller's /presets.json: one entry per preset, with the slot a state write addresses and the name WLED's own interface shows for it, lowest slot first. This is the list a moment's which is chosen from and the read-only list a light's card shows, and it exists because a name typed into a box is a name nobody can check against the light. A preset's body is never carried: its segments, effect, palette, brightness and LED map belong to WLED's own interface, which is where a preset is created and tuned, and only the slot and the name travel here. Slot 0 is not listed: WLED keeps it for itself, and both lights this build was measured against answer with an empty object there - no name and no body. A slot with no name is still listed, with name empty and unnamed true, because it is still a preset the light holds and can be run. A light that does not answer is not refused: presets_known is false, presets is an empty list and presets_unread says why, which is the difference between a light holding no presets and one nobody could ask; the snapshots this module holds carry the table as the light last answered. Nothing on this route writes to a controller, and nothing here needs the configuration store. The host takes view_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The light's own presets, by slot and name, and whether this module could read them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device": {
+                      "type": "string",
+                      "description": "The light's name on these routes."
+                    },
+                    "address": {
+                      "type": "string",
+                      "description": "The controller's base URL as an operator wrote it."
+                    },
+                    "presets_known": {
+                      "type": "boolean",
+                      "description": "True when the light answered and presets is its own table. False when it could not be read, in which case presets is empty and presets_unread says why."
+                    },
+                    "presets": {
+                      "type": "array",
+                      "description": "The light's own presets, lowest slot first, slot 0 excluded. Empty when the light holds none, and empty with presets_known false when it could not be read.",
+                      "items": {"$ref": "#/components/schemas/Preset"}
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "How many presets the light holds. The same reading a snapshot's presets count is taken with, so the two numbers agree for one light."
+                    },
+                    "presets_unread": {
+                      "type": "string",
+                      "description": "Why the presets could not be read, absent when the light answered."
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "What the list does and does not say: why slot 0 is absent, that the light holds none, or that the empty list means the light could not be asked."
+                    }
+                  },
+                  "required": ["device", "address", "presets_known", "presets", "count", "note"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/devices/{name}/restore": {
       "parameters": [
         {
@@ -2196,6 +2268,16 @@
           "retryable": {"type": "boolean", "description": "Whether sending the same request again can work."}
         },
         "required": ["code", "title"]
+      },
+      "Preset": {
+        "type": "object",
+        "description": "One of a light's own presets: the slot it sits at and the name WLED's own interface shows for it, and nothing else. A preset's body - its segments, effect, palette, brightness and LED map - is the light's whole picture and belongs to WLED's own interface, where a preset is created and tuned; this module names a preset and never carries, draws or edits one.",
+        "properties": {
+          "slot": {"type": "integer", "description": "The slot the preset is stored in, and the number a state write addresses. One or higher: slot 0 is WLED's own and is never listed."},
+          "name": {"type": "string", "description": "The name the preset carries, with surrounding spaces trimmed, because that trim is what a moment's which is matched on. Empty on a slot that has never been named."},
+          "unnamed": {"type": "boolean", "description": "True when the slot carries no name. The slot is still a preset the light holds and can be run, so it is listed rather than left out, and a screen shows it by its slot number."}
+        },
+        "required": ["slot", "name", "unnamed"]
       },
       "SnapshotDevice": {
         "type": "object",

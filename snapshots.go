@@ -633,24 +633,102 @@ func credentialHeld(config json.RawMessage, member string) bool {
 	return held
 }
 
-// presetsHeld is how many preset slots a snapshot's table defines, not counting slot 0, which the
-// firmware keeps for "off".
-func presetsHeld(presets json.RawMessage) int {
+// presetSlot is one of a controller's own presets, as this module reads the table: the number a
+// state write names it by, and the words WLED's own interface shows for it.
+//
+// It is slot and name and nothing else. A preset's body carries segments, an effect, a palette, a
+// brightness and a LED map — it is the light's whole picture — and none of that is this module's to
+// carry: docs/product-requirements.md §2.3 permits naming one and forbids drawing, editing or
+// re-creating one. There is deliberately no field here that could hold a body, so no route built on
+// this type can leak one.
+type presetSlot struct {
+	// Slot is the number a state write addresses and a moment's preset is resolved to.
+	Slot int `json:"slot"`
+
+	// Name is the preset's name as the light holds it, with the surrounding spaces trimmed,
+	// because that trim is exactly what a moment's `which` is matched on (internal/wled/preset.go).
+	// Empty on a slot that has never been named.
+	Name string `json:"name"`
+
+	// Unnamed is true when the slot carries no name. It is a member rather than something a caller
+	// works out from an empty string, because the two facts a screen needs are different: this
+	// slot is a preset the operator can pick, and this slot has no words to show for it. An
+	// unnamed slot is still offered — it is a picture the light holds — and a screen that hides it
+	// leaves the operator unable to reach a preset WLED's own interface still lists.
+	Unnamed bool `json:"unnamed"`
+}
+
+// presetEntry is the part of one preset this module reads out of the table: its name, `n` on the
+// wire, which is the only string WLED's interface shows a person.
+type presetEntry struct {
+	Name string `json:"n"`
+}
+
+// presetSlots parses the controller's own preset table — GET /presets.json, which is
+// `{"1": {...}, "2": {...}}` — into the slots it holds, lowest slot first.
+//
+// # One reading of that document
+//
+// This is the only parser of /presets.json in this package, and both callers go through it: the
+// snapshot's count (presetsHeld) and GET /devices/{name}/presets. A second parse of the same table
+// is a second answer to "which presets does this light hold", and the two drift the moment one of
+// them learns something the other does not. internal/wled has its own reader for its own reason —
+// it resolves a name to an id to run one — and that is the only other reading in the tree.
+//
+// # Slot 0
+//
+// WLED keeps slot 0 for itself. Measured on both of this operator's lights rather than assumed
+// (morpheus 10.0.0.136 and CyberDesk 10.0.0.253, WLED's own /presets.json): slot 0 is present in
+// the document as an empty object `{}` — no name, no body, no segments — while every user preset is
+// a slot numbered 1 or higher carrying `n`. So slot 0 is skipped, whatever it holds, and the count
+// and the list agree with each other and with what WLED's own interface offers. A slot numbered
+// below one is skipped with it: no firmware writes a preset a state cannot address.
+//
+// # What is not a slot
+//
+// A key that is not a number is not a slot this firmware takes, and internal/wled's own resolver
+// says the same thing. It is skipped rather than reported, because there is no number to offer a
+// caller who has to write one back.
+func presetSlots(presets json.RawMessage) ([]presetSlot, error) {
 	var table map[string]json.RawMessage
 
 	if err := json.Unmarshal(presets, &table); err != nil {
+		return nil, fmt.Errorf("the preset table is not an object keyed by slot: %w", err)
+	}
+
+	slots := make([]presetSlot, 0, len(table))
+
+	for key, body := range table {
+		slot, convErr := strconv.Atoi(strings.TrimSpace(key))
+		if convErr != nil || slot < 1 {
+			continue
+		}
+
+		var entry presetEntry
+		// An entry that is not an object — `null`, a number, a string — carries no name. That is
+		// not an error: it is still a slot, and an unnamed one is still offered.
+		_ = json.Unmarshal(body, &entry)
+
+		name := strings.TrimSpace(entry.Name)
+
+		slots = append(slots, presetSlot{Slot: slot, Name: name, Unnamed: name == ""})
+	}
+
+	sort.Slice(slots, func(i, j int) bool { return slots[i].Slot < slots[j].Slot })
+
+	return slots, nil
+}
+
+// presetsHeld is how many presets a snapshot's table defines, by the same reading the Devices route
+// lists them with: slot 0 excluded, because the firmware keeps it for itself. A table this build
+// cannot read holds no presets it can count.
+func presetsHeld(presets json.RawMessage) int {
+	slots, err := presetSlots(presets)
+	if err != nil {
 		return 0
 	}
 
-	defined := 0
-
-	for slot := range table {
-		if slot != "0" {
-			defined++
-		}
-	}
-
-	return defined
+	return len(slots)
 }
 
 // deviceOf is one light as a snapshot records it: this module's name for it, the light's own, and

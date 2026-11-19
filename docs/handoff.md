@@ -166,8 +166,9 @@ in the order the UI needed them:
    and a document from a *newer* release refused by name and both versions.
 
 Around them: the binding routes (`GET/POST /bindings`, `GET/PUT/DELETE /bindings/{id}`), `/printers`,
-`/controllers`, the four preview routes, `/status`, `/wled-printer-status`, and a Svelte UI bundle served
-from the module's own `ui/`.
+`/controllers`, `GET /devices/{name}/presets` (a light's own presets, by slot and name, read-only, which
+is the list a moment's `which` is picked from), the four preview routes, `/status`,
+`/wled-printer-status`, and a Svelte UI bundle served from the module's own `ui/`.
 
 **Genuinely open — do not report these as done:**
 

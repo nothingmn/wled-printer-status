@@ -1,11 +1,13 @@
-// The Devices screen's routes: a light's snapshots, and putting one back.
+// The Devices screen's routes: a light's snapshots, its own presets, and putting a snapshot back.
 //
 // # What this surface is
 //
 // docs/product-requirements.md §2.6 gives every light a card carrying its hardware facts, its
 // segments, its presets and two buttons: `refresh now`, which reads the light immediately, and
 // `download a backup`, which hands the same thing to a file outside the module. §5's third item is
-// the pair behind them: GET a light's snapshots, and POST one back.
+// the pair behind them: GET a light's snapshots, and POST one back. The card's presets are the
+// third route here, read-only, because §2.3 makes a moment's `which` "the light's own presets by
+// name" and a name nobody can look up is a name nobody can check.
 //
 // A snapshot exists because a dead light cannot be read. It is not a cache — the requirements say so
 // in as many words — it is the copy that was taken while the device was alive, which is exactly the
@@ -191,6 +193,11 @@ func (api deviceAPI) mount(mux *http.ServeMux) {
 
 	// One snapshot by id, with everything a restore would send and everything it would not.
 	mux.HandleFunc("GET /devices/{name}/snapshot/{id}", api.readSnapshot)
+
+	// The light's own presets, by slot and name. Read-only and a read of the light: this is what
+	// the Events screen picks a moment's `which` from and what the Devices screen shows as a
+	// light's own list. Nothing on this route writes to a controller.
+	mux.HandleFunc("GET /devices/{name}/presets", api.listPresets)
 
 	// Putting one back. See the file's own comment for why this one is hard to fire and slow to
 	// answer.
@@ -555,6 +562,147 @@ func (api deviceAPI) readSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	answer(w, http.StatusOK, body)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The light's own presets
+// ---------------------------------------------------------------------------------------------
+
+// presetsAnswer is one light's own preset table as a caller reads it: the slot numbers and the
+// names, and which of the two facts about them this module could establish.
+//
+// The two members are separate for the reason controllerReadAnswer's are. Device and Address are
+// this module's own record and are always true. Presets is the light's answer, and PresetsKnown
+// says whether there is one: a light that does not answer leaves it false with the reason in
+// PresetsUnread and an empty list, because an empty list presented as the light's answer reads as a
+// light holding no presets — and a picker built on that would send the operator to WLED's own
+// interface to build one he already has.
+type presetsAnswer struct {
+	Device  string `json:"device"`
+	Address string `json:"address"`
+
+	PresetsKnown bool         `json:"presets_known"`
+	Presets      []presetSlot `json:"presets"`
+	Count        int          `json:"count"`
+
+	// PresetsUnread says why the list is empty, and is absent when the light answered.
+	PresetsUnread string `json:"presets_unread,omitempty"`
+
+	Note string `json:"note"`
+}
+
+const (
+	// presetZeroNote is the one omission this route makes, said in words rather than left to be
+	// discovered. Measured, not assumed: see presetSlots.
+	presetZeroNote = "Slot 0 is not in this list: WLED keeps it for itself, and both lights this build was " +
+		"measured against answer with an empty object there — no name and no body. Every slot WLED's own " +
+		"interface offers is listed, unnamed ones included."
+
+	// presetNoneNote is an empty list that means what it says.
+	presetNoneNote = "This light answered and holds no presets of its own. A moment that shows a preset needs one " +
+		"built and tuned in WLED's own interface first, because this module only ever names one and never " +
+		"writes one."
+
+	// presetUnreadNote is the empty list that means something else entirely, and it names where the
+	// last copy of the table is — the snapshot taken while the light was alive.
+	presetUnreadNote = "The list is empty because this module could not read the light, not because the light " +
+		"holds no presets. Read GET /devices/{name}/snapshot for the copies this module already holds: each " +
+		"one carries the light's whole preset table as it was the last time the light answered."
+
+	// presetUnnamedNote is said only when the light holds at least one slot with no name, because a
+	// blank row in a picker otherwise reads as a rendering fault.
+	presetUnnamedNote = " At least one slot carries no name; each of those is still a preset the light holds " +
+		"and can be run by its slot, so it is listed with an empty name and unnamed true rather than left out."
+)
+
+// listPresets is GET /devices/{name}/presets: the presets the light itself holds, by slot and name.
+//
+// # Why this route exists
+//
+// docs/product-requirements.md §2.3 makes a moment's `which` "the light's own presets by name", and
+// §2.6 gives every light its presets read-only. A name typed into a box because the module cannot
+// list the light's own table is a name nobody can check, and a screen that shows a light's presets
+// cannot show them without asking. This is the asking: one read of /presets.json, through the parser
+// the snapshot already counts with, and slot and name per preset.
+//
+// # Why an unreachable light is a 200
+//
+// It is the shape GET /controllers/{name} already answers with, for the same reason: the lights this
+// module drives are a fact even when one of them is unplugged, so the route answers, says the list
+// could not be read, and says why. A light that is asleep must not turn a page into a failure — the
+// events and moments this module holds are still there, and the screen has the stored names to fall
+// back on. The reason travels in presets_unread, the list is empty, and presets_known is false.
+//
+// # What it never does
+//
+// It reads and nothing else. There is no preset here whose body this module copies, keeps or writes,
+// and no member that could carry one: naming a preset is the whole of this module's part in them.
+func (api deviceAPI) listPresets(w http.ResponseWriter, r *http.Request) {
+	found, ok, err := api.deviceNamed(r.PathValue("name"))
+	if err != nil {
+		refuse(w, r, BindingRefused.New(err.Error()))
+
+		return
+	}
+
+	if !ok {
+		refuse(w, r, api.unknownDevice(r.PathValue("name")))
+
+		return
+	}
+
+	said := presetsAnswer{Device: found.Name, Address: found.Address, Presets: []presetSlot{}}
+
+	table, err := api.presetTableOf(r.Context(), found.Address)
+	if err == nil {
+		var slots []presetSlot
+
+		slots, err = presetSlots(table)
+		if err == nil {
+			said.PresetsKnown = true
+			said.Presets = slots
+			said.Count = len(slots)
+			said.Note = presetZeroNote
+
+			if len(slots) == 0 {
+				said.Note = presetNoneNote
+			}
+
+			for _, one := range slots {
+				if one.Unnamed {
+					said.Note += presetUnnamedNote
+
+					break
+				}
+			}
+		}
+	}
+
+	if err != nil {
+		// The read failed, or the light answered with something that is not a preset table. Both
+		// are the same fact to a caller: this module has no list, and the reason is here.
+		said.PresetsUnread = err.Error()
+		said.Note = presetUnreadNote
+	}
+
+	answer(w, http.StatusOK, said)
+}
+
+// presetTableOf reads one light's /presets.json, bounded, through the same client the snapshots use.
+//
+// The bound is the devices surface's own: the client already times out at two seconds, and this is
+// the outer guard for a socket that accepts the connection and then says nothing — the case a
+// timeout on the write does not cover.
+func (api deviceAPI) presetTableOf(ctx context.Context, address string) (json.RawMessage, error) {
+	light, err := api.lightFor(address)
+	if err != nil {
+		return nil, fmt.Errorf("this module drives %s and cannot build a client for it: %w", address, err)
+	}
+
+	read, cancel := context.WithTimeout(ctx, deviceReadTimeout)
+	defer cancel()
+
+	return light.Presets(read)
 }
 
 // ---------------------------------------------------------------------------------------------

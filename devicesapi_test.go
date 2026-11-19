@@ -61,6 +61,10 @@ type fakeDevice struct {
 	config  json.RawMessage
 	presets json.RawMessage
 
+	// presetsErr, when set, is what a read of its preset table answers instead of the table:
+	// a light that is unplugged, or one that answers with something that is not a table.
+	presetsErr error
+
 	// writes is every configuration body written to it, in order.
 	writes []json.RawMessage
 
@@ -132,8 +136,15 @@ func (f *fakeDevice) Config(context.Context) (json.RawMessage, error) {
 	return f.config, nil
 }
 
-// Presets is the light's preset table.
-func (f *fakeDevice) Presets(context.Context) (json.RawMessage, error) { return f.presets, nil }
+// Presets is the light's preset table, or the failure that stands for a light which is not
+// answering at all: presetsErr is what the route that reads a dead light's presets is tested with.
+func (f *fakeDevice) Presets(context.Context) (json.RawMessage, error) {
+	if f.presetsErr != nil {
+		return nil, f.presetsErr
+	}
+
+	return f.presets, nil
+}
 
 // StateDocument is what the light is doing now, as the firmware answers it.
 func (f *fakeDevice) StateDocument(context.Context) (json.RawMessage, error) {

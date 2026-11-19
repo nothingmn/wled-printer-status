@@ -152,8 +152,9 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
 - The Events screen is the moment table, one light at a time: the light is chosen at the top, the moment is
   the row, and a light carrying more than one printer gains an indented sub-row per printer with that
   printer's segment and its own `enabled`, `shows`, `which` and `for` — a light carrying one printer is
-  exactly the flat table. `shows` decides what `which` is: a preset's name as WLED spells it, typed because
-  no route lists a light's presets and stored as written; a word for a panel; one of the twelve state
+  exactly the flat table. `shows` decides what `which` is: a preset's name as WLED spells it, typed in this
+  release because the screen does not yet read `GET /devices/{name}/presets`, and stored as written; a word
+  for a panel; one of the twelve state
   names; or nothing. The field changes with the choice, and a `which` that does not belong to its `shows`
   is refused with the reason beside the field rather than coerced. A change is written into the module's
   own store and kept whether or not the light is answering, a row at its default says so and offers no
@@ -170,6 +171,14 @@ Waiting on `version:` in `module.yaml`, which is not raised until this is releas
   because that is what the light shows — or `later` when no light is showing that state. A character the
   font cannot draw, and a word too wide for the panel at that scale, are named beside the field, because
   the module refuses such a word and draws the state's colour instead.
+- `GET /devices/{name}/presets` answers the presets the light itself holds, by slot and by name: the list a
+  moment's `which` is picked from and the read-only list a light's card shows, read from the controller's
+  own `/presets.json` when the route is called. `presets_known` says whether the light answered — a light
+  that is unplugged answers `200` with an empty list and `presets_unread` saying why, rather than failing
+  the page or offering an empty list as though the light held nothing — and a light holding none says so in
+  words. Slot 0 is not listed: it is WLED's own, and both lights answer with an empty object there. A slot
+  with no name is listed with an empty name and `unnamed: true`, because it is still a preset the light
+  holds. No preset's body is read out: segments, effects and palettes stay in WLED's own interface.
 
 ### Fixed
 
