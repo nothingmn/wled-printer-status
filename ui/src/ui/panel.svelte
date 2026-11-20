@@ -29,6 +29,13 @@
 	interface Props extends Omit<HTMLAttributes<HTMLElement>, 'class' | 'children'> {
 		/** The panel's own heading, when it has one. Omitted, the panel is a box. */
 		title?: string;
+		/**
+		 * The heading as a component instead of a string, for the one shape a string cannot carry:
+		 * a light's name and address are two links (light-link.svelte), and a panel whose heading
+		 * is a light is the card a person recognises that light by. `title` is what a heading says
+		 * when it is words; this is what it says when it is a thing.
+		 */
+		heading?: Snippet;
 		/** A short second line beside the heading. */
 		hint?: string;
 		/** What sits at the right end of the heading row: a count, a chip, a button. */
@@ -42,6 +49,7 @@
 
 	let {
 		title = '',
+		heading,
 		hint = '',
 		meta,
 		pad = 'panel',
@@ -50,8 +58,8 @@
 		...rest
 	}: Props = $props();
 
-	/** A heading is drawn for a title or for what sits beside it, and for nothing else. */
-	const headed = $derived(title !== '' || hint !== '' || meta !== undefined);
+	/** A heading is drawn for a title, a supplied heading, or what sits beside it, and for nothing else. */
+	const headed = $derived(title !== '' || heading !== undefined || hint !== '' || meta !== undefined);
 </script>
 
 <section
@@ -60,7 +68,9 @@
 >
 	{#if headed}
 		<header class="flex flex-wrap items-center gap-row border-b border-wled-line px-panel py-row">
-			{#if title !== ''}
+			{#if heading}
+				{@render heading()}
+			{:else if title !== ''}
 				<h2 class="font-ui text-sm font-medium">{title}</h2>
 			{/if}
 			{#if hint !== ''}

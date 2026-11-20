@@ -10,6 +10,9 @@
   "printer.open_in_connect": "{printer} — open this printer's page in Prusa Connect in a new window",
   "printer.open_address": "{address} — open this printer's page in Prusa Connect in a new window",
 
+  "light.open_page": "{light} — open this light's own page in a new window",
+  "light.open_address": "{address} — open this light's own page in a new window",
+
   "screen.right_now": "Overview",
   "screen.bindings": "Bindings",
   "screen.events": "Events",
@@ -440,8 +443,6 @@
   "devices.loading": "Reading the lights…",
   "devices.load_failed": "The lights could not be read",
   "devices.no_lights": "No lights here yet. Type a light's address above and it will be read and added — no printer has to be free, and nothing else needs setting up first.",
-  "devices.open_named": "{name} — open this light's own interface in a new window",
-  "devices.open_address": "{address} — open this light's own interface in a new window",
   "devices.no_name_yet": "has not answered yet, so it has no name",
   "devices.answering": "answering",
   "devices.not_answering": "not answering",
@@ -539,7 +540,11 @@
 
   "diagnostics.title": "Diagnostics",
   "diagnostics.intro": "Why the light is doing that. The four tiles and the picture are the present tense — what the module decided and what it wrote — and the list under them is every instant it can still name.",
-  "diagnostics.binding": "Light and printer",
+  "diagnostics.lights": "Lights",
+  "diagnostics.build_name": "WLED Printer Status",
+  "diagnostics.build_store": "store schema {schema}",
+  "diagnostics.build_open": "{what} — open this module's repository in a new window",
+  "diagnostics.bindings_heading": "Bindings on this light",
   "diagnostics.loading": "Reading what the module says…",
   "diagnostics.load_failed": "The module could not be read",
   "diagnostics.nothing_yet": "Nothing has been drawn yet, so there is nothing to diagnose.",

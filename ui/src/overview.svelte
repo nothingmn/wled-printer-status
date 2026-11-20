@@ -44,9 +44,10 @@
 	import {
 		addressOf,
 		freeSegments,
-		known,
+		lightTitle,
 		lights,
 		loadKnownLights,
+		nameOf,
 		offered,
 		roomOn,
 		type LightFacts,
@@ -59,7 +60,8 @@
 		refreshPauses,
 		resumeOne,
 	} from './pause.svelte';
-	import PrinterLink from './printer-link.svelte';
+	import LightLink from './light-link.svelte';
+import PrinterLink from './printer-link.svelte';
 	import { Button, Chip, Field, FieldInput, Panel } from './ui';
 
 	const host = heldHost();
@@ -230,20 +232,6 @@
 	 */
 	const canBind = $derived(freePrinters.length > 0 && freeLights.length > 0);
 
-	/**
-	 * What a light calls itself, from the row this module keeps for it: `DamonAward`, not
-	 * `10.0.0.99`. The route name is the address without its scheme, which is nobody's name for
-	 * their own light; a light that has never answered has no better name and says its address.
-	 */
-	const namedOf = (one: LightFacts): string => {
-		const row = known.list.find(
-			(held) => lightName(held.address) === lightName(addressOf(one)) || held.name === (one.controller?.name ?? ''),
-		);
-		const calls = row?.calls_itself ?? '';
-
-		return calls === '' ? (one.controller?.name ?? '') : calls;
-	};
-
 	const load = async (quiet = false): Promise<void> => {
 		if (!quiet) loading = true;
 
@@ -304,7 +292,9 @@
 
 		try {
 			await api.addBinding(body);
-			notice = t('overview.bind_done', { printer: printer?.name ?? picked, light: namedOf(one) });
+			// The light's title in a sentence, which is the same name and bare address a tab wears:
+			// a sentence cannot carry two links, and the row it is about is drawn with them below.
+			notice = t('overview.bind_done', { printer: printer?.name ?? picked, light: lightTitle(nameOf(one), addressOf(one)) });
 			picked = null;
 			await Promise.all([load(true), loadKnownLights()]);
 		} catch (problem) {
@@ -529,8 +519,12 @@
 		<Panel pad="none">
 			{#each groups as group (group.light)}
 				<div class="flex flex-wrap items-center gap-row border-b border-wled-line bg-wled-sunken px-panel py-row">
-					<span class="font-ui text-sm font-medium">{group.light}</span>
-					<span class="font-data text-xs text-wled-text-quiet">{group.address}</span>
+					<!-- The light's identity, in the one shape a light wears: its name as it calls itself
+					     and its address, both links to its own page. It used to be two bare spans here
+					     while the printer below it was two anchors, which read as half-finished. -->
+					<span class="font-ui text-sm font-medium">
+						<LightLink name={group.light} address={group.address} cls={NAME_LINK} />
+					</span>
 					{#if group.frames.length > 1}
 						<Chip>
 							{t('overview.printers_on_light', { count: group.frames.length })}
@@ -716,10 +710,9 @@
 			{:else}
 				{#each freeLights as one (addressOf(one))}
 					<div class="flex flex-wrap items-center gap-row border-b border-wled-line px-panel py-row font-ui text-sm last:border-b-0">
-						<span class="font-medium">{namedOf(one)}</span>
-						{#if namedOf(one) !== (one.controller?.name ?? '')}
-							<span class="font-data text-xs text-wled-text-quiet">{one.controller?.address}</span>
-						{/if}
+						<span class="font-medium">
+							<LightLink name={nameOf(one)} address={addressOf(one)} cls={NAME_LINK} />
+						</span>
 						{#if canBind}
 							<span class="ml-auto">
 								<Button

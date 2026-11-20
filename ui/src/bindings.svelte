@@ -63,13 +63,16 @@
 	import {
 		addressOf,
 		freeSegments,
+		loadCalledNames,
 		loadLights,
 		lights,
+		nameOf,
 		offered,
 		wholeTaker,
 		type LightFacts,
 	} from './lights.svelte';
 	import { everythingPaused, fateOf, pauseOne, refreshPauses, resumeOne } from './pause.svelte';
+	import LightLink from './light-link.svelte';
 	import PrinterLink from './printer-link.svelte';
 	import { Button, Chip, Disclosure, Panel } from './ui';
 
@@ -78,8 +81,8 @@
 	const t = host.t;
 
 	/** A printer's name, worn as a link to its own page. The address beside it is drawn by
-	 *  printer-link.svelte, so both parts are links, which is the shape a light wears on the
-	 *  Lights screen. */
+	 *  printer-link.svelte, and a light wears the same shape through light-link.svelte, so both
+	 *  parts are links on both kinds of device. */
 	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	let printers = $state<Printer[]>([]);
@@ -183,6 +186,9 @@
 					return { frames: [] as Frame[], count: 0, note: '' };
 				}),
 				loadLights(),
+				// The names the lights call themselves, read beside the rest so a card's heading is
+				// the light's identity on its first paint rather than an address that becomes a name.
+				loadCalledNames(),
 			]);
 
 			printers = fleet.printers;
@@ -308,9 +314,16 @@
 			{@const reach = reachOf(one)}
 			{@const free = freeSegments(one).length}
 			{@const room = free > 0 || one.bindings.length === 0}
-			<Panel title={one.controller?.name ?? addressOf(one)} pad="none">
+			<Panel pad="none">
+				<!-- The light's heading is the one place a card names it, so it wears the shared shape:
+				     the name it calls itself and its address, both links to its own page. It used to be
+				     the route name (a bare address) with the address printed again beside it. -->
+				{#snippet heading()}
+					<h2 class="font-ui text-sm font-medium">
+						<LightLink name={nameOf(one)} address={addressOf(one)} cls={NAME_LINK} />
+					</h2>
+				{/snippet}
 				{#snippet meta()}
-					<span class="font-data text-xs text-wled-text-quiet">{addressOf(one)}</span>
 					<Chip tone={reach.ok ? 'quiet' : 'error'}>{reach.said}</Chip>
 					<span class="font-ui text-xs text-wled-text-quiet">{roomLine(one)}</span>
 				{/snippet}

@@ -79,6 +79,71 @@ export const lights = $state<{ list: LightFacts[]; failure: string; loading: boo
  */
 export const offered = (list: LightFacts[]): LightFacts[] => list.filter((one) => !one.ignored);
 
+/**
+ * The names lights call themselves, keyed by the address they are named by on these routes.
+ *
+ * It is a fact off the module's own light record and not off a binding or a controller: a light's
+ * route name is its address without the scheme, which is nobody's name for their own light, and
+ * `calls_itself` is the one place the name the operator already sees in WLED's own interface is
+ * kept. A light that has never answered has no row here, and every surface then says its address
+ * rather than inventing one.
+ *
+ * It is filled from GET /lights, which is a longer list than the driven set: a light exists whether
+ * or not a printer is shown on it, and a screen that names one reads here rather than deciding what
+ * a light is called for itself.
+ */
+export const called = $state<{ byName: Record<string, string> }>({ byName: {} });
+
+/** One read of GET /lights, kept as the names alone. */
+const keepCalled = (list: KnownLight[]): void => {
+	called.byName = Object.fromEntries(
+		list
+			.filter((one) => (one.calls_itself ?? '').trim() !== '')
+			.map((one) => [lightName(one.address), (one.calls_itself ?? '').trim()]),
+	);
+};
+
+/**
+ * Reads the names off the module's light record.
+ *
+ * A failure is not a failure of the screen that asked: it leaves no name for any light, and every
+ * light is then drawn by its address, which is exactly what these screens drew before. Saying so
+ * would be a second sentence about a cosmetic read on screens that already carry their own.
+ */
+export const loadCalledNames = async (): Promise<void> => {
+	try {
+		const all = await moduleApi(heldHost()).listLights();
+		keepCalled(all.lights);
+	} catch {
+		// No names: the address stands, as it did before this read existed.
+	}
+};
+
+/**
+ * What one light calls itself, and `''` for a light that has never answered.
+ *
+ * Two keys are tried because the two lists these screens hold name a light slightly differently —
+ * a frame's `light.name`, a controller's `name`, a stored row's address — and the address is the
+ * one thing all of them carry. `lightName` is the same normalisation the routes use, so two
+ * spellings of one address cannot answer differently.
+ */
+export const calledNameOf = (name: string, address: string): string =>
+	called.byName[lightName(address)] ?? called.byName[lightName(name)] ?? '';
+
+/**
+ * A light's title where a title is text rather than a row: `morpheus (10.0.0.136)`.
+ *
+ * The address here is the bare one, without the scheme, because a title sits in a tab and a full
+ * URL pushes it past the tab; a row still shows the full address, as a printer's does. A light that
+ * has never answered is titled by its address alone — it has no name to put in front of it.
+ */
+export const lightTitle = (name: string, address: string): string => {
+	const bare = name !== '' ? name : lightName(address);
+	const self = calledNameOf(name, address);
+
+	return self === '' ? bare : `${self} (${bare})`;
+};
+
 /** Reads the lights, their segments and the bindings on them, in that order. */
 export const loadLights = async (): Promise<void> => {
 	lights.loading = true;
@@ -159,6 +224,10 @@ export const loadKnownLights = async (): Promise<void> => {
 
 		known.list = all.lights;
 		known.note = all.note;
+
+		// The names the lights call themselves travel with this read, so a screen that already
+		// loaded the whole list does not need a second one to name a light.
+		keepCalled(all.lights);
 
 		const details = await Promise.all(
 			all.lights.map(async (one, index): Promise<ControllerDetail> => {

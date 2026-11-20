@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prusa3d/prusa-connect/sdk/wire"
+
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/wled"
@@ -758,6 +760,105 @@ func TestTheStatusRouteSaysStartingForAPrintAtZero(t *testing.T) {
 	if body.Frame.Lit != 0 || body.Frame.Total != 16384 {
 		t.Fatalf("the frame is %d of %d, want 0 of 16384", body.Frame.Lit, body.Frame.Total)
 	}
+}
+
+// TestTheStatusRoutePublishesWhatTheBuildIs is the half of the Diagnostics screen's version line
+// that cannot be faked: the number has to come off the running process, so the route publishes the
+// release this binary reported to the host at start, the wire major it speaks, and the store schema
+// it writes — never a literal a bundle carries.
+//
+// Both shapes of the answer carry it, because an instance driving one binding answers the frame
+// beside its printer and an instance driving several answers a bindings list; a screen reads the
+// build facts whichever one it got, so both are asserted here.
+func TestTheStatusRoutePublishesWhatTheBuildIs(t *testing.T) {
+	at := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	publish(printer.Snapshot{
+		ID:         "01J8DEVICE",
+		Name:       "Morpheus",
+		Connected:  true,
+		State:      printer.Reading[string]{Value: printer.StatePrinting, Known: true},
+		LastChange: at.Add(-12 * time.Second),
+		ObservedAt: at,
+		Age:        12 * time.Second,
+	}, render.Frame{
+		Colour: render.ColourPrinting,
+		Lit:    24,
+		Total:  48,
+		Reason: render.ReasonProgress,
+	})
+
+	recordSend(sendView{At: at.Format(time.RFC3339Nano), OK: true})
+
+	t.Cleanup(func() {
+		current.Store(nil)
+		sent.Store(nil)
+		forgetBindings()
+	})
+
+	// The build object as the route spells it, and as both shapes of the answer carry it.
+	type publishedBuild struct {
+		Version     string `json:"version"`
+		Contract    uint32 `json:"contract"`
+		StoreSchema int    `json:"store_schema"`
+		Repository  string `json:"repository"`
+	}
+
+	read := func(what string) {
+		t.Helper()
+
+		recorder := httptest.NewRecorder()
+		routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: GET /status answered %d, want %d: %s",
+				what, recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+
+		var body struct {
+			Bindings []json.RawMessage `json:"bindings"`
+			Build    publishedBuild    `json:"build"`
+		}
+
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: the answer is not JSON: %v", what, err)
+		}
+
+		build := body.Build
+
+		if build.Version != release.String() {
+			t.Fatalf("%s: the route reports the version %q, and this process is running %q",
+				what, build.Version, release.String())
+		}
+
+		if build.Contract != wire.ProtocolMajor {
+			t.Fatalf("%s: the route reports the wire contract %d, and this process speaks %d",
+				what, build.Contract, wire.ProtocolMajor)
+		}
+
+		if build.StoreSchema != storeVersion {
+			t.Fatalf("%s: the route reports store schema %d, and this build writes %d",
+				what, build.StoreSchema, storeVersion)
+		}
+
+		// The repository travels with the version, because the screen's link to the source is that
+		// answer's and not one the bundle was built with.
+		if build.Repository != repository {
+			t.Fatalf("%s: the route reports the repository %q, and this build names %q",
+				what, build.Repository, repository)
+		}
+	}
+
+	// The single-frame answer: the shape an instance driving one binding gives.
+	read("one binding")
+
+	// The bindings list, which is what an instance driving several answers with. The entry itself
+	// does not matter here: what is asserted is that this shape carries the build facts too.
+	bindingMu.Lock()
+	bindingHeld = []bindingStatus{{}}
+	bindingMu.Unlock()
+
+	read("several bindings")
 }
 
 // TestTheStatusRouteAnswersWhatTheModuleThinks is the reason the route exists: a

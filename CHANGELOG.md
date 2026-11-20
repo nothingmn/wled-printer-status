@@ -18,6 +18,11 @@ both things that need one refused: a brightness window could not be saved, and a
 **The store moves to schema 9**; the upgrade writes an empty zone and reads the `timezone` setting once, so an
 instance that had one keeps it, and a 0.5.1 build refuses a document this one writes, by name.
 
+**A light is now named the way a printer is, and the three screens that scoped a light with a dropdown now
+scope it with tabs.** Both are the operator's report of 2026-11-19: Overview drew a light as its address with
+no link beside a printer whose name and address were both links, and Events, Layout and Diagnostics hid whose
+data was on screen behind a `<select>`.
+
 ### Added
 
 - **`GET /timezone` and `PUT /timezone`: the zone, where it came from, and how it got there.** The answer
@@ -37,6 +42,30 @@ instance that had one keeps it, and a 0.5.1 build refuses a document this one wr
   read the store rather than the `timezone` setting, which is now a migration source read once by the upgrade.
 - **The refusals that said "the timezone setting" now say where a zone is set: the Overview screen.** A window
   that cannot be judged and an ends line that cannot write a clock both name an IANA example and the screen.
+- **A light's identity is the same shape as a printer's: `morpheus (http://10.0.0.136)`, both parts links.**
+  The name is what the light calls itself, read from the module's own light record, and the address is the one
+  the operator stored. Both open the light's own page in a new window — Connect has no page for a WLED
+  controller, so that is the only page it has. One component draws it on Overview's binding rows, Bindings'
+  cards, Events' header, Diagnostics' header, the lights-with-no-printer list and the Lights screen's cards. A
+  light that has never answered has no name to show, so its address stands alone.
+- **Events, Layout and Diagnostics scope a light by tabs instead of a dropdown.** One tab per light, in the
+  place the `<select>` stood, titled with the name the light calls itself and its bare address —
+  `morpheus (10.0.0.136)` — and the tab set is exactly what the dropdown listed. The title is text rather than
+  links: an anchor inside a tab swallows the press. Diagnostics' selector used to list bindings; the unit is
+  now the light, a light carrying more than one binding shows the binding chooser **inside** its tab, and
+  everything below it — the four tiles, the picture, the reason, the timeline, the three situations — is keyed
+  on the same binding it was keyed on before.
+- **`GET /status` publishes the build it is answering from: `version`, `contract`, `store_schema` and
+  `repository`.** It rides on both shapes of the answer — beside the single frame and beside the bindings
+  list — and every number is the running process's own, so a screen never states a version belonging to a
+  binary it is not running. `contract` is the wire major the host and this build must agree on, and
+  `store_schema` is the document version this build writes and steps an older one up to.
+- **Diagnostics prints one line naming the build, beside the tiles: `WLED Printer Status 0.6.0 · store
+  schema 9`.** The version comes from `GET /status` and not from the bundle; the line is absent when the
+  route has not answered, rather than guessed. The version number is a link to the project's repository in a
+  new window, and the module's name is that link when the route reports no version — so a reader can always
+  reach the source. Nothing is hardcoded in the browser half: the repository travels with the other build
+  facts.
 - **A module granted no data directory still runs on the `timezone` setting**, exactly as it did before the
   store existed; nothing else reads the setting any more.
 

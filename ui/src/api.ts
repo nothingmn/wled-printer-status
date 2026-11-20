@@ -182,6 +182,28 @@ export interface StatusEntry {
 }
 
 /**
+ * What the process answering is, as GET /status publishes it: the release it reported to the host at
+ * start, the wire contract it speaks, and the store schema it writes.
+ *
+ * It is read from the route and never from this bundle, because a version built into a screen is a
+ * claim about a binary the screen is not running. A screen that cannot read it says nothing.
+ */
+export interface BuildFacts {
+  /** The release this process reported to the host at start, as MAJOR.MINOR.PATCH. */
+  version: string;
+  /** The wire major this build speaks. */
+  contract: number;
+  /** The schema version of the configuration document this build writes. */
+  store_schema: number;
+  /**
+   * Where this module's source lives. It is on this answer rather than in this bundle, so the one
+   * address a screen links to is the process's own — a bundle that carried it would go on naming an
+   * address after the project moved.
+   */
+  repository: string;
+}
+
+/**
  * What the status route answers. Several bindings answer as a list; one binding
  * answers as the single frame this route has always carried, at the top level.
  */
@@ -190,6 +212,8 @@ export interface StatusBody {
   controller?: string;
   segment?: number;
   last_send?: LastSend | null;
+  /** What the process answering is. Absent only on an older build of this module. */
+  build?: BuildFacts;
 }
 
 /** One colour, one byte per channel, as a frame carries it. */

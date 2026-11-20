@@ -5,8 +5,8 @@
 	//
 	//   - **Three switchable situations**: printing, finished-then-quiet, and printing-but-the-
 	//     light-is-not-answering. They are a *lens*, not three pages: the tiles, the frame, the
-	//     timeline and the reason table below are always the live answer for the binding chosen at
-	//     the top, and the lens decides what that answer is being *read for*. The last one exists to
+	//     timeline and the reason table below are always the live answer for the binding showing
+	//     above them, and the lens decides what that answer is being *read for*. The last one exists to
 	//     separate *what the module decided* — a reason, a picture — from *what landed* — the last
 	//     write and its outcome. Neither number is invented for a situation: a page that drew three
 	//     canned scenarios would be showing a light the operator does not have, which is the one
@@ -41,13 +41,14 @@
 	// timeline are panels, a state or an outcome is a chip, and every second line is the quiet token.
 	import { onMount } from 'svelte';
 
-	import { moduleApi, type Frame } from './api';
+	import { moduleApi, type BuildFacts, type Frame } from './api';
 	import { ageText, cssColour, describe, lengthText, lightName, segmentText } from './format';
 	import { heldHost } from './host';
-	import { lights, loadLights } from './lights.svelte';
+	import LightLink from './light-link.svelte';
+	import { lightTitle, lights, loadCalledNames, loadLights } from './lights.svelte';
 	import { fateOf, refreshPauses } from './pause.svelte';
 	import PrinterLink from './printer-link.svelte';
-	import { Button, Chip, Disclosure, Field, FieldSelect, Panel } from './ui';
+	import { Button, Chip, Disclosure, Panel, Tabs } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -109,6 +110,14 @@
 	let loading = $state(true);
 	let failure = $state('');
 
+	/**
+	 * What the process answering is, from GET /status: the release it is running and the store schema
+	 * it writes. `null` until the route answers, and null for good when it cannot — the line below is
+	 * then absent, because a screen that printed a version of its own would be describing a binary it
+	 * is not running, and that is worse than one that says nothing.
+	 */
+	let build = $state<BuildFacts | null>(null);
+
 	/** The frame this page is about: the chosen binding, or the first one the module answered. */
 	const selected = $derived(frames.find((one) => one.binding === chosen) ?? frames[0] ?? null);
 
@@ -129,8 +138,45 @@
 		return segmentText(t, frame.light.segment, segment?.name, segment);
 	};
 
-	/** The binding at the top's own line: the light, the segment and the printer on it. */
-	const bindingText = (frame: Frame): string => `${lightOf(frame)} · ${segmentOf(frame)} · ${printerOf(frame)}`;
+	/**
+	 * The light a binding is on, as this screen's tabs need it: its route name and its address.
+	 *
+	 * Two bindings on one light are one tab, so the tab set is the lights and not the bindings —
+	 * which is the rule all three screens share. Today every light carries one binding, so picking
+	 * a tab picks the binding; the day one carries two, the chooser below the strip is what tells
+	 * them apart.
+	 */
+	const lightOfBinding = (one: Frame): string => lightOf(one);
+
+	/** The address one light answers to, off the frame that names it. */
+	const addressOfLight = (light: string): string =>
+		frames.find((one) => lightOfBinding(one) === light)?.light.address ?? '';
+
+	/** One tab per light, titled with the name it calls itself and its bare address. */
+	const tabs = $derived(
+		[...new Set(frames.map(lightOfBinding))].map((light) => ({
+			id: light,
+			label: lightTitle(light, addressOfLight(light)),
+		})),
+	);
+
+	/** Every binding on one light, in the order GET /frames answered them. */
+	const bindingsOn = (light: string): Frame[] => frames.filter((one) => lightOfBinding(one) === light);
+
+	/** The light the binding showing is on, which is the tab that is current. */
+	const lightShowing = $derived(selected === null ? '' : lightOfBinding(selected));
+
+	/**
+	 * Picks a light. The binding showing stays if it is on that light, and otherwise the light's
+	 * first binding is shown — so a press on a tab is one press, and the answer below it is always
+	 * a binding on the light the tab names.
+	 */
+	const chooseLight = (light: string): void => {
+		const on = bindingsOn(light);
+		if (on.length === 0) return;
+
+		if (!on.some((one) => one.binding === chosen)) chosen = on[0].binding;
+	};
 
 	/**
 	 * Which of the three situations the module's own answer is in, and empty when it is in none of
@@ -170,6 +216,25 @@
 
 		return t('diagnostics.read_finished');
 	};
+
+	/**
+	 * The one line naming the build, and `null` when the route has said nothing at all.
+	 *
+	 * Every part of it is the route's answer: the version the process is running, the store schema it
+	 * writes, and the repository its source lives in. The version is the way to the source when there
+	 * is one, and the module's own name is the way there when there is not — a reader can always
+	 * reach the code, and the screen never prints a number it was not told. An answer with no
+	 * repository is drawn without a link rather than with one this bundle invented.
+	 */
+	const buildLine = $derived(
+		build === null
+			? null
+			: {
+					version: (build.version ?? '').trim(),
+					schema: build.store_schema,
+					repository: (build.repository ?? '').trim(),
+				},
+	);
 
 	/** Whether a tile is one the chosen lens is pointing at, which is only a highlight. */
 	const inLens = (tile: 1 | 2 | 3): boolean => {
@@ -340,8 +405,23 @@
 	};
 
 	onMount(() => {
-		void Promise.all([load(), loadLights(), refreshPauses()]);
+		// The names are read once, with the first paint: the ten-second refresh below re-reads the
+		// pictures, and a light's own name does not change between two ticks of it.
+		void Promise.all([load(), loadLights(), loadCalledNames(), refreshPauses(), readBuild()]);
 	});
+
+	/**
+	 * Reads what this process is. A refusal is expected on an instance that has decided no frame yet,
+	 * and it leaves the line off rather than failing a screen it is only one line of.
+	 */
+	async function readBuild(): Promise<void> {
+		try {
+			const answer = await api.readStatus();
+			build = answer.build ?? null;
+		} catch {
+			build = null;
+		}
+	}
 
 	// The present tense changes while the page is open: the reading's age moves, a write fails, a
 	// print ends. Ten seconds is the cadence Overview uses, for the same reason.
@@ -364,23 +444,17 @@
 			<p class="font-ui text-sm text-wled-text-quiet">{t('diagnostics.intro')}</p>
 		</div>
 
-		<Field id="diagnostics-binding" class="ml-auto" label={t('diagnostics.binding')}>
-			{#snippet children()}
-				<FieldSelect
-					id="diagnostics-binding"
-					value={chosen}
-					disabled={loading || frames.length === 0}
-					oninput={(value) => (chosen = value)}
-				>
-					{#snippet children()}
-						{#each frames as frame (frame.binding)}
-							<option value={frame.binding} selected={frame.binding === chosen}>{bindingText(frame)}</option>
-						{/each}
-					{/snippet}
-				</FieldSelect>
-			{/snippet}
-		</Field>
 	</header>
+
+	<!-- The light, as tabs — the same strip and the same titles as Events and Layout. It was a
+	     `<select>` named `diagnostics-binding` whose unit was the *binding*; the unit here is the
+	     light, and a binding-level choice belongs inside its tab. Today each light carries one
+	     binding, so the strip is flat and honest; the chooser below it is the second level, drawn
+	     only when a light carries more than one and reusing the chooser Layout already has rather
+	     than inventing a fourth control. -->
+	{#if frames.length > 0}
+		<Tabs label={t('diagnostics.lights')} items={tabs} active={lightShowing} onSelect={chooseLight} />
+	{/if}
 
 	{#if failure !== ''}
 		<Panel>
@@ -399,6 +473,37 @@
 		</Panel>
 	{:else}
 		{@const frame = selected}
+
+		<!-- Which binding this is, in the one shape a light wears in a row: the name it calls itself
+		     and its address, both links to its own page, with the segment the binding drives beside
+		     them. The tab above names the light in text; this is where the two ways through live. -->
+		<div class="flex flex-wrap items-center gap-row font-ui text-sm">
+			<span class="font-medium">
+				<LightLink name={lightOfBinding(frame)} address={frame.light.address} cls={NAME_LINK} />
+			</span>
+			<span class="font-data text-xs text-wled-text-quiet">{segmentOf(frame)}</span>
+		</div>
+
+		{#if bindingsOn(lightShowing).length > 1}
+			<div class="flex flex-col gap-tight">
+				<!-- The second level, in the shape Layout's own chooser wears: one button per binding
+				     on this light, naming its printer and the segment it drives. Their names stay plain
+				     text because an anchor inside a button swallows the press. -->
+				<div class="flex flex-wrap gap-tight" role="group" aria-label={t('diagnostics.bindings_heading')}>
+					{#each bindingsOn(lightShowing) as one (one.binding)}
+						<Button
+							variant={one.binding === chosen ? 'secondary' : 'ghost'}
+							size="md"
+							aria-pressed={one.binding === chosen}
+							onclick={() => (chosen = one.binding)}
+						>
+							<span>{printerOf(one)}</span>
+							<span class="font-data text-xs font-normal text-wled-text-quiet">{segmentOf(one)}</span>
+						</Button>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<!-- The three situations: a lens on the same screen, never a second set of numbers. -->
 		<div class="flex flex-col gap-row">
@@ -534,6 +639,48 @@
 				</div>
 			</Panel>
 		</div>
+
+		<!--
+			Which build is answering, beside the tiles rather than in the prose: an operator checking
+			whether the release he just installed is the one on screen needs one number, and a version
+			printed from this bundle would be a claim about a binary it is not running.
+
+			The number itself is the way to the source, and the module's own name takes that place when
+			the route reports no version. Both anchors are drawn here, on a line of their own — never
+			inside a tab, a button or a picker, where an anchor swallows the press.
+		-->
+		{#if buildLine !== null}
+			<p class="font-data text-xs text-wled-text-quiet" data-build>
+				{#if buildLine.version === ''}
+					{#if buildLine.repository !== ''}
+						<a
+							href={buildLine.repository}
+							target="_blank"
+							rel="noopener"
+							aria-label={t('diagnostics.build_open', { what: t('diagnostics.build_name') })}
+							class={NAME_LINK}>{t('diagnostics.build_name')}</a
+						>
+					{:else}
+						{t('diagnostics.build_name')}
+					{/if}
+				{:else}
+					{t('diagnostics.build_name')}
+					{#if buildLine.repository !== ''}
+						<a
+							href={buildLine.repository}
+							target="_blank"
+							rel="noopener"
+							aria-label={t('diagnostics.build_open', { what: buildLine.version })}
+							class={NAME_LINK}>{buildLine.version}</a
+						>
+					{:else}
+						{buildLine.version}
+					{/if}
+				{/if}
+				<span aria-hidden="true">·</span>
+				{t('diagnostics.build_store', { schema: buildLine.schema })}
+			</p>
+		{/if}
 
 		<!-- The frame itself, the module's own PNG: the same picture Overview draws, because the
 		     question this page answers is what is being sent right now. -->

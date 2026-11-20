@@ -2398,6 +2398,35 @@ type statusAnswer struct {
 	Reading  readingView `json:"reading"`
 	Frame    frameView   `json:"frame"`
 	LastSend *sendView   `json:"last_send"`
+
+	// Build is what this process is: the release it reported to the host, the wire contract it
+	// speaks and the store schema it writes. It rides on this route rather than on a route of its
+	// own because the Diagnostics screen already reads this module's present tense, and because a
+	// version served from anywhere but the running process is a number a bundle can disagree with.
+	Build buildView `json:"build"`
+}
+
+// buildView is what this process is, as a caller of the route reads it.
+//
+// Every number here is the running binary's own and not a literal in a screen: Version is the
+// release this process answered the host with at start, which is the number the host compares
+// against the manifest's `version:`; Contract is the wire major it speaks to the host; and
+// StoreSchema is the schema version of the configuration document it writes. A screen that
+// printed a version of its own would be stating something about a binary it is not running.
+type buildView struct {
+	Version string `json:"version"`
+
+	// Contract is the wire major, the number two peers must agree on to talk at all.
+	Contract uint32 `json:"contract"`
+
+	// StoreSchema is the schema version of the document this build writes, and the one it steps an
+	// older document up to before reading it.
+	StoreSchema int `json:"store_schema"`
+
+	// Repository is where this module's source lives. It travels with the version for the same
+	// reason: a screen offers the reader a way to the source, and it must be the address the
+	// process was built with rather than one a bundle was built with.
+	Repository string `json:"repository"`
 }
 
 // printerView is the printer as a caller of the route reads it.

@@ -126,7 +126,27 @@ import (
 const (
 	name    = "wled-printer-status"
 	release = extension.Version("0.6.0")
+
+	// repository is where this module's source lives. It is published with the build facts rather
+	// than written into the browser bundle, so the one address a screen links to comes off the
+	// process that is running: module.yaml's `issue_tracker` is this address with `/issues` on it.
+	repository = "https://github.com/nothingmn/wled-printer-status"
 )
+
+// buildFacts is what this process is, as GET /status publishes it: the release the host was told at
+// start, the wire major it speaks and the store schema it writes.
+//
+// It is a function of the running binary and not a value held anywhere, because a version that can
+// be stored is a version that can be served by a process that is not running it — which is exactly
+// the disagreement this answers. A screen reads it here rather than carrying a number of its own.
+func buildFacts() buildView {
+	return buildView{
+		Version:     release.String(),
+		Contract:    wire.ProtocolMajor,
+		StoreSchema: storeVersion,
+		Repository:  repository,
+	}
+}
 
 const (
 	// defaultMessage is the line the route answers with when the operator sets
@@ -977,7 +997,9 @@ func routes() http.Handler {
 		// store is empty for a single-binding install — the shape every install built from
 		// settings has — so this branch costs one lock and the body below is unchanged.
 		if held := bindingsSeen(); len(held) > 0 {
-			answer(w, http.StatusOK, map[string]any{"bindings": held})
+			// The build facts ride on both shapes of this answer, so a screen reads them whichever
+			// one the instance answers with, and neither has to guess which it got.
+			answer(w, http.StatusOK, map[string]any{"bindings": held, "build": buildFacts()})
 
 			return
 		}
@@ -1001,6 +1023,7 @@ func routes() http.Handler {
 			Reading:  seen.Reading,
 			Frame:    seen.Frame,
 			LastSend: sent.Load(),
+			Build:    buildFacts(),
 		})
 	})
 

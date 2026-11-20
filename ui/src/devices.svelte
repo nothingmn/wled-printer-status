@@ -97,6 +97,7 @@
 		type SnapshotDetailBody,
 		type SnapshotsBody,
 	} from './api';
+	import LightLink from './light-link.svelte';
 	import PrinterLink from './printer-link.svelte';
 	import { ageText, describe, lightName, runText } from './format';
 	import { heldHost } from './host';
@@ -122,11 +123,10 @@
 	/** How long a test keeps the light. The routes' own default, said out loud before it fires. */
 	const HOLD_SECONDS = 60;
 
-	/** The name a light calls itself, in the card's heading, worn as a link. */
+	/** The name a light calls itself, in the card's heading, worn as a link. The address beside it
+	 *  and the new window both anchors open in are light-link.svelte's, so this screen and every
+	 *  other one that names a light draw the same shape. */
 	const NAME_LINK = 'underline decoration-dotted underline-offset-2 hover:decoration-solid';
-
-	/** Its address, in the same heading, in the controller's own monospace and one step smaller. */
-	const ADDRESS_LINK = 'font-data text-xs font-normal underline decoration-dotted underline-offset-2 hover:decoration-solid';
 
 	/** One card's own answer from a route that names lights, keyed by the light's route name. */
 	const answerFor = <T extends { lights: { light: string; refused?: string; why?: string; answers?: string }[] }>(
@@ -190,18 +190,6 @@
 
 	const frameOfLight = (one: LightFacts): Frame | undefined =>
 		frames.find((frame) => frame.light.name === nameOf(one));
-
-	/**
-	 * The light's own web interface, as an anchor's `href`: its address, given a scheme when it was
-	 * stored without one. A light is added by its address, so this is the address it answered at —
-	 * nothing here builds a URL out of anything else.
-	 */
-	const urlOf = (one: LightFacts): string => {
-		const address = addressOf(one).trim();
-		if (address === '') return '';
-
-		return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(address) ? address : `http://${address}`;
-	};
 
 	/** One light's presets as last read, for a card drawn inside a snippet. */
 	const heldOf = (one: LightFacts): PresetsBody | undefined => presets[nameOf(one)];
@@ -700,29 +688,6 @@
 			<p class="font-ui text-sm font-medium">{t('devices.no_lights')}</p>
 		</Panel>
 	{:else}
-		<!-- One link to a light's own interface. Both parts of the heading use it, so the new window,
-		     the rel that keeps it apart from this page, and the sentence a screen reader hears are
-		     written once: `target="_blank"` with `rel="noopener"`, and an accessible name that starts
-		     with the visible text and says what will open. -->
-		{#snippet lightLink(one: LightFacts, text: string, label: string, cls: string)}
-			<a href={urlOf(one)} target="_blank" rel="noopener" aria-label={label} class={cls}>{text}</a>
-		{/snippet}
-
-		<!-- The address in parentheses, kept on one line so it never wraps between the name and
-		     its own address. The brackets are drawn but hidden from a screen reader: the anchors
-		     carry their own names, and `left paren` between them is noise. -->
-		{#snippet addressInParens(one: LightFacts)}
-			<span class="whitespace-nowrap"
-				><span class="font-normal text-wled-text-quiet" aria-hidden="true">{' ('}</span>{@render lightLink(
-					one,
-					addressOf(one),
-					t('devices.open_address', { address: addressOf(one) }),
-					ADDRESS_LINK,
-				)}<span class="font-normal text-wled-text-quiet" aria-hidden="true">{')'}</span
-				></span
-			>
-		{/snippet}
-
 		<!-- The card, written once and drawn in whichever area its light belongs to. An each-block over
 		     a filtered list twice would be two copies of this markup, and two copies of a card drift. -->
 		{#snippet card(one: LightFacts)}
@@ -740,10 +705,12 @@
 					     name to show, so the address stands alone — still a link — and says so. -->
 					<div class="flex flex-wrap items-center gap-row">
 						<h2 class="font-ui text-sm font-medium">
-							{#if called !== ''}
-								{@render lightLink(one, called, t('devices.open_named', { name: called }), NAME_LINK)}{@render addressInParens(one)}
-							{:else}
-								{@render lightLink(one, addressOf(one), t('devices.open_address', { address: addressOf(one) }), ADDRESS_LINK)}
+							<!-- The light's identity, drawn by the one component every screen uses for it:
+							     the name it calls itself and its address, both links to its own interface
+							     in a new window. A light that has never answered shows its address alone,
+							     and the quiet note says why it has no name. -->
+							<LightLink name={nameOf(one)} address={addressOf(one)} cls={NAME_LINK} />
+							{#if called === ''}
 								<span class="text-xs font-normal text-wled-text-quiet">{t('devices.no_name_yet')}</span>
 							{/if}
 						</h2>

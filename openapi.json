@@ -1639,7 +1639,7 @@
       "get": {
         "operationId": "read-status",
         "summary": "What this module currently thinks",
-        "description": "The frame this module has decided for the light, the printer it decided it from, how old that reading is, and what the last write to the controller did — so a person can tell what the module thinks without looking at a light. An instance driving one binding answers the frame beside the printer it came from; an instance driving several answers a bindings list, one entry per binding, because one body cannot say which of two lights its frame describes. The host takes view_resource on the module's instance before this is called.",
+        "description": "The frame this module has decided for the light, the printer it decided it from, how old that reading is, what the last write to the controller did, and which release and store schema the process answering is — so a person can tell what the module thinks without looking at a light, and which build they are looking at. An instance driving one binding answers the frame beside the printer it came from; an instance driving several answers a bindings list, one entry per binding, because one body cannot say which of two lights its frame describes. Both shapes carry build. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The module's answer.",
@@ -1708,9 +1708,20 @@
                         "error": {"type": "string", "description": "What went wrong, absent when nothing did."}
                       },
                       "required": ["at", "ok"]
+                    },
+                    "build": {
+                      "type": "object",
+                      "description": "What the process answering is: the release it reported to the host at start, the wire contract it speaks, and the store schema it writes. It is carried on this route rather than on one of its own so that the value a screen prints is the running binary's own and not a number the bundle was built with, and it is present on both shapes of this answer — beside the single frame and beside the bindings list.",
+                      "properties": {
+                        "version": {"type": "string", "description": "The release this process reported to the host at start, as MAJOR.MINOR.PATCH — the number the host compares against the manifest's version."},
+                        "contract": {"type": "integer", "description": "The wire major this build speaks to the host, which is the number two peers must agree on to talk at all."},
+                        "store_schema": {"type": "integer", "description": "The schema version of the configuration document this build writes, and steps an older document up to before reading it."},
+                        "repository": {"type": "string", "description": "Where this module's source lives, so a screen can offer a reader a way to it without carrying an address of its own."}
+                      },
+                      "required": ["version", "contract", "store_schema", "repository"]
                     }
                   },
-                  "required": ["printer", "reading", "frame", "last_send"]
+                  "required": ["printer", "reading", "frame", "last_send", "build"]
                 }
               }
             }

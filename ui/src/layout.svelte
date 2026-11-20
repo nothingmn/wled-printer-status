@@ -80,7 +80,7 @@
 	// is not a bug.
 	import { onMount } from 'svelte';
 
-	import { Button, Chip, Field, FieldInput, FieldSelect, Panel } from './ui';
+	import { Button, Chip, Field, FieldInput, FieldSelect, Panel, Tabs } from './ui';
 
 	import {
 		moduleApi,
@@ -92,7 +92,7 @@
 	} from './api';
 	import { ageText, describe, segmentText } from './format';
 	import { heldHost } from './host';
-	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
+	import { addressOf, lightTitle, lights, loadCalledNames, loadLights, nameOf } from './lights.svelte';
 	import PrinterLink from './printer-link.svelte';
 
 	const host = heldHost();
@@ -694,6 +694,12 @@
 	/** How many of the three things the picture is made of this draft switches on — group 3's test. */
 	const partsOn = (draft: Draft): number => (draft.bar ? 1 : 0) + (draft.percent ? 1 : 0) + (draft.name ? 1 : 0);
 
+	/**
+	 * The tabs: one per light, exactly the set the light selector listed before it became tabs, and
+	 * titled the same way Events and Diagnostics title theirs.
+	 */
+	const tabs = $derived(lights.list.map((one) => ({ id: nameOf(one), label: lightTitle(nameOf(one), addressOf(one)) })));
+
 	/** Reads one light's bindings, their layouts and the frames drawn for them. */
 	const openLight = async (light: string): Promise<void> => {
 		chosen = light;
@@ -731,7 +737,7 @@
 		failure = '';
 
 		try {
-			await loadLights();
+			await Promise.all([loadLights(), loadCalledNames()]);
 
 			const first = lights.list[0];
 			if (first !== undefined) await openLight(nameOf(first));
@@ -960,25 +966,16 @@
 			<p class="font-ui text-sm text-wled-text-quiet">{t('layout.intro')}</p>
 		</div>
 
-		<Field id="layout-light" class="ml-auto" label={t('layout.light')}>
-			{#snippet children()}
-				<FieldSelect
-					id="layout-light"
-					value={chosen}
-					disabled={loading || lights.list.length === 0}
-					oninput={(value) => void openLight(value)}
-				>
-					{#snippet children()}
-						{#each lights.list as one (addressOf(one))}
-							<option value={nameOf(one)} selected={nameOf(one) === chosen}>
-								{one.controller?.name ?? addressOf(one)}
-							</option>
-						{/each}
-					{/snippet}
-				</FieldSelect>
-			{/snippet}
-		</Field>
 	</header>
+
+	<!-- The light, as tabs — the same strip, in the same place, as Events: one per light, titled
+	     `morpheus (10.0.0.136)` from the name it calls itself and its bare address, in text
+	     because a link inside a tab swallows the press. It was a `<select>` named `layout-light`.
+	     What is *inside* a tab does not move: the binding card below, its own chooser, and every
+	     layout setting. -->
+	{#if lights.list.length > 0}
+		<Tabs label={t('layout.light')} items={tabs} active={chosen} onSelect={(id) => void openLight(id)} />
+	{/if}
 
 	<Panel>
 		<p class="font-ui text-sm">{t('layout.per_binding')}</p>

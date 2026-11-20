@@ -3,9 +3,12 @@
 	//
 	// docs/product-requirements.md §2.3, in the five decisions the page is built around:
 	//
-	//   - **The page is scoped to one light**, by the selector at the top. A moment is a
-	//     transition — a print finishing, a pause, a light lost — and the list of them belongs to
-	//     the light, so a page covering two lights would be two tables pretending to be one.
+	//   - **The page is scoped to one light**, by the tab strip at the top: one tab per light, titled
+	//     with the name it calls itself and its address, in the place a `<select>` used to hide whose
+	//     moments were on screen. A moment is a transition — a print finishing, a pause, a light lost —
+	//     and the list of them belongs to the light, so a page covering two lights would be two tables
+	//     pretending to be one. The tab's title is text and not links: an anchor inside a tab swallows
+	//     the press, the same exception the printer pickers carry.
 	//   - **The moment is the top row.** One printer on the light is exactly the flat table.
 	//     More than one printer and each moment keeps its row and gains one indented sub-row per
 	//     printer, carrying that printer's segment and its own four settings. Settings belong to
@@ -54,9 +57,10 @@
 	import { describe, lightName, segmentText } from './format';
 	import { fitsPanel, missingGlyphs } from './glyphs';
 	import { heldHost } from './host';
-	import { addressOf, lights, loadLights, nameOf } from './lights.svelte';
+	import LightLink from './light-link.svelte';
+	import { addressOf, lightTitle, lights, loadCalledNames, loadLights, nameOf } from './lights.svelte';
 	import PrinterLink from './printer-link.svelte';
-	import { Button, Chip, Field, FieldInput, FieldSelect, Panel } from './ui';
+	import { Button, Chip, FieldInput, FieldSelect, Panel, Tabs } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -151,6 +155,22 @@
 	 * but cannot be named here. It is left out rather than offered as a number that would never match.
 	 */
 	const namedPresets = $derived((presets?.presets ?? []).filter((one) => !one.unnamed && one.name.trim() !== ''));
+
+	/**
+	 * The light this page is scoped to, as this screen's own list has it. The identity header above
+	 * the table names it by its address and the name it calls itself, so both are read from the one
+	 * row rather than rebuilt from the route name here.
+	 */
+	const chosenLight = $derived(lights.list.find((one) => nameOf(one) === chosen));
+
+	/**
+	 * The tabs: one per light, exactly the set the light selector listed before it became tabs.
+	 *
+	 * A title is `morpheus (10.0.0.136)` — the name the light calls itself and its bare address,
+	 * without the scheme, because a full URL pushes a title past its tab. A light that has never
+	 * answered is titled by its address alone: it has no name to put in front of it.
+	 */
+	const tabs = $derived(lights.list.map((one) => ({ id: nameOf(one), label: lightTitle(nameOf(one), addressOf(one)) })));
 
 	/** Whether this light carries more than one printer, which is what the two table shapes turn on. */
 	const manyPrinters = $derived((board?.printers.length ?? 0) > 1);
@@ -262,7 +282,7 @@
 		failure = '';
 
 		try {
-			await loadLights();
+			await Promise.all([loadLights(), loadCalledNames()]);
 
 			// Two facts this page needs that the moment table does not carry: the state table's
 			// names (a Colour names one of them) and each light's shape — only a frame knows
@@ -379,26 +399,15 @@
 			<h1 class="font-ui text-lg font-medium">{t('events.title')}</h1>
 			<p class="font-ui text-sm text-wled-text-quiet">{t('events.intro')}</p>
 		</div>
-
-		<Field id="events-light" class="ml-auto" label={t('events.light')}>
-			{#snippet children()}
-				<FieldSelect
-					id="events-light"
-					value={chosen}
-					disabled={loading || lights.list.length === 0}
-					oninput={(value) => void openLight(value)}
-				>
-					{#snippet children()}
-						{#each lights.list as one (addressOf(one))}
-							<option value={nameOf(one)} selected={nameOf(one) === chosen}>
-								{one.controller?.name ?? addressOf(one)}
-							</option>
-						{/each}
-					{/snippet}
-				</FieldSelect>
-			{/snippet}
-		</Field>
 	</header>
+
+	<!-- The light, as tabs. It was a `<select>` named `events-light`, which hid whose moments were
+	     on screen behind a control nobody scans; the strip is the primitive the Lights screen
+	     already uses, and its titles are text rather than links because a link inside a tab
+	     swallows the press. The label is the nav's own name for a screen reader. -->
+	{#if lights.list.length > 0}
+		<Tabs label={t('events.light')} items={tabs} active={chosen} onSelect={(id) => void openLight(id)} />
+	{/if}
 
 	{#if failure !== ''}
 		<Panel>
@@ -637,6 +646,19 @@
 					{manyPrinters ? t('events.each_moment_then_printers') : t('events.one_row_per_moment')}
 				</span>
 			{/snippet}
+
+			<!-- Whose moments these are, in the shape a light wears in a row: the name it calls
+			     itself and its address, both links to its own page. A tab names its light in plain
+			     text, so this is where the two ways through are. -->
+			<div class="flex flex-wrap items-center gap-row border-b border-wled-line bg-wled-sunken px-panel py-row">
+				<span class="font-ui text-sm font-medium">
+					<LightLink
+						name={chosenLight === undefined ? chosen : nameOf(chosenLight)}
+						address={chosenLight === undefined ? '' : addressOf(chosenLight)}
+						cls={NAME_LINK}
+					/>
+				</span>
+			</div>
 
 			<div class="overflow-x-auto">
 				{#if manyPrinters}
