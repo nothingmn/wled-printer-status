@@ -225,6 +225,12 @@ type layoutRequest struct {
 	Material     *bool `json:"material"`
 	PrinterName  *bool `json:"printer_name"`
 	Layer        *bool `json:"layer"`
+
+	// Clock is how this binding's ends line writes a wall time: `12-hour` or `24-hour`. It is the
+	// row's own field and not a document setting, which is the whole of the operator's request —
+	// "a toggle, for 12 vs 24 hour clock, per layout" — and a value outside those two is refused by
+	// checkStoredLayout the way an unsupported rotation is.
+	Clock *string `json:"clock"`
 }
 
 // readLayoutRequest is one request body, and what is wrong with it.
@@ -254,7 +260,7 @@ func (sent layoutRequest) carriesNothing() bool {
 		sent.PercentScale == nil && sent.Name == nil && sent.Rotation == nil &&
 		sent.RotateSeconds == nil && sent.Remaining == nil && sent.Ends == nil &&
 		sent.Temperatures == nil && sent.Elapsed == nil && sent.Material == nil &&
-		sent.PrinterName == nil && sent.Layer == nil
+		sent.PrinterName == nil && sent.Layer == nil && sent.Clock == nil
 }
 
 // stored is the row this body writes, for the binding it names.
@@ -287,6 +293,7 @@ func (sent layoutRequest) stored(binding string, zone string) (storedLayout, err
 		Material:      sent.Material,
 		PrinterName:   sent.PrinterName,
 		Layer:         sent.Layer,
+		Clock:         sent.Clock,
 	}
 
 	if err := checkStoredLayout(one); err != nil {

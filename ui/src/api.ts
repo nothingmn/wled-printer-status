@@ -666,6 +666,15 @@ export interface Layout {
   layer: boolean;
   layer_origin: Origin;
   /**
+   * How the ends line writes its wall time: `24-hour` for `ENDS 18:10`, `12-hour` for `ENDS 6:10 PM`.
+   *
+   * It is the row's own field rather than a setting, because it is per binding — the operator's
+   * words were "a toggle, for 12 vs 24 hour clock, per layout". It governs that one line and nothing
+   * else: the remaining and elapsed lines are durations and read the same on either clock.
+   */
+  clock: '24-hour' | '12-hour';
+  clock_origin: Origin;
+  /**
    * The IANA zone the ETA line writes its clock in — the `timezone` setting's — and empty when
    * this module has none it can load. With no zone the ETA line is blank: a clock written in the
    * container's own zone would be hours out.
@@ -723,6 +732,12 @@ export interface LayoutRequest {
   layer: boolean;
   rotation: 'take-turns' | 'side-by-side';
   rotate_seconds: number;
+  /**
+   * How the ends line writes its wall time. Every write sends it, like every other key, because the
+   * route replaces the row whole — a body that left it out would put a binding back to 24-hour while
+   * the operator watched the control stay where it was.
+   */
+  clock: '24-hour' | '12-hour';
 }
 
 /**

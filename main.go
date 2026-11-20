@@ -125,7 +125,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.6.0")
+	release = extension.Version("0.7.0")
 
 	// repository is where this module's source lives. It is published with the build facts rather
 	// than written into the browser bundle, so the one address a screen links to comes off the

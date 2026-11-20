@@ -13,4 +13,9 @@
 # inside the bundle's project, and it never travels: the marketplace builder
 # builds it from these sources and copies the result into the release itself.
 /ui/dist/
+
+# The driven harness's own build, from the page beside it. It is a page a browser
+# is pointed at to prove a screen, not a thing the module serves.
+/ui/harness-clock/dist/
+
 /ui/node_modules/

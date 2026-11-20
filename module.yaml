@@ -14,7 +14,7 @@ name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,
 # which is what a module with a process needs.
 kind: sink
-version: 0.6.0
+version: 0.7.0
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT

@@ -52,7 +52,7 @@ func TestAVersionEightStoreStepsToNineWithNoZoneAndLosesNothing(t *testing.T) {
 			found.Version, found.Upgraded)
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 9 {
+	if found.Config.Version != storeVersion || storeVersion != 10 {
 		t.Fatalf("the stepped document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -120,16 +120,16 @@ func TestAStoredZoneSurvivesTheReadAndIsOnDiskInWords(t *testing.T) {
 }
 
 // TestADocumentFromANewerReleaseIsStillRefused is the existing rule, held for the version this change
-// writes: a store from 0.7.0 is refused by number rather than half-read.
+// writes: a store from the release after this one is refused by number rather than half-read.
 func TestADocumentFromANewerReleaseIsStillRefused(t *testing.T) {
-	dir := writeStoreFile(t, `{"version": 10, "bindings": [], "timezone": "America/Denver"}`)
+	dir := writeStoreFile(t, `{"version": 11, "bindings": [], "timezone": "America/Denver"}`)
 
 	_, err := loadStore(dir)
 	if err == nil {
-		t.Fatal("a document at version 10 was read by a build that writes version 9")
+		t.Fatal("a document at version 11 was read by a build that writes version 10")
 	}
 
-	if !strings.Contains(err.Error(), "10") || !strings.Contains(err.Error(), "9") {
+	if !strings.Contains(err.Error(), "11") || !strings.Contains(err.Error(), "10") {
 		t.Fatalf("the refusal %q does not name both versions", err)
 	}
 }

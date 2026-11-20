@@ -500,7 +500,7 @@ func TestAVersionOneStoreIsSteppedUpToTwoAndKeepsItsBindings(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 1")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 9 {
+	if found.Config.Version != storeVersion || storeVersion != 10 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 
@@ -1037,7 +1037,7 @@ func TestAVersionFiveStoreStepsThroughSixToSevenAndInventsNoLine(t *testing.T) {
 		t.Fatal("the read does not say the document was upgraded, and it was written at version 5")
 	}
 
-	if found.Config.Version != storeVersion || storeVersion != 9 {
+	if found.Config.Version != storeVersion || storeVersion != 10 {
 		t.Fatalf("the upgraded document is at version %d, want %d", found.Config.Version, storeVersion)
 	}
 

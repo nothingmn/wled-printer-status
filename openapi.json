@@ -1267,9 +1267,10 @@
                         "elapsed": {"type": "boolean", "description": "Whether how long the job has been printing is drawn."},
                         "material": {"type": "boolean", "description": "Whether the material is drawn."},
                         "printer_name": {"type": "boolean", "description": "Whether the printer's name is drawn."},
-                        "layer": {"type": "boolean", "description": "Whether the Z height is drawn."}
+                        "layer": {"type": "boolean", "description": "Whether the Z height is drawn."},
+                        "clock": {"type": "string", "enum": ["24-hour", "12-hour"], "description": "How the ends line writes its wall time: ENDS 18:10 on the 24-hour clock, ENDS 6:10 PM on the 12-hour one. 24-hour is the default."}
                       },
-                      "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer"]
+                      "required": ["bar", "bar_band", "bar_rows", "percent", "name", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer", "clock"]
                     },
                     "holds_seconds": {"type": "integer", "description": "How long the picture keeps the light before the steady frame comes back."},
                     "rotation_seconds": {"type": "integer", "description": "How long each half of the rotation holds the panel while the preview runs."},
@@ -2653,7 +2654,7 @@
       },
       "Layout": {
         "type": "object",
-        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, whether the two take turns or sit side by side, and which of the seven optional lines are drawn under the picture. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. The seven lines are drawn in the order listed — remaining, ends, temperatures, elapsed, material, printer_name, layer — at the font's own size, seven rows each with one blank row between, along the bottom of the text band; the picture's own row is centred in what they leave, and a line whose reading the printer has not reported is not drawn while its rows stay reserved, so the digits do not grow and shrink as readings come and go. A set of lines the panel cannot hold is refused by the write rather than cropped, and the sentence names the lines that did not fit and what would make room for them. zone is the IANA zone the ends line writes its clock in, and empty when this module has none it can load — with no zone that line is blank rather than written in the process's own clock. rotation_note is present only when the rotation was set to side-by-side, and says what that arrangement draws: the digits on the left at a capped scale, the job's name on the right cut to the room that is left.",
+        "description": "One binding's layout: whether the bar is drawn and in which band, how thick it is, whether the percentage and the job's name are drawn and at what scale, whether the two take turns or sit side by side, and which of the seven optional lines are drawn under the picture. Every value carries the origin it came from, which is store when this binding has a row in this module's configuration store and default when it has none; a layout nobody has edited therefore reads as the built-in default rather than as an empty object. The seven lines are drawn in the order listed — remaining, ends, temperatures, elapsed, material, printer_name, layer — at the font's own size, seven rows each with one blank row between, along the bottom of the text band; the picture's own row is centred in what they leave, and a line whose reading the printer has not reported is not drawn while its rows stay reserved, so the digits do not grow and shrink as readings come and go. A set of lines the panel cannot hold is refused by the write rather than cropped, and the sentence names the lines that did not fit and what would make room for them. clock is how the ends line writes its wall time \u2014 ENDS 18:10 on the 24-hour clock or ENDS 6:10 PM on the 12-hour one \u2014 and it changes that line alone: the remaining and elapsed lines are durations and read the same on either clock. It is per binding, and 24-hour is the default. zone is the IANA zone the ends line writes its clock in, and empty when this module has none it can load — with no zone that line is blank rather than written in the process's own clock. rotation_note is present only when the rotation was set to side-by-side, and says what that arrangement draws: the digits on the left at a capped scale, the job's name on the right cut to the room that is left.",
         "properties": {
           "id": {"type": "string", "description": "The binding's name on these routes: the host's device id while one printer is shown once, and <device id>@<light>:<segment> once it is shown twice."},
           "printer": {"type": "string", "description": "The host's device id for the printer the binding shows."},
@@ -2690,12 +2691,14 @@
           "printer_name_origin": {"type": "string", "enum": ["default", "store"]},
           "layer": {"type": "boolean", "description": "Whether how far up the nozzle has got is drawn, as Z 8.6MM. A layer count is not reported by the machine, so this is the Z position and not a layer number."},
           "layer_origin": {"type": "string", "enum": ["default", "store"]},
+          "clock": {"type": "string", "enum": ["24-hour", "12-hour"], "description": "How the ends line writes its wall time: ENDS 18:10 on the 24-hour clock, or ENDS 6:10 PM on the 12-hour one. It governs that one line and nothing else — a duration is a quantity and reads the same on either clock. 24-hour is the default, so a binding nobody has chosen a format for reads as 24-hour. A panel too narrow for the 12-hour spelling of a time refuses the picture rather than drawing a shortened time, and the refusal says how many columns the time needs."},
+          "clock_origin": {"type": "string", "enum": ["default", "store"]},
           "zone": {"type": "string", "description": "The IANA zone the ends line writes its clock in, out of this module's own store, and empty when it holds none it can load. With no zone that line is blank."},
           "origin": {"type": "string", "enum": ["default", "store"], "description": "store when this binding has a row in the store, default when it has none."},
           "overridden": {"type": "boolean", "description": "True when anything about this layout came from the store, which is what decides whether a screen offers a reset."},
           "rotation_note": {"type": "string", "description": "Present only when rotation is side-by-side: what this build does instead."}
         },
-        "required": ["printer", "light", "segment", "whole", "bar", "bar_band", "bar_rows", "percent", "percent_scale", "name", "rotation", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer", "zone", "origin", "overridden"]
+        "required": ["printer", "light", "segment", "whole", "bar", "bar_band", "bar_rows", "percent", "percent_scale", "name", "rotation", "rotate_seconds", "remaining", "ends", "temperatures", "elapsed", "material", "printer_name", "layer", "clock", "zone", "origin", "overridden"]
       },
       "LayoutRequest": {
         "type": "object",
@@ -2715,7 +2718,8 @@
           "printer_name": {"type": "boolean", "description": "Draw the machine's own name, as HERMES MK4."},
           "layer": {"type": "boolean", "description": "Draw how far up the nozzle has got, as Z 8.6MM. There is no layer count to draw."},
           "rotation": {"type": "string", "enum": ["take-turns", "side-by-side"], "description": "How the percentage and the name share the panel. side-by-side puts the digits on the left and the job's name on the right, cut to the room that is left."},
-          "rotate_seconds": {"type": "integer", "minimum": 1, "description": "How long each half holds the panel."}
+          "rotate_seconds": {"type": "integer", "minimum": 1, "description": "How long each half holds the panel."},
+          "clock": {"type": "string", "enum": ["24-hour", "12-hour"], "description": "How the ends line writes its wall time: ENDS 18:10 on the 24-hour clock, or ENDS 6:10 PM on the 12-hour one. A value outside these two is refused by name and nothing is written. Leave the key out for the 24-hour default."}
         }
       },
       "Window": {

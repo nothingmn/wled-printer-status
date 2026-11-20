@@ -611,6 +611,10 @@ func cacheKey(light string, held bindingStatus, shape bindingShape, width, heigh
 		int(shape.layout.rotate/time.Second),
 		shape.layout.remaining, shape.layout.ends, shape.layout.temperatures,
 		shape.layout.elapsed, shape.layout.material, shape.layout.printer, shape.layout.layer,
+		// The ends line's clock format is part of the picture — `ENDS 18:10` and `ENDS 6:10 PM` are
+		// two pictures of one frame — so a cached thumbnail served across a change of it would be
+		// the same defect as one served across a change of colour.
+		clockName(shape.layout.clock),
 		zoneName(shape.layout.zone),
 	)
 

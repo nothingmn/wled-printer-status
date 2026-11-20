@@ -199,14 +199,41 @@ const (
 	panelLineGap = 1
 )
 
+// The two ways a panel can write a wall time, in the words the store and the routes use.
+//
+// Only one line draws a clock — the ends line — and it is the only thing either value changes: every
+// other line is a count, a temperature, a name or a position, and a duration is a quantity rather
+// than a time of day. `42M` reads the same on a 12-hour panel as on a 24-hour one, and a toggle that
+// rewrote it would be a different feature wearing this one's name.
+//
+// 24-hour is the default, and its value is what an absent key means in the store and the zero value
+// means on this struct: a document written before this key existed, or a `layout` setting that
+// cannot carry it, composes exactly the picture it composed before it.
+const (
+	// clockTwentyFour is `ENDS 18:10`: the hour on the 24-hour clock, two digits, no suffix.
+	clockTwentyFour = "24-hour"
+	// clockTwelve is `ENDS 6:10 PM`: the hour on the 12-hour clock with no leading zero, and the
+	// half of the day as two letters. `12:00 AM` and `12:00 PM` are midnight and noon, which is
+	// what a person reads on a clock rather than 00:00 and 12:00.
+	clockTwelve = "12-hour"
+)
+
+// clockChoices is what a stored clock names, in the order the screen offers them.
+//
+//nolint:gochecknoglobals // one closed list, read and never written.
+var clockChoices = []string{clockTwentyFour, clockTwelve}
+
 // The seven optional lines a panel can carry, in the order they are drawn, which is the order the
 // operator ranked them in when he was offered the list: what a person walking past wants first, and
 // the machinist's number last.
 const (
 	// lineRemaining is how long the job has left, as `42M`.
 	lineRemaining = iota
-	// lineEnds is the clock time the job will be over at, as `ENDS 11:12`, in the zone the
-	// `timezone` setting names.
+	// lineEnds is the clock time the job will be over at, as `ENDS 11:12` on a 24-hour panel or
+	// `ENDS 11:12 AM` on a 12-hour one, in the zone the `timezone` setting names.
+	//
+	// It is the one line whose words are a wall time, and the layout's `clock` decides how that
+	// time is written. Nothing else on the panel reads the clock.
 	lineEnds
 	// lineTemperatures is the nozzle's temperature and target and the bed's, as `NOZ 221/220 BED 60`.
 	lineTemperatures
@@ -279,6 +306,14 @@ type layout struct {
 	// the layout by whoever reads both, so that the painter and the thumbnail write the same
 	// clock.
 	zone *time.Location
+
+	// clock is how that clock is written: clockTwentyFour, or clockTwelve, and empty for
+	// 24-hour — the zero value is the default, so a layout built without one draws the time this
+	// module has always drawn.
+	//
+	// It is the layout's own, unlike the zone: two bindings on two panels may be read by two
+	// people, and the operator's words were "a toggle, for 12 vs 24 hour clock, per layout".
+	clock string
 }
 
 // defaultLayout is what a panel draws when nobody has written a layout: a bar at the bottom, the
@@ -680,6 +715,10 @@ func (l layout) fitOn(geometry panel) (panelBands, int, error) {
 		}
 	}
 
+	if err := l.clockFitsOn(geometry); err != nil {
+		return panelBands{}, 0, err
+	}
+
 	// The optional lines are placed first, because they are what the picture's own row gives way
 	// to. A count short of what the layout asked for is not this function's to explain: bandsOn
 	// names the lines that did not fit, and the arithmetic here stays usable by the candidates
@@ -724,6 +763,76 @@ func (l layout) fitOn(geometry panel) (panelBands, int, error) {
 	}
 
 	return bands, count, nil
+}
+
+// clockFitsOn is the one fit question about a line's **width** rather than the band's rows, and it is
+// the question a 12-hour clock made necessary.
+//
+// A panel's optional lines are drawn at one scale — `panelLineScale`, the font's own — and centred
+// across the whole panel, so a line is as wide as its characters and the panel's width is the room it
+// has. Every other line is a fixed handful of glyphs that this build writes itself and that has always
+// fitted. A wall time is different: `ENDS 18:10` is ten glyphs and `ENDS 6:10 PM` is twelve, and the
+// module's own report of what the operator sees is that a panel narrow enough to hold the first is not
+// always wide enough for the second.
+//
+// It is judged against the **longest** spelling the format can produce and not tonight's, because a fit
+// that came and went with the hour would be a panel that refused its picture at noon and drew it at
+// six. `ENDS 12:59 PM` is that longest spelling on a 12-hour clock; a 24-hour clock is always eight
+// characters of time behind the same four of `ENDS `.
+//
+// Nothing is checked when the layout has no zone: with no zone the line draws no clock at all, so there
+// is no word for the panel to be too narrow for. That is the same silence endsWord keeps.
+func (l layout) clockFitsOn(geometry panel) error {
+	if !l.ends || l.zone == nil {
+		return nil
+	}
+
+	word := endsWidestWord(l.clock)
+	if width := lineWidth(word); width > geometry.width {
+		return fmt.Errorf(
+			"layout: the ends line on a %s clock is %d columns wide as `%s`, and this panel is %d: a clock time is refused rather than trimmed to a shorter one, because `%s` cut down reads as a different time",
+			clockName(l.clock), width, word, geometry.width, word)
+	}
+
+	return nil
+}
+
+// endsWidestWord is the longest a wall time can be, as the word the ends line draws it in: the whole
+// of `ENDS `, a two-digit hour, a colon, two digits, and — on a 12-hour clock — a space and the half of
+// the day.
+//
+// It is a real spelling of a real instant on purpose (12:59 in the afternoon), so that the number the
+// refusal quotes is a number this font can draw rather than a width invented for a test.
+func endsWidestWord(clock string) string {
+	if clock == clockTwelve {
+		return "ENDS 12:59 PM"
+	}
+
+	return "ENDS 00:00"
+}
+
+// clockName is a clock format as the store spells it, with the empty value — which is 24-hour — saying
+// so rather than reading as nothing.
+func clockName(clock string) string {
+	if clock == clockTwelve {
+		return clockTwelve
+	}
+
+	return clockTwentyFour
+}
+
+// lineWidth is how many columns one of the optional lines takes at the scale they are drawn at, by the
+// font's own arithmetic — the same measurement stampCentred refuses on, in the one place a fit can read
+// it too.
+func lineWidth(word string) int {
+	size, err := text.Size(word, panelLineScale)
+	if err != nil {
+		// A word the font cannot draw has no width; stampCentred refuses it by name when it is
+		// asked to draw one, which is the answer a caller needs.
+		return 0
+	}
+
+	return size.Width
 }
 
 // primaryPhrase names what in the picture's own row is asking for rows, for the refusal above, and it
@@ -1151,6 +1260,7 @@ func (p panelPicture) beside(geometry panel, bands panelBands, digits, jobName s
 //
 //	remaining     /job/time_remaining, whole seconds, as 42M or 1H12M
 //	ends          the same count read against the clock, in the `timezone` setting's zone, as ENDS 11:12
+//	              on a 24-hour panel or ENDS 11:12 AM on a 12-hour one — the layout's own `clock`
 //	temperatures  /tools/0/nozzle_temp and its target, and /temperature/bed, as NOZ 221/220 BED 60
 //	elapsed       /job/time_printing, as 1H12M
 //	material      /tools/0/.../material/abbreviation, as PLA
@@ -1186,6 +1296,17 @@ func (p panelPicture) lineWord(line, width int) string {
 		return ""
 	}
 
+	// A wall time is the one line this module will not shorten. Every other line is a handful of
+	// glyphs written here, and a machine name or a material nobody expected is drawn short rather
+	// than refused — but `ENDS 6:10 PM` cut to the columns that are left reads `ENDS 6:10`, which is
+	// a different instant written as though it were the time. So the clock goes to the painter
+	// whole, and a panel too narrow for it refuses the picture: bandsOn has already said so in words
+	// (clockFitsOn), and stampCentred refuses it by measurement if a format ever arrives that the
+	// fit did not know about.
+	if line == lineEnds {
+		return said
+	}
+
 	// The same rule the job's name is drawn by: upper case, only the characters this font holds, cut
 	// at the last whole word that fits. Nothing here needs the cut today — the longest line is
 	// eighteen characters and the panel holds forty-two at this scale — and it is here so that a
@@ -1193,12 +1314,20 @@ func (p panelPicture) lineWord(line, width int) string {
 	return fitName(said, width, panelLineScale)
 }
 
-// endsWord is when the job will be over, as a clock time in the zone the operator names.
+// endsWord is when the job will be over, as a clock time in the zone the operator names, written in the
+// layout's own clock format: `ENDS 18:10` on a 24-hour panel and `ENDS 6:10 PM` on a 12-hour one.
 //
-// It is written with a colon — `ENDS 11:12` — which is the mark a clock is read with. The first
-// build had no colon in its font and wrote a full stop between the hour and the minute; the glyph
-// is in the table now (internal/text, and §2.4 counts it), so the line says what a person expects
-// to read rather than the nearest thing the font could draw.
+// It is written with a colon — `ENDS 11:12` — which is the mark a clock is read with. The first build
+// had no colon in its font and wrote a full stop between the hour and the minute; the glyph is in the
+// table now (internal/text, and §2.4 counts it), so the line says what a person expects to read rather
+// than the nearest thing the font could draw.
+//
+// The 12-hour form is Go's own `3:04 PM`, which is the spelling the operator asked for by name: no
+// leading zero on the hour, and the half of the day as two capital letters — `9:05 AM`, `6:10 PM`,
+// `12:00 AM` at midnight and `12:00 PM` at noon. The suffix is two glyphs and a space of them rather
+// than a bare `P` or `A`: the font draws `A`, `P` and `M` (they are in every other line's alphabet),
+// a space costs six columns of a 256-column panel, and `PM` is what a person reads on a clock face
+// rather than a letter he has to be taught. What that costs is measured: see clockFitsOn.
 //
 // Empty when there is no remaining count or no zone: a time written in this process's own clock is
 // seven hours from the operator's evening (AGENTS.md §5.14), and a wrong time on a wall is worse
@@ -1210,6 +1339,9 @@ func (p panelPicture) endsWord() string {
 	}
 
 	ends := p.at.In(p.layout.zone).Add(time.Duration(seconds) * time.Second)
+	if p.layout.clock == clockTwelve {
+		return "ENDS " + ends.Format("3:04 PM")
+	}
 
 	return "ENDS " + ends.Format("15:04")
 }
@@ -1431,6 +1563,11 @@ type layoutView struct {
 	Material     bool `json:"material"`
 	PrinterName  bool `json:"printer_name"`
 	Layer        bool `json:"layer"`
+
+	// Clock is how the ends line writes its time — `24-hour` or `12-hour` — and is always one of
+	// those two rather than empty, because a caller reading this view is reading the value in
+	// force and 24-hour is what the empty field means.
+	Clock string `json:"clock"`
 }
 
 // view is this layout as the routes answer with it.
@@ -1449,6 +1586,7 @@ func (l layout) view() layoutView {
 		Material:      l.material,
 		PrinterName:   l.printer,
 		Layer:         l.layer,
+		Clock:         clockName(l.clock),
 	}
 }
 

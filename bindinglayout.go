@@ -76,7 +76,7 @@ var rotationChoices = []string{rotationTakeTurns, rotationSideBySide}
 // accepted — the same sentence pattern the bindings setting answers with.
 func bindingLayoutKeys() string {
 	return "bar, bar_band, bar_rows, percent, percent_scale, name, remaining, ends, temperatures, elapsed, " +
-		"material, printer_name, layer, rotation and rotate_seconds"
+		"material, printer_name, layer, rotation, rotate_seconds and clock"
 }
 
 // storedLayout is one binding's layout as the document holds it: the binding it is about, and only
@@ -122,6 +122,17 @@ type storedLayout struct {
 	Material     *bool `json:"material,omitempty"`
 	PrinterName  *bool `json:"printer_name,omitempty"`
 	Layer        *bool `json:"layer,omitempty"`
+
+	// Clock is how this binding's panel writes a wall time: clockTwelve or clockTwentyFour, and
+	// absent until somebody chooses. Absent is 24-hour — the picture this module has always
+	// drawn — for the reason every other field here is a pointer: a row written before this key
+	// existed must compose exactly what it composed then, and schema version 10's step writes
+	// nothing on any row because of it.
+	//
+	// It is the row's own and not a document setting, because the operator asked for it per
+	// layout: two panels showing two machines may be read by two people who write the time
+	// differently, and a per-instance key would make one of them wrong.
+	Clock *string `json:"clock,omitempty"`
 }
 
 // empty says whether this row carries nothing at all, which is a row that is never written: DELETE
@@ -131,7 +142,7 @@ func (l storedLayout) empty() bool {
 	return l.Bar == nil && l.BarBand == nil && l.BarRows == nil && l.Percent == nil &&
 		l.PercentScale == nil && l.Name == nil && l.Rotation == nil && l.RotateSeconds == nil &&
 		l.Remaining == nil && l.Ends == nil && l.Temperatures == nil && l.Elapsed == nil &&
-		l.Material == nil && l.PrinterName == nil && l.Layer == nil
+		l.Material == nil && l.PrinterName == nil && l.Layer == nil && l.Clock == nil
 }
 
 // bindingLayout is one binding's layout with every default filled in: what the composer would draw
@@ -158,6 +169,11 @@ type bindingLayout struct {
 	material     bool
 	printer      bool
 	layer        bool
+
+	// clock is how this binding's panel writes the ends line's wall time: clockTwentyFour or
+	// clockTwelve. 24-hour is the default — the resolved value for a row that names none, and for
+	// a binding that has no row at all.
+	clock string
 }
 
 // defaultBindingLayout is what a binding composes with when nobody has laid it out.
@@ -181,6 +197,7 @@ func defaultBindingLayout() bindingLayout {
 		name:         true,
 		rotation:     rotationTakeTurns,
 		rotate:       defaultRotateSeconds * time.Second,
+		clock:        clockTwentyFour,
 	}
 }
 
@@ -232,6 +249,10 @@ func (l storedLayout) resolved() bindingLayout {
 	got.printer = onOff(l.PrinterName, got.printer)
 	got.layer = onOff(l.Layer, got.layer)
 
+	if l.Clock != nil {
+		got.clock = strings.ToLower(strings.TrimSpace(*l.Clock))
+	}
+
 	return got
 }
 
@@ -258,6 +279,7 @@ func (l bindingLayout) shape() layout {
 		material:     l.material,
 		printer:      l.printer,
 		layer:        l.layer,
+		clock:        l.clock,
 	}
 }
 
@@ -311,6 +333,20 @@ func checkStoredLayout(one storedLayout) error {
 		return fmt.Errorf(
 			"rotate_seconds is %d, and a rotation of no seconds is not a rotation: it is the whole number of seconds each half holds the panel, such as %d",
 			*one.RotateSeconds, defaultRotateSeconds)
+	}
+
+	// A clock this build cannot write is refused by name rather than rounded to the nearest, for the
+	// reason an unsupported rotation is: a time written in a format nobody asked for is a picture
+	// nobody asked for, and a panel that quietly drew 18:10 where 6:10 PM was written would look
+	// perfectly healthy.
+	if one.Clock != nil {
+		clock := strings.ToLower(strings.TrimSpace(*one.Clock))
+
+		if clock != clockTwentyFour && clock != clockTwelve {
+			return fmt.Errorf(
+				"clock is %q, and a panel writes a wall time on the 24-hour clock or the 12-hour one: write %s",
+				*one.Clock, strings.Join(quoted(clockChoices), " or "))
+		}
 	}
 
 	return nil
@@ -472,6 +508,15 @@ type layoutAnswer struct {
 	Layer              bool   `json:"layer"`
 	LayerOrigin        string `json:"layer_origin"`
 
+	// Clock is how this binding's ends line writes a wall time — `24-hour` or `12-hour` — with the
+	// origin it came from. A screen sets one control from it and says whether it is yours or the
+	// default, like every other value here.
+	//
+	// It is the line's format and nothing else: a duration is a quantity and reads the same on
+	// either clock, so `remaining` and `elapsed` are not governed by it.
+	Clock       string `json:"clock"`
+	ClockOrigin string `json:"clock_origin"`
+
 	// Zone is the IANA zone the ETA line's clock is written in — the `timezone` setting's — and
 	// empty when this module has none it can load. A screen needs it for one sentence: the ETA line
 	// writes a clock time and nothing else, so with no zone it is a key that would draw nothing.
@@ -552,6 +597,9 @@ func layoutAnswerOf(b binding, light controllerAnswer, row storedLayout, stored 
 		PrinterNameOrigin:  originOf(row.PrinterName != nil),
 		Layer:              resolved.layer,
 		LayerOrigin:        originOf(row.Layer != nil),
+
+		Clock:       resolved.clock,
+		ClockOrigin: originOf(row.Clock != nil),
 
 		Zone: zone,
 

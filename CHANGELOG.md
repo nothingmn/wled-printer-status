@@ -10,6 +10,30 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## 0.7.0 — 2026-11-19
+
+**A layout writes its wall time on a 12-hour or a 24-hour clock, and the toggle is per binding.** The
+operator's words were *"Can we add a toggle, for 12 vs 24 hour clock, per layout"*, and it is the layout
+row's own key — `clock` — beside the zone rather than a setting for the whole instance, because two panels
+showing two machines are read by two people. **The store moves to schema 10**; the upgrade writes nothing on
+any row, a document that names no clock reads as 24-hour, and an older build refuses a document this one
+writes by number.
+
+- **`clock` on `PUT /bindings/{id}/layout`, and `clock` with `clock_origin` on every layout answer.**
+  `12-hour` writes `ENDS 6:10 PM`; `24-hour` writes `ENDS 18:10` and is the default. A third value is
+  refused with `LAYOUT_REFUSED`, naming both accepted ones, and nothing is written. `DELETE` puts the
+  binding back to 24-hour like every other value on the row.
+- **The toggle changes the ends line and nothing else.** The remaining and elapsed lines are quantities, not
+  times of day: `42M` and `1H12M` read exactly the same on either clock.
+- **A panel too narrow for the 12-hour spelling refuses the picture rather than trimming the time.** The
+  line is measured in the module's own font — `ENDS 18:10` is 59 columns of a 256-column panel and
+  `ENDS 6:10 PM` is 71, or 77 for the longest time a 12-hour clock can write — and a clock that does not fit
+  is refused with the width it needs and the panel it has, on the panel, in the thumbnail and in the
+  Layout screen's own verdict. A time cut to the room that is left would read as a different time.
+- **The Layout screen carries the control beside the lines under the picture**, with the value's origin and
+  the live fit verdict: turning 12-hour on where the panel cannot hold it shows the same refusal an
+  overfilled panel gets, and the write is not sent.
+
 ## 0.6.0 — 2026-11-19
 
 **The zone lives in this module's own store, and the Overview screen sets it.** It was a manifest setting, and

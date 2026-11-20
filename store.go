@@ -111,7 +111,16 @@ const (
 	// starting unchanged. The `timezone` setting is then read once as the migration source and written
 	// here (zoneFromSettings, main.go), and every consumer reads this document from then on. See
 	// timezone.go.
-	storeVersion = 9
+	//
+	// Version 10 is the clock format on a layout row: `clock`, holding `24-hour` or `12-hour`. It is
+	// the operator's own request — "a toggle, for 12 vs 24 hour clock, per layout" — and it is the
+	// first key that changes what a line *reads* rather than which lines are on. The step from 9
+	// writes nothing and invents nothing: version 9's build had no field to put a format in, so no
+	// document it wrote names one, and absent means 24-hour — the picture every install has been
+	// drawing. Writing `"clock": "24-hour"` on every row here would be writing a decision nobody
+	// made, and would be the change that silently altered a panel on upgrade if the default ever
+	// moved.
+	storeVersion = 10
 
 	// storeVersionUnstamped is version 0: a document written before the version was stamped,
 	// which is the only older shape this store has ever had.
@@ -242,13 +251,14 @@ type storedLayoutV3 struct {
 	RotateSeconds *int    `json:"rotate_seconds,omitempty"`
 }
 
-// toStored is this row at version 4: the same eight fields, keyed on the binding its printer named.
+// toStored is this row at version 4, and at every version through 9: the same eight fields, keyed on
+// the binding its printer named.
 //
 // The value is the printer's device id unchanged, and that is not a guess: version 3 refused a second
 // binding of one printer, so on every document version 3 wrote, the printer *was* the binding's name
 // — which is why the migration renames the key and copies the value rather than inventing one.
-func (l storedLayoutV3) toStored() storedLayout {
-	return storedLayout{
+func (l storedLayoutV3) toStored() storedLayoutV9 {
+	return storedLayoutV9{
 		Binding:       l.Printer,
 		Bar:           l.Bar,
 		BarBand:       l.BarBand,
@@ -258,6 +268,57 @@ func (l storedLayoutV3) toStored() storedLayout {
 		Name:          l.Name,
 		Rotation:      l.Rotation,
 		RotateSeconds: l.RotateSeconds,
+	}
+}
+
+// storedLayoutV9 is one layout row as every version from 6 to 9 wrote it: the same fields storedLayout
+// holds today and no `clock`. It is the row shape the steps below read and write.
+//
+// A type of its own for the reason storedLayoutV3 is one: the steps decode strictly, and a version-9
+// document read into the current shape would accept a `clock` key that version 9 never wrote — a
+// document half one shape and half another, which is the one thing the version stamp exists to catch.
+type storedLayoutV9 struct {
+	Binding string `json:"binding"`
+
+	Bar           *bool   `json:"bar,omitempty"`
+	BarBand       *string `json:"bar_band,omitempty"`
+	BarRows       *int    `json:"bar_rows,omitempty"`
+	Percent       *bool   `json:"percent,omitempty"`
+	PercentScale  *int    `json:"percent_scale,omitempty"`
+	Name          *bool   `json:"name,omitempty"`
+	Rotation      *string `json:"rotation,omitempty"`
+	RotateSeconds *int    `json:"rotate_seconds,omitempty"`
+
+	Remaining    *bool `json:"remaining,omitempty"`
+	Ends         *bool `json:"ends,omitempty"`
+	Temperatures *bool `json:"temperatures,omitempty"`
+	Elapsed      *bool `json:"elapsed,omitempty"`
+	Material     *bool `json:"material,omitempty"`
+	PrinterName  *bool `json:"printer_name,omitempty"`
+	Layer        *bool `json:"layer,omitempty"`
+}
+
+// toStored is this row at version 10: the same fields, and no clock format — because a version-9 row
+// could not have carried one, and absent is what 24-hour means. Nothing is invented and nothing is
+// dropped.
+func (l storedLayoutV9) toStored() storedLayout {
+	return storedLayout{
+		Binding:       l.Binding,
+		Bar:           l.Bar,
+		BarBand:       l.BarBand,
+		BarRows:       l.BarRows,
+		Percent:       l.Percent,
+		PercentScale:  l.PercentScale,
+		Name:          l.Name,
+		Rotation:      l.Rotation,
+		RotateSeconds: l.RotateSeconds,
+		Remaining:     l.Remaining,
+		Ends:          l.Ends,
+		Temperatures:  l.Temperatures,
+		Elapsed:       l.Elapsed,
+		Material:      l.Material,
+		PrinterName:   l.PrinterName,
+		Layer:         l.Layer,
 	}
 }
 
@@ -274,7 +335,7 @@ type storedConfigV6 struct {
 	Bindings []json.RawMessage  `json:"bindings"`
 	States   []storedState      `json:"states"`
 	Moments  []storedMoment     `json:"moments"`
-	Layouts  []storedLayout     `json:"layouts"`
+	Layouts  []storedLayoutV9   `json:"layouts"`
 	Windows  []brightnessWindow `json:"windows"`
 	Pauses   []storedPause      `json:"pauses"`
 }
@@ -292,7 +353,7 @@ type storedConfigV7 struct {
 	Bindings []json.RawMessage  `json:"bindings"`
 	States   []storedState      `json:"states"`
 	Moments  []storedMoment     `json:"moments"`
-	Layouts  []storedLayout     `json:"layouts"`
+	Layouts  []storedLayoutV9   `json:"layouts"`
 	Windows  []brightnessWindow `json:"windows"`
 	Lights   []storedLightV7    `json:"lights"`
 	Pauses   []storedPause      `json:"pauses"`
@@ -310,10 +371,31 @@ type storedConfigV8 struct {
 	Bindings []json.RawMessage  `json:"bindings"`
 	States   []storedState      `json:"states"`
 	Moments  []storedMoment     `json:"moments"`
-	Layouts  []storedLayout     `json:"layouts"`
+	Layouts  []storedLayoutV9   `json:"layouts"`
 	Windows  []brightnessWindow `json:"windows"`
 	Lights   []storedLight      `json:"lights"`
 	Pauses   []storedPause      `json:"pauses"`
+}
+
+// storedConfigV9 is the document at schema version 9: everything version 10 holds, with a zone and no
+// clock format on any layout row. Both the step that writes it and the step that reads it use it;
+// nothing else does.
+//
+// It is a type of its own for the reason storedConfigV8 is. The step from 8 writes version 9, and the
+// step from 9 reads it back; if the first wrote the current shape, the second would refuse the
+// document it had just produced — a version-9 row carrying `"clock": "24-hour"` is not a version-9
+// row, and the strict decode is what says so.
+type storedConfigV9 struct {
+	Version        int                `json:"version"`
+	Bindings       []json.RawMessage  `json:"bindings"`
+	States         []storedState      `json:"states"`
+	Moments        []storedMoment     `json:"moments"`
+	Layouts        []storedLayoutV9   `json:"layouts"`
+	Windows        []brightnessWindow `json:"windows"`
+	Lights         []storedLight      `json:"lights"`
+	Pauses         []storedPause      `json:"pauses"`
+	Timezone       string             `json:"timezone"`
+	TimezoneOrigin string             `json:"timezone_origin"`
 }
 
 // storedConfigV2 is the document at schema version 2: the version, the bindings list, and the two
@@ -501,7 +583,7 @@ var storeUpgrades = []storeUpgrade{
 			// And every layout row is renamed, not rewritten: `printer` becomes `binding` and the
 			// eight fields travel exactly as they were, so a panel somebody had laid out composes
 			// with the same picture after the upgrade as before it.
-			rows := make([]storedLayout, 0, len(third.Layouts))
+			rows := make([]storedLayoutV9, 0, len(third.Layouts))
 
 			for _, one := range third.Layouts {
 				rows = append(rows, one.toStored())
@@ -668,7 +750,7 @@ var storeUpgrades = []storeUpgrade{
 				return nil, err
 			}
 
-			return json.Marshal(storedConfig{
+			return json.Marshal(storedConfigV9{
 				Version:        9,
 				Bindings:       eighth.Bindings,
 				States:         eighth.States,
@@ -679,6 +761,45 @@ var storeUpgrades = []storeUpgrade{
 				Pauses:         eighth.Pauses,
 				Timezone:       "",
 				TimezoneOrigin: "",
+			})
+		},
+	},
+	{
+		from: 9,
+		why:  "a layout row may name the clock its ends line writes a time on, absent until somebody chooses",
+		step: func(raw []byte) ([]byte, error) {
+			// Version 9 and version 10 are the same document and not the same rows: version 10's
+			// rows may carry `clock` and version 9's never did, so a version-9 document decodes
+			// into this shape with the key absent on every row — which is the rule version 10
+			// has, because absent means the 24-hour clock this module has always written.
+			//
+			// Nothing is written here, and that is the point. `"clock": "24-hour"` on every row
+			// would be a decision nobody made, copied into the file to be kept in step with the
+			// code by hand; and because it is absent that an upgrade cannot change what a panel
+			// draws — the resolved value of a row that names no clock is 24-hour, which is the
+			// picture version 9's build drew to the byte.
+			var ninth storedConfigV9
+			if err := decodeStrictly(raw, &ninth); err != nil {
+				return nil, err
+			}
+
+			rows := make([]storedLayout, 0, len(ninth.Layouts))
+
+			for _, one := range ninth.Layouts {
+				rows = append(rows, one.toStored())
+			}
+
+			return json.Marshal(storedConfig{
+				Version:        10,
+				Bindings:       ninth.Bindings,
+				States:         ninth.States,
+				Moments:        ninth.Moments,
+				Layouts:        rows,
+				Windows:        ninth.Windows,
+				Lights:         ninth.Lights,
+				Pauses:         ninth.Pauses,
+				Timezone:       ninth.Timezone,
+				TimezoneOrigin: ninth.TimezoneOrigin,
 			})
 		},
 	},

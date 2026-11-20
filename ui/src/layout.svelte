@@ -130,7 +130,7 @@
 		layer: 'layer_origin',
 	};
 
-	/** What one binding is being edited towards: the fifteen keys the route writes. */
+	/** What one binding is being edited towards: the sixteen keys the route writes. */
 	interface Draft {
 		bar: boolean;
 		bar_band: 'top' | 'bottom';
@@ -147,6 +147,7 @@
 		layer: boolean;
 		rotation: 'take-turns' | 'side-by-side';
 		rotate_seconds: number;
+		clock: '24-hour' | '12-hour';
 	}
 
 	/**
@@ -157,6 +158,24 @@
 
 	/** The two rotations §2.5 offers, `take-turns` first because it is what this module has shipped. */
 	const ROTATIONS: ('take-turns' | 'side-by-side')[] = ['take-turns', 'side-by-side'];
+
+	/**
+	 * The two clocks a layout may write its wall time on, 24-hour first because it is the default and
+	 * what every install has been drawing. They are the module's own words (`24-hour`, `12-hour`),
+	 * and a value outside them is refused by the route rather than rounded.
+	 */
+	const CLOCKS: ('24-hour' | '12-hour')[] = ['24-hour', '12-hour'];
+
+	/**
+	 * How many columns the ends line takes on each clock, as the module's own font measures it: a
+	 * glyph is five columns and the gap between two is one, so a word of n characters is 6n - 1.
+	 *
+	 * The numbers are the longest spelling each clock can produce — `ENDS 00:00` and `ENDS 12:59 PM`
+	 * — and not tonight's, because a fit judged against the time on the wall would refuse at noon and
+	 * draw at six. `layout.go`'s clockFitsOn is this arithmetic; it is restated here so the verdict
+	 * beside the picture and the refusal on the panel cannot disagree.
+	 */
+	const CLOCK_COLUMNS: Record<'24-hour' | '12-hour', number> = { '24-hour': 59, '12-hour': 77 };
 
 	/**
 	 * The font's own numbers, which are what the refusal is made of: one glyph is seven rows, so the
@@ -239,12 +258,13 @@
 		layer: one.layer,
 		rotation: one.rotation,
 		rotate_seconds: one.rotate_seconds,
+		clock: one.clock,
 	});
 
 	const draftAt = (one: Layout): Draft => drafts[one.id] ?? draftOf(one);
 
 	/**
-	 * The fifteen keys the route writes, as one request: every key goes, because the route replaces
+	 * The sixteen keys the route writes, as one request: every key goes, because the route replaces
 	 * the row whole — a body that left `percent_scale` out would put it back to the default while
 	 * the operator watched a control stay where it was.
 	 */
@@ -264,6 +284,7 @@
 		layer: draft.layer,
 		rotation: draft.rotation,
 		rotate_seconds: draft.rotate_seconds,
+		clock: draft.clock,
 	});
 
 	/**
@@ -299,6 +320,9 @@
 
 	/** The panel's own height in rows, and 0 when the module has not drawn a frame for it yet. */
 	const heightOf = (one: Layout): number => frameOf(one)?.height ?? 0;
+
+	/** The panel's own width in columns, and 0 when the module has not drawn a frame for it yet. */
+	const widthOf = (one: Layout): number => frameOf(one)?.width ?? 0;
 
 	/** One binding's printer, as the row names it. */
 	const printerOf = (one: Layout): string =>
@@ -488,7 +512,7 @@
 	 * which switch to turn off rather than "invalid". It is arithmetic on the height the frame
 	 * reports, so it is skipped when that height is unknown.
 	 */
-	const fitOf = (draft: Draft, height: number): { fits: boolean; said: string } => {
+	const fitOf = (draft: Draft, width: number, height: number, zone: string): { fits: boolean; said: string } => {
 		const rows = barRows(draft);
 		const left = textRows(draft, height);
 		const wanted = linesOn(draft);
@@ -503,6 +527,21 @@
 
 		if ((drawn || wanted.length > 0) && left < GLYPH_ROWS) {
 			return { fits: false, said: t('layout.fit_no_text', { rows, left, glyph: GLYPH_ROWS }) };
+		}
+
+		// The one width in the picture. A wall time is as wide as its characters, the panel is the
+		// room it has, and a 12-hour clock needs half again the columns of a 24-hour one — so a panel
+		// narrow enough to hold `ENDS 18:10` may not hold `ENDS 6:10 PM`. With no zone the line is
+		// blank and there is no word to refuse, which is the same silence the ends line keeps.
+		if (draft.ends && zone !== '' && width > 0 && CLOCK_COLUMNS[draft.clock] > width) {
+			return {
+				fits: false,
+				said: t('layout.fit_clock', {
+					clock: clockLabel(draft.clock),
+					columns: CLOCK_COLUMNS[draft.clock],
+					width,
+				}),
+			};
 		}
 
 		// The lines are placed first, because they are what the picture's own row gives way to.
@@ -688,7 +727,7 @@
 	const overflows = (one: Layout): boolean => {
 		const height = heightOf(one);
 
-		return kindOf(one) === 'panel' && height > 0 && !fitOf(draftAt(one), height).fits;
+		return kindOf(one) === 'panel' && height > 0 && !fitOf(draftAt(one), widthOf(one), height, one.zone).fits;
 	};
 
 	/** How many of the three things the picture is made of this draft switches on — group 3's test. */
@@ -794,7 +833,7 @@
 		if (kindOf(one) === 'panel') {
 			const height = heightOf(one);
 			if (height > 0) {
-				const fit = fitOf(draft, height);
+				const fit = fitOf(draft, widthOf(one), height, one.zone);
 				if (!fit.fits) {
 					faults[one.id] = t('layout.not_saved', { why: fit.said });
 
@@ -925,7 +964,8 @@
 			draft.name !== held.name ||
 			LINES.some((line) => draft[line.key] !== held[line.key]) ||
 			draft.rotation !== held.rotation ||
-			draft.rotate_seconds !== held.rotate_seconds
+			draft.rotate_seconds !== held.rotate_seconds ||
+			draft.clock !== held.clock
 		);
 	};
 
@@ -942,6 +982,10 @@
 
 	/** A band in words. */
 	const bandLabel = (band: 'top' | 'bottom'): string => (band === 'top' ? t('layout.band_top') : t('layout.band_bottom'));
+
+	/** A clock in words, with the time it writes: the two forms are what a person recognises. */
+	const clockLabel = (clock: '24-hour' | '12-hour'): string =>
+		clock === '12-hour' ? t('layout.clock_twelve') : t('layout.clock_twenty_four');
 
 	/** The brightness a binding writes, and what it means when it writes none. */
 	const brightnessOf = (one: Layout): string => {
@@ -1048,9 +1092,11 @@
 				{@const kind = kindOf(one)}
 				{@const frame = frameOf(one)}
 				{@const height = heightOf(one)}
-				{@const fit = kind === 'panel' && height > 0 ? fitOf(draft, height) : null}
+				{@const width = widthOf(one)}
+				{@const fit = kind === 'panel' && height > 0 ? fitOf(draft, width, height, one.zone) : null}
 				{@const sketch = kind === 'panel' && height > 0 ? sketchOf(draft, frame?.width ?? 256, height) : null}
 				{@const tally = kind === 'panel' && height > 0 ? linesTally(draft, height) : null}
+				{@const clockWide = kind === 'panel' && width > 0 && draft.ends && one.zone !== '' && CLOCK_COLUMNS[draft.clock] > width}
 
 				<article class="flex flex-col gap-section" data-binding={one.id} data-kind={kind}>
 					<!-- Which binding this is, and the one reset that puts all of it back. -->
@@ -1405,11 +1451,42 @@
 									{#snippet meta()}
 										<span class="font-ui text-xs text-wled-text-quiet">
 											{t('layout.lines_count', { on: linesOn(draft).length, rows: stackHeight(linesOn(draft).length) })}
+											{#if draft.ends}
+												{' · '}{clockLabel(draft.clock)}
+											{/if}
 										</span>
 									{/snippet}
 
 									<div class="flex flex-col gap-row p-panel">
 										<p class="font-ui text-xs text-wled-text-quiet">{t('layout.lines_note')}</p>
+
+										<!--
+											The clock the ends line writes on. It is the row's own value and
+											not a setting for the instance, which is what the operator asked
+											for; it is placed with the lines because it is about what one line
+											reads, and it is a select like the band, the scale and the rotation
+											rather than a switch, because there are two clocks and a switch
+											would have to pick a side to be on.
+										-->
+										<Field
+											id="layout-clock"
+											label="{t('layout.clock')} · {one.clock_origin === 'store' ? t('layout.yours') : t('layout.default')}"
+											hint={t('layout.clock_note')}
+										>
+											{#snippet children()}
+												<FieldSelect
+													id="layout-clock"
+													value={draft.clock}
+													oninput={(value) => edit(one, { clock: value as '24-hour' | '12-hour' })}
+												>
+													{#snippet children()}
+														{#each CLOCKS as clock (clock)}
+															<option value={clock} selected={clock === draft.clock}>{clockLabel(clock)}</option>
+														{/each}
+													{/snippet}
+												</FieldSelect>
+											{/snippet}
+										</Field>
 
 										<div class="grid gap-tight md:grid-cols-2">
 											{#each LINES as line (line.key)}
@@ -1432,7 +1509,17 @@
 											<p class="font-ui text-xs" role="note">{t('layout.line_ends_no_zone')}</p>
 										{/if}
 
-										{#if tally !== null && tally.missed.length > 0}
+										{#if clockWide}
+										<p class="font-ui text-xs text-wled-danger" role="alert" data-refusal="clock">
+											{t('layout.fit_clock', {
+												clock: clockLabel(draft.clock),
+												columns: CLOCK_COLUMNS[draft.clock],
+												width,
+											})}
+										</p>
+									{/if}
+
+									{#if tally !== null && tally.missed.length > 0}
 											<p class="font-ui text-xs text-wled-danger" role="alert" data-refusal="lines">
 												{t('layout.lines_refused', {
 													rows: tally.stack,
