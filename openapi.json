@@ -39,7 +39,7 @@
       "post": {
         "operationId": "add-binding",
         "summary": "Show one more printer",
-        "description": "Adds a binding and puts it into effect at once: the writer is stopped — waiting for a borrowed segment to be given back — and started again on the new set, so no restart and no settings save is needed. It is written into this module's own configuration store before the writer is touched, so it is what the next start reads; a store that cannot take the write refuses this call and leaves the set that was running running, rather than applying a change a restart would take away. The set that would result is held to the module's rules before anything is touched, so two bindings on one segment, a whole controller beside a segment of it, a brightness on a borrowed segment, a printer the host does not hold and an address that is not a controller are all refused with the rule that refused them and the set that was running is left running. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Adds a binding and puts it into effect at once: the writer is stopped — waiting for a borrowed segment to be given back — and started again on the new set, so no restart and no settings save is needed. It is written into this module's own configuration store before the writer is touched, so it is what the next start reads; a store that cannot take the write refuses this call and leaves the set that was running running, rather than applying a change a restart would take away. The set that would result is held to the module's rules before anything is touched, so two bindings on one segment, a whole controller beside a segment of it, a brightness on a borrowed segment, a printer the host does not hold and an address that is not a controller are all refused with the rule that refused them and the set that was running is left running. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -74,6 +74,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "The set that change would make breaks a rule, or names a printer the host does not hold (BINDING_REFUSED). Nothing was changed.",
             "content": {
@@ -83,7 +91,7 @@
             }
           },
           "503": {
-            "description": "Either the host's printer list could not be read, so the printer named cannot be resolved (PRINTERS_UNAVAILABLE), or this module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
+            "description": "Either the host's printer list could not be read, so the printer named cannot be resolved (PRINTERS_UNAVAILABLE), or this module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -137,7 +145,7 @@
       "put": {
         "operationId": "change-binding",
         "summary": "Point one printer at another controller or segment",
-        "description": "Replaces where one printer is shown: its controller, its segment, its brightness. The printer is the binding's name, so a body naming a different one is refused rather than quietly moving what the id refers to — delete the binding and add the other. The change takes effect at once, in the writer that is already talking to the controller, and it is written into this module's own configuration store first — under the binding's own id, which a replace never changes — so it is what the next start runs. The set the change would make is judged before anything is stopped, so a refusal leaves the set that was running running. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Replaces where one printer is shown: its controller, its segment, its brightness. The printer is the binding's name, so a body naming a different one is refused rather than quietly moving what the id refers to — delete the binding and add the other. The change takes effect at once, in the writer that is already talking to the controller, and it is written into this module's own configuration store first — under the binding's own id, which a replace never changes — so it is what the next start runs. The set the change would make is judged before anything is stopped, so a refusal leaves the set that was running running. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -172,6 +180,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
             "content": {
@@ -189,7 +205,7 @@
             }
           },
           "503": {
-            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
+            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -201,7 +217,7 @@
       "delete": {
         "operationId": "delete-binding",
         "summary": "Stop showing one printer",
-        "description": "Takes one binding out of the set and puts the change into effect at once: the writer for that binding stops, and a borrowed segment is given back to the controller it came from before the route answers. The last binding may be deleted, and then this module drives nothing and the light is left as the last frame found it — which is a thing an operator may want and is better said than done by removing a setting and restarting the host. The row comes out of this module's own configuration store before the writer is touched, so the next start does not run it again. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Takes one binding out of the set and puts the change into effect at once: the writer for that binding stops, and a borrowed segment is given back to the controller it came from before the route answers. The last binding may be deleted, and then this module drives nothing and the light is left as the last frame found it — which is a thing an operator may want and is better said than done by removing a setting and restarting the host. The row comes out of this module's own configuration store before the writer is touched, so the next start does not run it again. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The binding is gone and is no longer driven.",
@@ -226,6 +242,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
             "content": {
@@ -243,7 +267,7 @@
             }
           },
           "503": {
-            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE).",
+            "description": "This module's configuration store could not take the write, so nothing was changed and the set that was running is running still (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -360,7 +384,7 @@
       "post": {
         "operationId": "add-light",
         "summary": "Add a light by its address",
-        "description": "Reads the light at one address and keeps what answered. The read is GET /json/info through this module's own WLED client — the same path every other read of a light takes — and nothing is stored unless something answered there and the answer was a WLED controller's. The address may be written with or without a scheme; one written without is read as http. A light does not need a printer to be free: a light you own is a fact whether or not anything is shown on it. A light already on the list, an address nothing answers at, an address that answers with something that is not a WLED controller, and an address this module cannot build a client for are all refused in words, and the store is left exactly as it was. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Reads the light at one address and keeps what answered. The read is GET /json/info through this module's own WLED client — the same path every other read of a light takes — and nothing is stored unless something answered there and the answer was a WLED controller's. The address may be written with or without a scheme; one written without is read as http. A light does not need a printer to be free: a light you own is a fact whether or not anything is shown on it. A light already on the list, an address nothing answers at, an address that answers with something that is not a WLED controller, and an address this module cannot build a client for are all refused in words, and the store is left exactly as it was. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -400,6 +424,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "Nothing answered at that address, something answered that is not a WLED light (LIGHT_REFUSED), or the light is already on the list (LIGHT_ALREADY_KNOWN). Nothing was stored.",
             "content": {
@@ -409,7 +441,7 @@
             }
           },
           "503": {
-            "description": "This module has no configuration store it could keep the light in (STORE_UNAVAILABLE). Nothing was added.",
+            "description": "This module has no configuration store it could keep the light in (STORE_UNAVAILABLE). Nothing was added. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -432,7 +464,7 @@
       "delete": {
         "operationId": "remove-light",
         "summary": "Take a light off the list",
-        "description": "Removes one light from this module's own list. It is refused while a binding still names that address, and the refusal says which bindings do: a binding is this module's promise to write to that light, and removing the light under it would leave the writer with an address the list does not hold. A person who meant to stop a printer being shown deletes the binding, not the light. Snapshots already taken of the light are kept, because they are the last copy of a light nobody can read any more. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes one light from this module's own list. It is refused while a binding still names that address, and the refusal says which bindings do: a binding is this module's promise to write to that light, and removing the light under it would leave the writer with an address the list does not hold. A person who meant to stop a printer being shown deletes the binding, not the light. Snapshots already taken of the light are kept, because they are the last copy of a light nobody can read any more. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The light was taken off the list.",
@@ -447,6 +479,22 @@
                   },
                   "required": ["deleted", "address", "note"]
                 }
+              }
+            }
+          },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "The host could not answer whether the caller may make this change, so nothing was changed (ACCESS_UNKNOWN). A question that failed is a refusal and never a pass.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
               }
             }
           },
@@ -482,7 +530,7 @@
       "post": {
         "operationId": "ignore-light",
         "summary": "Put a light out of the way without forgetting it",
-        "description": "Ignores one light: it stays in this module's store and in GET /lights — which is what the Lights screen's Ignored bucket is built from — and it is left out of every list that offers a light to act on: the Overview's lights with no printer, the pickers on Bindings, and this module's own In-Use and Available buckets. It is a decision this module records about a light, and not a change to the light: nothing is written to it and none of the facts it reported are lost. It is refused while a binding still names the light, with the bindings named in the refusal, because a binding is this module's promise to write to that light and a light it is writing to is not one it may hide. The reason it exists at all: a network can answer with roughly nineteen WLED instances where two are wanted, and this is how the other seventeen stop being offered. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Ignores one light: it stays in this module's store and in GET /lights — which is what the Lights screen's Ignored bucket is built from — and it is left out of every list that offers a light to act on: the Overview's lights with no printer, the pickers on Bindings, and this module's own In-Use and Available buckets. It is a decision this module records about a light, and not a change to the light: nothing is written to it and none of the facts it reported are lost. It is refused while a binding still names the light, with the bindings named in the refusal, because a binding is this module's promise to write to that light and a light it is writing to is not one it may hide. The reason it exists at all: a network can answer with roughly nineteen WLED instances where two are wanted, and this is how the other seventeen stop being offered. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The light is ignored. It is still on the list, with ignored true.",
@@ -496,6 +544,14 @@
                   },
                   "required": ["light", "note"]
                 }
+              }
+            }
+          },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
               }
             }
           },
@@ -516,7 +572,7 @@
             }
           },
           "503": {
-            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed.",
+            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -528,7 +584,7 @@
       "delete": {
         "operationId": "unignore-light",
         "summary": "Bring an ignored light back",
-        "description": "Takes the ignored flag off one light, so every list that offers a light offers this one again. It is always allowed, on any light, ignored or not: the way out has to be as easy as the way in, and a light a binding drives is never held out of the UI because it was ignored once. A light that was not ignored answers with its row as it stands rather than refusing, because a second press of bring it back is not a mistake. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Takes the ignored flag off one light, so every list that offers a light offers this one again. It is always allowed, on any light, ignored or not: the way out has to be as easy as the way in, and a light a binding drives is never held out of the UI because it was ignored once. A light that was not ignored answers with its row as it stands rather than refusing, because a second press of bring it back is not a mistake. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The light is not ignored. It is on the list, with ignored false.",
@@ -545,6 +601,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module knows no light of that name (LIGHT_NOT_FOUND).",
             "content": {
@@ -554,7 +618,7 @@
             }
           },
           "503": {
-            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed.",
+            "description": "This module has no configuration store, or could not write it (STORE_UNAVAILABLE). Nothing was changed. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -691,7 +755,7 @@
       "put": {
         "operationId": "change-moment",
         "summary": "Set what one printer on one light shows for one moment",
-        "description": "Writes one entry of the (light, printer) moment table and replaces the entry that pair had. Nothing is sent to the light: a write here is a record the screen edits, and a lamp that is unplugged is exactly when somebody is standing in front of it with a phone, so an edit is kept even when the light is not answering. For the same reason a preset name in which is stored as written and is not checked against the light — a write that failed because a lamp was off would be the worse defect. shows and which are judged together: a Colour names a state from the state table, a Word is the text to draw, a Preset names one of the light's own presets, and Nothing names nothing, and a which that does not belong to its shows is refused with the reason rather than coerced. Nothing else reads this table yet: every moment in the table is fired on its transition, on every binding whose printer sits on that light, for as long as its `for` says. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one entry of the (light, printer) moment table and replaces the entry that pair had. Nothing is sent to the light: a write here is a record the screen edits, and a lamp that is unplugged is exactly when somebody is standing in front of it with a phone, so an edit is kept even when the light is not answering. For the same reason a preset name in which is stored as written and is not checked against the light — a write that failed because a lamp was off would be the worse defect. shows and which are judged together: a Colour names a state from the state table, a Word is the text to draw, a Preset names one of the light's own presets, and Nothing names nothing, and a which that does not belong to its shows is refused with the reason rather than coerced. Nothing else reads this table yet: every moment in the table is fired on its transition, on every binding whose printer sits on that light, for as long as its `for` says. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -727,6 +791,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND), or the light has no moment of that name (MOMENT_NOT_FOUND).",
             "content": {
@@ -744,7 +816,7 @@
             }
           },
           "503": {
-            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE).",
+            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -756,7 +828,7 @@
       "delete": {
         "operationId": "delete-moment",
         "summary": "Put one printer's entry for one moment back to its default",
-        "description": "Removes the stored entry for one (light, printer) moment, so that moment goes back to the default for that printer on that light: the finished moment on with this build's word and a minute's hold, every other moment off and showing nothing. The answer carries the entry now in force and removed: false when there was nothing stored, which is not an error — a row already at its default has nothing to reset. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes the stored entry for one (light, printer) moment, so that moment goes back to the default for that printer on that light: the finished moment on with this build's word and a minute's hold, every other moment off and showing nothing. The answer carries the entry now in force and removed: false when there was nothing stored, which is not an error — a row already at its default has nothing to reset. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "parameters": [
           {
             "name": "printer",
@@ -785,6 +857,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND), or the light has no moment of that name (MOMENT_NOT_FOUND).",
             "content": {
@@ -802,7 +882,7 @@
             }
           },
           "503": {
-            "description": "This module has no store to write to (STORE_UNAVAILABLE).",
+            "description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -908,7 +988,7 @@
       "put": {
         "operationId": "change-state",
         "summary": "Set the colour, the word and the hold one state is drawn with",
-        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. A word's hold is measured from the later of two moments — when the state began, and when the word was written — so a word set on a state that is already being shown is shown for its full length from the write, and a word set before its state begins is shown from the entry. The moment of the write is kept in this module's store and is not a field of the request: nothing a caller sends can move it. Nothing is sent to the light: the painter reads this store on the next pass of its own loop, so a colour reaches the light within a tick. The answer says what the word is doing — showing, expired, or waiting for its state — in state.word_shows and state.word_until, because a bare 200 cannot say that this word was spent before anybody could read it. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one row of the state table and replaces the row that state had, so a field the body leaves out goes back to its default: the colour Appendix A gives the state, no word, and a hold of forever. A body carrying none of colour, word and holds is refused rather than read as \"clear the row\", because clearing is what DELETE is for. A hold is one of forever, 30s, 60s and 5m and is refused by name rather than rounded to the nearest: the length is the whole content of the field. A word holds forever by default, which is a value and not the absence of one. A word's hold is measured from the later of two moments — when the state began, and when the word was written — so a word set on a state that is already being shown is shown for its full length from the write, and a word set before its state begins is shown from the entry. The moment of the write is kept in this module's store and is not a field of the request: nothing a caller sends can move it. Nothing is sent to the light: the painter reads this store on the next pass of its own loop, so a colour reaches the light within a tick. The answer says what the word is doing — showing, expired, or waiting for its state — in state.word_shows and state.word_until, because a bare 200 cannot say that this word was spent before anybody could read it. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -943,6 +1023,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module has no state of that name (STATE_NOT_FOUND).",
             "content": {
@@ -960,7 +1048,7 @@
             }
           },
           "503": {
-            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE).",
+            "description": "This module has no store to write to: it was granted no data directory, or its document has not been written yet (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -972,7 +1060,7 @@
       "delete": {
         "operationId": "delete-state",
         "summary": "Put one state back to the colour, word and hold it has by default",
-        "description": "Removes the stored row for one state, so it goes back to the colour Appendix A gives it, no word, and a hold of forever. A state with no override is not an error: the answer says removed: false beside the default it was already showing, because a screen distinguishing \"already at the default\" from \"no such state\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes the stored row for one state, so it goes back to the colour Appendix A gives it, no word, and a hold of forever. A state with no override is not an error: the answer says removed: false beside the default it was already showing, because a screen distinguishing \"already at the default\" from \"no such state\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The row is gone and the state is at its default.",
@@ -991,6 +1079,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module has no state of that name (STATE_NOT_FOUND).",
             "content": {
@@ -1000,7 +1096,7 @@
             }
           },
           "503": {
-            "description": "This module has no store to write to (STORE_UNAVAILABLE).",
+            "description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -1050,7 +1146,7 @@
       "post": {
         "operationId": "preview-finished-word",
         "summary": "Show the finished word now, for its own duration",
-        "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. It goes to every light this instance drives, or to the one the light parameter names, and each writer paints it in its own place in the same order as every other write; the steady frame takes each light back when the hold ends, so nothing about a light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. A light that cannot carry the word — one borrowed segment of a controller somebody else also drives, or a strip or a panel too small for it — is refused for that light and reported beside the ones that took it; the request is refused as a whole, with that code, only when no light took it. Refused with PREVIEW_NOT_RUNNING only when the instance is driving no light at all.",
+        "description": "Fires the event a completed print fires — the word FINISHED drawn in the finished green across the panel, for the same minute — so that a person can look at what the light does without waiting for a print to end. It goes to every light this instance drives, or to the one the light parameter names, and each writer paints it in its own place in the same order as every other write; the steady frame takes each light back when the hold ends, so nothing about a light's ordinary picture changes. The host takes operate_resource on the module's instance before this is called. A light that cannot carry the word — one borrowed segment of a controller somebody else also drives, or a strip or a panel too small for it — is refused for that light and reported beside the ones that took it; the request is refused as a whole, with that code, only when no light took it. Refused with PREVIEW_NOT_RUNNING only when the instance is driving no light at all. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "parameters": [
           {
             "name": "light",
@@ -1116,6 +1212,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "This light cannot carry the word: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or it is a strip or a panel too small for it (PREVIEW_NOT_DRAWABLE).",
             "content": {
@@ -1125,7 +1229,7 @@
             }
           },
           "503": {
-            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -1139,7 +1243,7 @@
       "post": {
         "operationId": "preview-diagnostic-pattern",
         "summary": "Draw one diagnostic picture now, so that one look separates the faults a blank panel hides",
-        "description": "Puts one of three test pictures on every light this instance drives, for a hold, drawn in pixels over DDP by the same writer, the same repeat and the same hand-back as the finished word. It is the instrument that says whether anything is lit at all, because this firmware cannot be asked what its pixels are: it goes to all of an instance's lights, or to the one the light parameter names, and that is the point — a diagnostic that refused to run on an install with two lights would stop working exactly when there is more to diagnose. Each picture answers one question and each assumes the answer before it: solid is the whole light in white and answers whether DDP draws at all (a dark light means the transport, not the map); border is a white edge two pixels thick around a panel — white at both ends of a strip — and answers whether the LED map is the shape this module assumes, row-major y*width+x, because anything but a closed rectangle means it is not; quarters is four blocks — red top-left, green top-right, blue bottom-left, white bottom-right, and four bands in the same order along a strip — and answers which way up and which way round the light is, because an upside-down or mirrored picture names the corner it is wrong in. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives is refused for that light, because these are a fault-finding tool for this module's own lights and not something it puts on somebody else's; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all.",
+        "description": "Puts one of three test pictures on every light this instance drives, for a hold, drawn in pixels over DDP by the same writer, the same repeat and the same hand-back as the finished word. It is the instrument that says whether anything is lit at all, because this firmware cannot be asked what its pixels are: it goes to all of an instance's lights, or to the one the light parameter names, and that is the point — a diagnostic that refused to run on an install with two lights would stop working exactly when there is more to diagnose. Each picture answers one question and each assumes the answer before it: solid is the whole light in white and answers whether DDP draws at all (a dark light means the transport, not the map); border is a white edge two pixels thick around a panel — white at both ends of a strip — and answers whether the LED map is the shape this module assumes, row-major y*width+x, because anything but a closed rectangle means it is not; quarters is four blocks — red top-left, green top-right, blue bottom-left, white bottom-right, and four bands in the same order along a strip — and answers which way up and which way round the light is, because an upside-down or mirrored picture names the corner it is wrong in. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives is refused for that light, because these are a fault-finding tool for this module's own lights and not something it puts on somebody else's; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "parameters": [
           {
             "name": "pattern",
@@ -1188,6 +1292,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "This light cannot be drawn on: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or the controller reported no matrix (PREVIEW_NOT_DRAWABLE). Nothing was fired.",
             "content": {
@@ -1197,7 +1309,7 @@
             }
           },
           "503": {
-            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -1211,7 +1323,7 @@
       "post": {
         "operationId": "preview-composed-frame",
         "summary": "Draw the panel's own composed picture now, with the progress and name given",
-        "description": "Draws the layout this instance is running — the progress bar in its band, the percentage in digits, the job's name — with the percent and name the caller supplies, so that the composed picture can be looked at without waiting for a print. It is the same machinery every other preview uses: the same writer, the same establishing body, the same once-a-second repeat over DDP, the same bounded hold and the same hand-back. That is the point of it — what it draws is what a printing panel draws, from the same function, at the layout and scales that instance is running; a preview that could drift from the real picture would be a lie about a light. It goes to every light this instance drives, or to the one the light parameter names, each drawn at its own geometry. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives, or that is a strip or a panel whose rows cannot hold the layout's bands, is refused for that light and reported beside the ones that took it; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all. percent is required, and a value that is missing or is not a whole number from 0 to 100 refuses the request before anything is fired.",
+        "description": "Draws the layout this instance is running — the progress bar in its band, the percentage in digits, the job's name — with the percent and name the caller supplies, so that the composed picture can be looked at without waiting for a print. It is the same machinery every other preview uses: the same writer, the same establishing body, the same once-a-second repeat over DDP, the same bounded hold and the same hand-back. That is the point of it — what it draws is what a printing panel draws, from the same function, at the layout and scales that instance is running; a preview that could drift from the real picture would be a lie about a light. It goes to every light this instance drives, or to the one the light parameter names, each drawn at its own geometry. The host takes operate_resource on the module's instance before this is called. A light that is one borrowed segment of a controller somebody else also drives, or that is a strip or a panel whose rows cannot hold the layout's bands, is refused for that light and reported beside the ones that took it; the request is refused as a whole only when no light took it, and with PREVIEW_NOT_RUNNING only when the instance drives no light at all. percent is required, and a value that is missing or is not a whole number from 0 to 100 refuses the request before anything is fired. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "parameters": [
           {
             "name": "percent",
@@ -1294,6 +1406,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "This light cannot carry the picture: it is a borrowed segment of somebody else's controller (PREVIEW_BORROWED_SEGMENT), or the controller reported no matrix or a panel whose rows the layout's bands do not fit (PREVIEW_NOT_DRAWABLE). Nothing was fired.",
             "content": {
@@ -1303,7 +1423,7 @@
             }
           },
           "503": {
-            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired.",
+            "description": "The instance is driving no light at all yet (PREVIEW_NOT_RUNNING), which is its state for the first second of a start. Nothing was fired. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"type": "object", "description": "An RFC 9457 problem naming one of this module's registered codes."}
@@ -1335,7 +1455,7 @@
       "put": {
         "operationId": "change-layout",
         "summary": "Set the layout one binding composes with",
-        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more. The seven optional lines — remaining, ends, temperatures, elapsed, material, printer_name, layer — are drawn under the picture in that order at the font's own size, seven rows each with one blank row between, and a set the panel cannot hold is refused rather than cropped: the refusal names the lines that did not fit, the ones that did, and which of the two numbers the picture is made of (a thinner bar, or a smaller percentage scale) would take them all. side-by-side is drawn: the digits sit on the left and the job's name on the right, cut to the room the digits leave, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one binding's layout and replaces the row it had, so a field the body leaves out goes back to the built-in default: a bar at the bottom twelve rows thick, the percentage at the largest scale this build draws, the job name, and take-turns every fifteen seconds. bar_band is top or bottom; bar_rows is 1 to 48 of a 64-row panel; percent_scale is 3, 4 or 5; rotation is take-turns or side-by-side; rotate_seconds is one or more. The seven optional lines — remaining, ends, temperatures, elapsed, material, printer_name, layer — are drawn under the picture in that order at the font's own size, seven rows each with one blank row between, and a set the panel cannot hold is refused rather than cropped: the refusal names the lines that did not fit, the ones that did, and which of the two numbers the picture is made of (a thinner bar, or a smaller percentage scale) would take them all. side-by-side is drawn: the digits sit on the left and the job's name on the right, cut to the room the digits leave, and the answer says so. Whether a layout fits the panel it is pointed at is judged where the panel's own height is known, at the frame, and refused there rather than cropped. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LayoutRequest"}}}
@@ -1347,26 +1467,42 @@
           },
           "400": {"description": "The body is not a layout: not JSON, a key this module does not read, or none of the eight keys (LAYOUT_BODY_INVALID). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
           "409": {"description": "A band this build does not know, a bar taller than the panel can spare, a scale outside 3-5, a rotation that is neither take-turns nor side-by-side, a rotation of no seconds, or a set of optional lines this panel cannot hold (LAYOUT_REFUSED). The refusal for the lines is a sentence naming the ones that did not fit and what would make room for them. Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       },
       "delete": {
         "operationId": "delete-layout",
         "summary": "Put one binding back to the built-in layout",
-        "description": "Removes the stored row for one binding, so it composes with the default again. A binding with no row is not an error: the answer says removed: false beside the default it was already using, because a screen distinguishing \"already at the default\" from \"no such binding\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes the stored row for one binding, so it composes with the default again. A binding with no row is not an error: the answer says removed: false beside the default it was already using, because a screen distinguishing \"already at the default\" from \"no such binding\" needs those to be different answers. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The row is gone and the binding is at its default.",
             "content": {"application/json": {"schema": {"type": "object", "properties": {"light": {"type": "string"}, "layout": {"$ref": "#/components/schemas/Layout"}, "removed": {"type": "boolean", "description": "True when there was a stored row and it was taken away."}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["light", "layout", "removed", "persisted"]}}}
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       }
@@ -1378,7 +1514,7 @@
       "put": {
         "operationId": "pause-binding",
         "summary": "Pause one binding, and leave the rest of the module alone",
-        "description": "Writes one binding's own pause with the absolute instant it ends at. The six lengths are 10m, 1h, 6h, 1d, 3d and forever, and a length outside them is refused by name rather than rounded. A pause switches the light off; a binding that drives one segment of a strip somebody else also drives is handed back instead, because the rest of that strip belongs to its owner — the answer's effect says which of the two this binding is. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes one binding's own pause with the absolute instant it ends at. The six lengths are 10m, 1h, 6h, 1d, 3d and forever, and a length outside them is refused by name rather than rounded. A pause switches the light off; a binding that drives one segment of a strip somebody else also drives is handed back instead, because the rest of that strip belongs to its owner — the answer's effect says which of the two this binding is. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
@@ -1390,26 +1526,42 @@
           },
           "400": {"description": "The body is not a pause: not JSON, a key this module does not read, or no length at all (PAUSE_BODY_INVALID). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
           "409": {"description": "A length that is not one of the six the panic button offers (PAUSE_REFUSED). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       },
       "delete": {
         "operationId": "resume-binding",
         "summary": "Take one binding's own pause out of the store",
-        "description": "Removes one binding's own pause, so nothing will pause that binding on the next start either. A binding with no pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes one binding's own pause, so nothing will pause that binding on the next start either. A binding with no pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The pause is gone, or there was none.",
             "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["global", "binding"]}, "printer": {"type": "string"}, "resumed": {"type": "boolean", "description": "True when there was a pause and it was taken away."}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["scope", "resumed", "persisted"]}}}
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "This module drives no binding of that name (BINDING_NOT_FOUND).",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       }
@@ -1461,7 +1613,7 @@
       "put": {
         "operationId": "write-timezone",
         "summary": "Store the zone this module judges a window in and writes a clock in",
-        "description": "Writes the zone into this module's own store, over whatever it held, and answers the same body GET /timezone does. timezone is an IANA name such as America/Denver and has to be one this build can load: an empty value is refused rather than read as \"clear the zone\", because this module never forgets a zone once one is stored and a clock that went silent for a reason nobody can find is worse than an old zone. source is optional and is browser or operator — the two ways a zone arrives after the upgrade — and defaults to operator. Nothing is sent to a light, and a refusal stores nothing at all, so a screen that redraws from the read shows the document as it was rather than a change that did not happen. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes the zone into this module's own store, over whatever it held, and answers the same body GET /timezone does. timezone is an IANA name such as America/Denver and has to be one this build can load: an empty value is refused rather than read as \"clear the zone\", because this module never forgets a zone once one is stored and a clock that went silent for a reason nobody can find is worse than an old zone. source is optional and is browser or operator — the two ways a zone arrives after the upgrade — and defaults to operator. Nothing is sent to a light, and a refusal stores nothing at all, so a screen that redraws from the read shows the document as it was rather than a change that did not happen. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1487,6 +1639,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {
             "description": "The zone is empty, unloadable, or Local, which inside the container is UTC (TIMEZONE_REFUSED).",
             "content": {
@@ -1496,7 +1656,7 @@
             }
           },
           "503": {
-            "description": "This module has no configuration store to keep a zone in (STORE_UNAVAILABLE).",
+            "description": "This module has no configuration store to keep a zone in (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/Refusal"}
@@ -1525,7 +1685,7 @@
       "post": {
         "operationId": "add-window",
         "summary": "Add one brightness window to the end of the list",
-        "description": "Adds one window after every other, because the order decides which of two overlapping windows wins and a window added at the front would silently take over moments another one covers. A window is a time range and a brightness: from and to written HH:MM, brightness 0-255, and days optionally. The window cannot be written at all unless this module holds a zone it can be judged in, and the refusal says where to set one — the Overview screen. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Adds one window after every other, because the order decides which of two overlapping windows wins and a window added at the front would silently take over moments another one covers. A window is a time range and a brightness: from and to written HH:MM, brightness 0-255, and days optionally. The window cannot be written at all unless this module holds a zone it can be judged in, and the refusal says where to set one — the Overview screen. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowRequest"}}}
@@ -1537,9 +1697,17 @@
           },
           "400": {"description": "The body is not a brightness window (WINDOW_BODY_INVALID). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {"description": "Two ends the same, a time of day that is not HH:MM, a brightness outside 0-255, a day that is not one of the seven, or no timezone to judge the window in (WINDOW_REFUSED). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       }
@@ -1551,7 +1719,7 @@
       "put": {
         "operationId": "replace-window",
         "summary": "Replace one brightness window, in place",
-        "description": "Replaces one window whole, at the position it holds, so its place in the order is kept and it takes over nothing it did not already cover. The same rules apply as when a window is added, and nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Replaces one window whole, at the position it holds, so its place in the order is kept and it takes over nothing it did not already cover. The same rules apply as when a window is added, and nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WindowRequest"}}}
@@ -1563,26 +1731,42 @@
           },
           "400": {"description": "The body is not a brightness window (WINDOW_BODY_INVALID). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "The list holds no window at that position (WINDOW_NOT_FOUND). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
           "409": {"description": "The window is not one this module can act on, or there is no timezone to judge it in (WINDOW_REFUSED). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       },
       "delete": {
         "operationId": "remove-window",
         "summary": "Remove one brightness window",
-        "description": "Removes one window, and every window after it moves up one position: the index is a place in a list and not a minted identity, which the list reports and the answer's note says. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes one window, and every window after it moves up one position: the index is a place in a list and not a minted identity, which the list reports and the answer's note says. Nothing is sent to the light. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The window was removed, and the whole list is answered.",
             "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/WindowsAnswer"}, {"type": "object", "properties": {"removed": {"type": "boolean", "description": "True when a window at that position was removed."}}}]}}}
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {"description": "The list holds no window at that position (WINDOW_NOT_FOUND). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       }
@@ -1604,7 +1788,7 @@
       "put": {
         "operationId": "pause-everything",
         "summary": "Pause every binding, for one of the six lengths",
-        "description": "The header's panic button. A pause switches the light off when it is obeyed, one write and then nothing until it ends; a binding that drives a borrowed zone is handed back instead, because powering that controller down would take somebody else's strip with it. The expiry is stored as an absolute instant and not as a length or a timer, so a pause survives a restart and a settings save — this process is rebuilt on both. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called.",
+        "description": "The header's panic button. A pause switches the light off when it is obeyed, one write and then nothing until it ends; a binding that drives a borrowed zone is handed back instead, because powering that controller down would take somebody else's strip with it. The expiry is stored as an absolute instant and not as a length or a timer, so a pause survives a restart and a settings save — this process is rebuilt on both. The light is switched off until that instant passes and then comes back on by itself, with one write and none in between. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PauseRequest"}}}
@@ -1616,22 +1800,38 @@
           },
           "400": {"description": "The body is not a pause: not JSON, a key this module does not read, or no length at all (PAUSE_BODY_INVALID). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "409": {"description": "A length that is not one of the six (PAUSE_REFUSED). Nothing was changed.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}},
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       },
       "delete": {
         "operationId": "resume-everything",
         "summary": "Take the global pause out of the store",
-        "description": "Removes the global pause, so nothing will pause this module on the next start either. A module with no global pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Removes the global pause, so nothing will pause this module on the next start either. A module with no global pause is not an error: the answer says resumed: false. The light is switched back on and its picture is painted again at once. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The global pause is gone, or there was none.",
             "content": {"application/json": {"schema": {"type": "object", "properties": {"scope": {"type": "string", "enum": ["global", "binding"]}, "resumed": {"type": "boolean"}, "persisted": {"type": "boolean"}, "note": {"type": "string"}}, "required": ["scope", "resumed", "persisted"]}}}
           },
-          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE).",
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {"description": "This module has no store to write to (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
               "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Refusal"}}}}
         }
       }
@@ -1640,7 +1840,7 @@
       "post": {
         "operationId": "refresh-everything",
         "summary": "Push the current picture to every light this module drives, now",
-        "description": "The header's button beside the pause. Every binding this module drives is composed again from the printer reading taken as the sweep runs - not from the frame painted last - and written whether or not the light already shows that picture, because the steady pass deliberately skips a write whose content has not changed and forcing that write is the whole of what this button does. The scope is every binding and the segment this module owns on each light: other segments of the same controller are the operator's own WLED setup and are not touched. A light inside a moment, holding a state's word, being flashed by an identify or paused is left alone and answered as skipped with the reason, never reported as refreshed. One light is written at a time, each with its own time limit, so a controller measured answering in seconds rather than milliseconds is named as not reached rather than counted as refreshed. The answer is per light and per segment; there is no single done. The host takes operate_resource on the module's instance before this is called.",
+        "description": "The header's button beside the pause. Every binding this module drives is composed again from the printer reading taken as the sweep runs - not from the frame painted last - and written whether or not the light already shows that picture, because the steady pass deliberately skips a write whose content has not changed and forcing that write is the whole of what this button does. The scope is every binding and the segment this module owns on each light: other segments of the same controller are the operator's own WLED setup and are not touched. A light inside a moment, holding a state's word, being flashed by an identify or paused is left alone and answered as skipped with the reason, never reported as refreshed. One light is written at a time, each with its own time limit, so a controller measured answering in seconds rather than milliseconds is named as not reached rather than counted as refreshed. The answer is per light and per segment; there is no single done. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The sweep finished. Every binding is one entry, whether it was refreshed, skipped, failed or not reached.",
@@ -1677,6 +1877,22 @@
                   },
                   "required": ["at", "lights", "count", "refreshed", "skipped", "failed", "note"]
                 }
+              }
+            }
+          },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
+          "503": {
+            "description": "The host could not answer whether the caller may make this change, so nothing was changed (ACCESS_UNKNOWN). A question that failed is a refusal and never a pass.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
               }
             }
           },
@@ -1941,7 +2157,7 @@
       "post": {
         "operationId": "take-snapshot",
         "summary": "Snapshot one light now",
-        "description": "Reads the light and keeps a snapshot of it now: its /json/cfg, its /presets.json, its /json/state and the identity that makes a restore safe - the address this module names it by, the name it calls itself, its firmware, and its shape and pixel count. This is the screen's refresh now, on demand, and it is what an operator takes before changing something on the light or before replacing it. A light that does not answer is refused rather than stored half-read (SNAPSHOT_UNREADABLE); the snapshots already held stay readable, which is the whole reason they are kept. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Reads the light and keeps a snapshot of it now: its /json/cfg, its /presets.json, its /json/state and the identity that makes a restore safe - the address this module names it by, the name it calls itself, its firmware, and its shape and pixel count. This is the screen's refresh now, on demand, and it is what an operator takes before changing something on the light or before replacing it. A light that does not answer is refused rather than stored half-read (SNAPSHOT_UNREADABLE); the snapshots already held stay readable, which is the whole reason they are kept. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "200": {
             "description": "The snapshot was written and is answered with the id it was given.",
@@ -1964,6 +2180,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
             "content": {
@@ -1975,7 +2199,7 @@
             }
           },
           "503": {
-            "description": "The light could not be read, so it was not snapshotted (SNAPSHOT_UNREADABLE), or this module has no directory to keep one in (STORE_UNAVAILABLE).",
+            "description": "The light could not be read, so it was not snapshotted (SNAPSHOT_UNREADABLE), or this module has no directory to keep one in (STORE_UNAVAILABLE). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2165,7 +2389,7 @@
       "post": {
         "operationId": "identify-device",
         "summary": "Flash the light so that a person can see which light a name means",
-        "description": "The light goes on and off, one second in each state, five times, and is then put back exactly as it was found. It is how a person standing in a room with two lights learns which one the name on a screen refers to, and it is the one thing on a light's card that has to be unmistakable across a room: ten seconds of flashing, then the picture that was there before. docs/product-requirements.md 2.6 is its requirement. Nothing is written behind the writer that owns the light: the flash is handed to the goroutine that drives that light and runs between two passes of its steady frame, so the picture the module would otherwise paint waits for the flash rather than being painted over it. The flash takes the light the way a preset moment does — its power, its brightness and every segment, read before anything is written — and gives it all back at the end, in that order, so a light that was on is on again and a light that was found off is left off; the steady picture this module draws is then painted in the same pass, not at the next heartbeat. A flash is ten seconds and the host gives a call ten seconds, so this route answers as the flash starts, as soon as the light has taken the first write, with what will happen and when it ends; the give-back happens on the module's own goroutine and the module's log carries the line when the light is back. A light that cannot be read, or that will not take the first write, is refused before anything else happens and nothing is written. Two refusals are rules rather than failures: a light this module drives one borrowed segment of is never flashed, because power on a WLED controller is the whole controller's and a flash there would take the owner's segments and their picture with it; and a paused light is never flashed, because a pause is the operator's instruction that the light be left alone — one write and then nothing at all — and ten seconds of writes is the opposite of that. The host takes operate_resource on the module's instance before this is called.",
+        "description": "The light goes on and off, one second in each state, five times, and is then put back exactly as it was found. It is how a person standing in a room with two lights learns which one the name on a screen refers to, and it is the one thing on a light's card that has to be unmistakable across a room: ten seconds of flashing, then the picture that was there before. docs/product-requirements.md 2.6 is its requirement. Nothing is written behind the writer that owns the light: the flash is handed to the goroutine that drives that light and runs between two passes of its steady frame, so the picture the module would otherwise paint waits for the flash rather than being painted over it. The flash takes the light the way a preset moment does — its power, its brightness and every segment, read before anything is written — and gives it all back at the end, in that order, so a light that was on is on again and a light that was found off is left off; the steady picture this module draws is then painted in the same pass, not at the next heartbeat. A flash is ten seconds and the host gives a call ten seconds, so this route answers as the flash starts, as soon as the light has taken the first write, with what will happen and when it ends; the give-back happens on the module's own goroutine and the module's log carries the line when the light is back. A light that cannot be read, or that will not take the first write, is refused before anything else happens and nothing is written. Two refusals are rules rather than failures: a light this module drives one borrowed segment of is never flashed, because power on a WLED controller is the whole controller's and a flash there would take the owner's segments and their picture with it; and a paused light is never flashed, because a pause is the operator's instruction that the light be left alone — one write and then nothing at all — and ten seconds of writes is the opposite of that. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "responses": {
           "202": {
             "description": "The flash has started, and this is what it will do: five on/off pairs one second apart, and the power the light will be left in. It is answered as the flash begins rather than when it ends, because ten seconds of flashing does not fit the host's ten-second call.",
@@ -2229,6 +2453,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no light of that name (CONTROLLER_NOT_FOUND).",
             "content": {
@@ -2250,7 +2482,7 @@
             }
           },
           "503": {
-            "description": "The flash could not be started and nothing was written: the light did not answer when it was asked what it was showing, or would not take the first write (IDENTIFY_UNREACHABLE), or this instance is driving no light at this instant (PREVIEW_NOT_RUNNING).",
+            "description": "The flash could not be started and nothing was written: the light did not answer when it was asked what it was showing, or would not take the first write (IDENTIFY_UNREACHABLE), or this instance is driving no light at this instant (PREVIEW_NOT_RUNNING). A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2277,7 +2509,7 @@
       "post": {
         "operationId": "restore-snapshot",
         "summary": "Put a snapshot's configuration back on its light, and wait for it to answer",
-        "description": "Writes a snapshot's configuration back onto the light it was taken from, asks the light to reload it, and waits for it to answer before answering this call: a restore that reported success while the light was mid-reload would be a lie the page believes. It is the one route in this module that rewrites a controller's own configuration, so it refuses more than it accepts. The body must carry confirm: true, and that is checked before the snapshot is even read. The snapshot must have been taken from this light - same address, same controller name - and from a display of the same shape and pixel count, or the restore is refused: a configuration written to another display is a scrambled picture. A safety snapshot of the light as it is now is taken and kept before anything is written, and its id is in every answer that follows, so a restore that went wrong is reversible; a light that cannot be copied is not restored at all. The network section is written whole except for nw.ins. The firmware revision, the hardware revision and the wifi credentials are never written, so this is not a hundred-per-cent clone and the answer says so. The wait is nine seconds, under the ten the host allows a call; the measured restart on the operator's strip is 5.7 seconds and the answer carries that measurement beside this light's own. The host takes operate_resource on the module's instance before this is called.",
+        "description": "Writes a snapshot's configuration back onto the light it was taken from, asks the light to reload it, and waits for it to answer before answering this call: a restore that reported success while the light was mid-reload would be a lie the page believes. It is the one route in this module that rewrites a controller's own configuration, so it refuses more than it accepts. The body must carry confirm: true, and that is checked before the snapshot is even read. The snapshot must have been taken from this light - same address, same controller name - and from a display of the same shape and pixel count, or the restore is refused: a configuration written to another display is a scrambled picture. A safety snapshot of the light as it is now is taken and kept before anything is written, and its id is in every answer that follows, so a restore that went wrong is reversible; a light that cannot be copied is not restored at all. The network section is written whole except for nw.ins. The firmware revision, the hardware revision and the wifi credentials are never written, so this is not a hundred-per-cent clone and the answer says so. The wait is nine seconds, under the ten the host allows a call; the measured restart on the operator's strip is 5.7 seconds and the answer carries that measurement beside this light's own. The host takes operate_resource on the module's instance before this is called. This module also asks the host whether the caller may act on the lights it drives, which is operate_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2361,6 +2593,14 @@
               }
             }
           },
+          "403": {
+            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          },
           "404": {
             "description": "This module drives no light of that name, or holds no snapshot of that id for it (CONTROLLER_NOT_FOUND, SNAPSHOT_NOT_FOUND).",
             "content": {
@@ -2382,7 +2622,7 @@
             }
           },
           "503": {
-            "description": "The light could not be read, so the safety snapshot a restore takes first could not be taken, or this module has no directory to keep it in (SNAPSHOT_UNREADABLE, STORE_UNAVAILABLE). Nothing was written.",
+            "description": "The light could not be read, so the safety snapshot a restore takes first could not be taken, or this module has no directory to keep it in (SNAPSHOT_UNREADABLE, STORE_UNAVAILABLE). Nothing was written. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
             "content": {
               "application/problem+json": {
                 "schema": {

@@ -261,7 +261,7 @@ func (a *devicesUnderTest) do(t *testing.T, method, path, body string) (int, map
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	a.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, strings.NewReader(body)))
+	a.mux.ServeHTTP(recorder, forwarded(method, path, strings.NewReader(body)))
 
 	var answer map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {
@@ -463,7 +463,7 @@ func TestALightThatDoesNotAnswerIsNotSnapshotted(t *testing.T) {
 	under.light.mu.Unlock()
 
 	recorder := httptest.NewRecorder()
-	under.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/devices/10.0.0.136/snapshot", nil))
+	under.mux.ServeHTTP(recorder, forwarded(http.MethodPost, "/devices/10.0.0.136/snapshot", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a dead light's snapshot answered %d, want %d: %s",
@@ -876,7 +876,7 @@ func TestASnapshotOfALightThisModuleDoesNotDriveIsRefused(t *testing.T) {
 	under := newDevicesUnderTest(t)
 
 	recorder := httptest.NewRecorder()
-	under.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/devices/10.0.0.99/snapshot", nil))
+	under.mux.ServeHTTP(recorder, forwarded(http.MethodPost, "/devices/10.0.0.99/snapshot", nil))
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("a light this module does not drive answered %d, want %d: %s",

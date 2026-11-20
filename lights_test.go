@@ -90,7 +90,7 @@ func (l *lightsUnderTest) do(t *testing.T, method, path, body string) (int, map[
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	l.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, strings.NewReader(body)))
+	l.mux.ServeHTTP(recorder, forwarded(method, path, strings.NewReader(body)))
 
 	var answer map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {
@@ -635,7 +635,7 @@ func TestAddingARealLightByItsAddress(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/lights", strings.NewReader(string(body))))
+	mux.ServeHTTP(recorder, forwarded(http.MethodPost, "/lights", strings.NewReader(string(body))))
 
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("POST /lights with %s answered %d: %s", address, recorder.Code, recorder.Body.String())
@@ -668,7 +668,7 @@ func TestAddingARealLightByItsAddress(t *testing.T) {
 
 	// And adding it twice is the refusal the operator would see for a typo, not a second row.
 	again := httptest.NewRecorder()
-	mux.ServeHTTP(again, httptest.NewRequest(http.MethodPost, "/lights", strings.NewReader(string(body))))
+	mux.ServeHTTP(again, forwarded(http.MethodPost, "/lights", strings.NewReader(string(body))))
 
 	if again.Code != http.StatusConflict {
 		t.Fatalf("adding the same light twice answered %d, want 409: %s", again.Code, again.Body.String())

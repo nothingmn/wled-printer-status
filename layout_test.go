@@ -1234,7 +1234,7 @@ func postPreviewFrame(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, path, nil))
 
 	return recorder
 }
@@ -1274,7 +1274,7 @@ func TestTheStatusRouteCarriesThePercentageAndTheName(t *testing.T) {
 			forgetBindings()
 
 			recorder := httptest.NewRecorder()
-			routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+			routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("the status route answered %d, want 200: %s", recorder.Code, recorder.Body.String())

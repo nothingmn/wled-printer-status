@@ -520,6 +520,40 @@ var (
 		fault.RetryAllowed,
 		fault.ShowDetail,
 	))
+
+	// NotPermitted is a change this module refused because the host said the caller may not make
+	// it. It is the answer every mutating route gives before it touches anything — see access.go —
+	// so a viewer who presses Pause reads a sentence about their permission, not about the light.
+	//
+	// The two actions are named in the detail because they are what the caller has to ask for and
+	// they are the two the host distinguishes: rewriting this module's configuration is
+	// configure_resource, which only a manager holds, and acting on a light now is
+	// operate_resource, which an operator holds. Nothing was changed when this is the answer, and
+	// nothing about the request would change the answer, which is why retrying never helps.
+	NotPermitted = fault.Register(faultDomain, "NOT_PERMITTED", http.StatusForbidden, fault.Document(
+		"You may not change this module",
+		"Every route here that changes something asks the host whether you may make that change before it does anything, and the host answered no. Rewriting this module's configuration — its lights, bindings, layouts, state words, moments, brightness windows and the zone — is configure_resource on the sink kind, which a manager holds. Acting on a light now — a pause, a resume, a refresh, an identify, a restore or a preview — is operate_resource on the sink kind, which an operator holds. A viewer holds neither and is refused on every one of them. Nothing was changed. The role is the host's to change and not this module's; send the same request again once it has been.",
+		fault.RetryNever,
+		fault.ShowDetail,
+		"action",
+	))
+
+	// AccessUnknown is a change this module refused because it could not get an answer out of the
+	// host. It is a refusal and not a pass: a module that cannot ask does not know who is calling,
+	// and a change made on a guess is a change nobody decided.
+	//
+	// It is a 503 because the fault is on this side of the question and the same request can work.
+	// The host's own refusal of the question — an action the instance was not installed to ask
+	// about, a person it has not served since it started — arrives here too, and it is named in
+	// this module's log rather than in the sentence, because what a person can act on is "try
+	// again" and what an operator can act on is the declaration and the log.
+	AccessUnknown = fault.Register(faultDomain, "ACCESS_UNKNOWN", http.StatusServiceUnavailable, fault.Document(
+		"This module could not ask the host whether you may do that",
+		"Every change here is decided by asking the host, and this module did not get an answer: the question itself failed, or the answer never came. It refuses rather than act on a guess, so nothing was changed. Send the same request again in a moment. If it keeps answering this, the module's log names the question that failed — a declaration installed without the checks this release asks for and a host this module has lost its session with are both answered this way.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+		"action",
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

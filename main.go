@@ -102,6 +102,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prusa3d/prusa-connect/sdk/accessapi"
 	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
 	"github.com/prusa3d/prusa-connect/sdk/extension"
 	"github.com/prusa3d/prusa-connect/sdk/fault"
@@ -125,7 +126,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.7.0")
+	release = extension.Version("0.8.0")
 
 	// repository is where this module's source lives. It is published with the build facts rather
 	// than written into the browser bundle, so the one address a screen links to comes off the
@@ -508,6 +509,11 @@ func run() error {
 
 	session = conn
 	fleet = deviceapi.NewClient(conn)
+
+	// And the one question this module asks about a person: may they make this change. It is
+	// taken here, beside the fleet, because both are calls made on the session and both are
+	// absent until it exists — a route reached before this line is a route with nobody to ask.
+	access = accessapi.NewClient(conn)
 
 	maps.Copy(serves, methods())
 
@@ -1048,7 +1054,7 @@ func routes() http.Handler {
 	// controller, or a strip — is refused for that light and reported beside the ones that took
 	// it; the route refuses as a whole, with a registered code, only when no light took it at
 	// all. See previewTargets and paintPreview.
-	mux.HandleFunc("POST /preview-finished", func(w http.ResponseWriter, r *http.Request) {
+	mutating(mux, "POST /preview-finished", actionOperateResource, func(w http.ResponseWriter, r *http.Request) {
 		targets, problem := previewTargets(r)
 		if problem != nil {
 			refuse(w, r, problem)
@@ -1096,7 +1102,7 @@ func routes() http.Handler {
 	// percent is required and name is not: a caller who asks for a preview of the composed layout
 	// without naming a progress has not said what to draw, and a route that answered with a picture
 	// of nothing would be a route that quietly ignored a misspelt parameter.
-	mux.HandleFunc("POST /preview-frame", func(w http.ResponseWriter, r *http.Request) {
+	mutating(mux, "POST /preview-frame", actionOperateResource, func(w http.ResponseWriter, r *http.Request) {
 		targets, problem := previewTargets(r)
 		if problem != nil {
 			refuse(w, r, problem)
@@ -1196,7 +1202,7 @@ func routes() http.Handler {
 	// its own pixels, so the refusal for a panel too small to hold the word does not apply, and a
 	// strip is given the same picture laid out along its one row rather than being refused — the
 	// ladder is the instrument that says whether anything is lit, and a strip is a light.
-	mux.HandleFunc("POST /preview-pattern", func(w http.ResponseWriter, r *http.Request) {
+	mutating(mux, "POST /preview-pattern", actionOperateResource, func(w http.ResponseWriter, r *http.Request) {
 		targets, problem := previewTargets(r)
 		if problem != nil {
 			refuse(w, r, problem)

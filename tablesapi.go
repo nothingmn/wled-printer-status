@@ -237,14 +237,14 @@ func (api tableAPI) mount(mux *http.ServeMux) {
 	// change about it.
 	mux.HandleFunc("GET /states", api.listStates)
 	mux.HandleFunc("GET /states/{state}", api.readState)
-	mux.HandleFunc("PUT /states/{state}", api.updateState)
-	mux.HandleFunc("DELETE /states/{state}", api.deleteState)
+	mutating(mux, "PUT /states/{state}", actionConfigureResource, api.updateState)
+	mutating(mux, "DELETE /states/{state}", actionConfigureResource, api.deleteState)
 
 	// The moment table: one light's own moments, each with one entry per printer on it.
 	mux.HandleFunc("GET /lights/{light}/moments", api.listMoments)
 	mux.HandleFunc("GET /lights/{light}/moments/{moment}", api.readMoment)
-	mux.HandleFunc("PUT /lights/{light}/moments/{moment}", api.updateMoment)
-	mux.HandleFunc("DELETE /lights/{light}/moments/{moment}", api.deleteMoment)
+	mutating(mux, "PUT /lights/{light}/moments/{moment}", actionConfigureResource, api.updateMoment)
+	mutating(mux, "DELETE /lights/{light}/moments/{moment}", actionConfigureResource, api.deleteMoment)
 
 	// The layout, the brightness windows and the pause: the three surfaces wave 3 added. They are
 	// mounted here because they are the same store and the same watch; what they are for is in

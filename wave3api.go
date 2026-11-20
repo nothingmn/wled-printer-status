@@ -130,24 +130,24 @@ func (api tableAPI) mountWave3(mux *http.ServeMux) {
 	// A binding's layout: one picture per binding, because a panel and a strip compose differently
 	// and two bindings on one light can differ. See bindinglayout.go.
 	mux.HandleFunc("GET /bindings/{id}/layout", api.readLayout)
-	mux.HandleFunc("PUT /bindings/{id}/layout", api.updateLayout)
-	mux.HandleFunc("DELETE /bindings/{id}/layout", api.deleteLayout)
+	mutating(mux, "PUT /bindings/{id}/layout", actionConfigureResource, api.updateLayout)
+	mutating(mux, "DELETE /bindings/{id}/layout", actionConfigureResource, api.deleteLayout)
 	mux.HandleFunc("GET /lights/{light}/layouts", api.listLayouts)
 
 	// The brightness windows: the list the Brightness screen edits, judged in the timezone setting's
 	// zone. See brightnesswindows.go.
 	mux.HandleFunc("GET /windows", api.listWindows)
-	mux.HandleFunc("POST /windows", api.createWindow)
-	mux.HandleFunc("PUT /windows/{index}", api.updateWindow)
-	mux.HandleFunc("DELETE /windows/{index}", api.deleteWindow)
+	mutating(mux, "POST /windows", actionConfigureResource, api.createWindow)
+	mutating(mux, "PUT /windows/{index}", actionConfigureResource, api.updateWindow)
+	mutating(mux, "DELETE /windows/{index}", actionConfigureResource, api.deleteWindow)
 
 	// The pause: the header's pause-everything and one row's, both with an absolute expiry. See
 	// pause.go.
 	mux.HandleFunc("GET /pause", api.readPause)
-	mux.HandleFunc("PUT /pause", api.setGlobalPause)
-	mux.HandleFunc("DELETE /pause", api.clearGlobalPause)
-	mux.HandleFunc("PUT /bindings/{id}/pause", api.setBindingPause)
-	mux.HandleFunc("DELETE /bindings/{id}/pause", api.clearBindingPause)
+	mutating(mux, "PUT /pause", actionOperateResource, api.setGlobalPause)
+	mutating(mux, "DELETE /pause", actionOperateResource, api.clearGlobalPause)
+	mutating(mux, "PUT /bindings/{id}/pause", actionOperateResource, api.setBindingPause)
+	mutating(mux, "DELETE /bindings/{id}/pause", actionOperateResource, api.clearBindingPause)
 }
 
 // bindingAndLight is one binding by the name these routes address it with, and the light it sits

@@ -100,6 +100,29 @@ screen. What the light is meant to become is specified in the locked
 [`docs/product-requirements.md`](docs/product-requirements.md); the eight screens it describes are design
 mockups, not the product, in [`docs/design/v2/`](docs/design/v2/README.md).
 
+## Who may change what
+
+Every route that changes something asks the host whether the person making the change may, before it does
+anything. The two questions are the host's own words for two different acts, and the difference is a
+permission:
+
+- **Rewriting the configuration** — adding, removing or ignoring a light, creating, replacing or deleting a
+  binding, a layout, a state word or a moment, adding or removing a brightness window, and setting the zone
+  — asks `configure_resource` on this module's instance kind. Only a **manager** holds it.
+- **Acting on a light now** — pause and resume, `POST /refresh`, the three previews, and the identify,
+  restore and snapshot on one controller — asks `operate_resource`, which an **operator** holds. None of
+  these rewrites anything the module was told to do.
+
+A viewer holds neither: they read every screen and change none of them. A person the host says no for is
+answered **403 `NOT_PERMITTED`** with a sentence naming what the change needs, and nothing is touched — the
+light is not probed, the document is not written. If the module cannot get an answer at all, the change is
+refused with **503 `ACCESS_UNKNOWN`**: a question that failed is a refusal, never a pass.
+
+Two things this costs, said plainly. The manifest declares both under `checks`, and **an instance upgraded
+from a release without that block keeps the declaration it was installed with** — add the module again after
+upgrading, or every write answers `ACCESS_UNKNOWN` and changes nothing. And the host's answer is kept for
+thirty seconds, so a role changed on the server takes effect within that.
+
 ## What it is meant to do
 
 Four kinds of information are wanted from a light, in the order they matter: colour as a signal, LEDs as
@@ -315,7 +338,8 @@ the same facts per light in `lights`, because a field naming one of two lights w
 the picture did not go to.
 
 The route asks the host for `operate_resource` on the module's instance, because it changes what the light
-shows.
+shows — and the module then asks the same question itself, about the person in the request: see
+[who may change what](#who-may-change-what).
 
 ## Telling a blank panel from a wrong one
 
@@ -467,7 +491,9 @@ prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from di
 
 Without `-approve` the declaration is written switched off, and the command prints what the module asked
 for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
-follow that printer's event stream as itself, with nobody behind the call, and for one writable
+follow that printer's event stream as itself, with nobody behind the call; for `configure_resource` and
+`operate_resource` under `checks`, which are the two questions it asks the host about the person in a
+request and are not grants to act as itself ([who may change what](#who-may-change-what)); and for one writable
 directory — its own configuration store, one versioned JSON document holding the bindings and the five
 tables the Colours, Events, Layout, Brightness and Overview screens edit, which is what lets a change made
 through any of its routes survive a restart and an upgrade. It declares **two** outbound

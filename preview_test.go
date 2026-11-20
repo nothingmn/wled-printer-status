@@ -40,7 +40,7 @@ func postPreview(t *testing.T) *httptest.ResponseRecorder {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-finished", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-finished", nil))
 
 	return recorder
 }
@@ -381,7 +381,7 @@ func TestThePatternLadderRunsOnEveryLightAnInstanceDrives(t *testing.T) {
 	twoLightWatch(t)
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-pattern?pattern=quarters&hold=8", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-pattern?pattern=quarters&hold=8", nil))
 
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("the pattern answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
@@ -432,7 +432,7 @@ func TestAPreviewCanBeAimedAtOneLight(t *testing.T) {
 	twoLightWatch(t)
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-pattern?pattern=solid&light=127.0.0.1:10", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-pattern?pattern=solid&light=127.0.0.1:10", nil))
 
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("the aimed pattern answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
@@ -460,7 +460,7 @@ func TestAPreviewCanBeAimedAtOneLight(t *testing.T) {
 	// A name this instance drives nothing on is refused by name, and the refusal lists where the
 	// names are — not answered with a default light.
 	recorder = httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-pattern?pattern=solid&light=morpheus", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-pattern?pattern=solid&light=morpheus", nil))
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("an unknown light answered %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
@@ -480,7 +480,7 @@ func TestAPreviewWithNoLightBoundSaysThat(t *testing.T) {
 	t.Cleanup(forgetPreview)
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-pattern?pattern=solid", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-pattern?pattern=solid", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("the pattern answered %d, want %d: %s", recorder.Code, http.StatusServiceUnavailable, recorder.Body.String())
@@ -521,7 +521,7 @@ func TestAWordPreviewPaintsThePanelsAndSaysWhichLightCannotCarryIt(t *testing.T)
 	})
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-finished?hold=8", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-finished?hold=8", nil))
 
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("the word answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())
@@ -571,7 +571,7 @@ func TestTheComposedPreviewNamesWhatEachLightWillDraw(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	routes().ServeHTTP(recorder,
-		httptest.NewRequest(http.MethodPost, "/preview-frame?percent=41&name=MK4IS&hold=8", nil))
+		forwarded(http.MethodPost, "/preview-frame?percent=41&name=MK4IS&hold=8", nil))
 
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("the composed picture answered %d, want %d: %s", recorder.Code, http.StatusAccepted, recorder.Body.String())

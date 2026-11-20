@@ -20,7 +20,7 @@ import (
 // answers 200 and the line the settings hold.
 func TestTheRouteAnswers(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/wled-printer-status", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/wled-printer-status", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /wled-printer-status answered %d, want %d", recorder.Code, http.StatusOK)
@@ -44,7 +44,7 @@ func TestTheRouteAnswers(t *testing.T) {
 // reworded sentence must not break a caller, and a changed code must.
 func TestAPathThisModuleDoesNotServeIsRefusedByCode(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/nothing-here", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/nothing-here", nil))
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("an unserved path answered %d, want %d", recorder.Code, http.StatusNotFound)
@@ -590,7 +590,7 @@ func storeSettings(t *testing.T, written *Settings) {
 // list, persisted false, and the sentence about discovery rather than a failure.
 func TestTheLightsRouteIsOnTheProcesssOwnMux(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/lights", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/lights", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /lights answered %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())

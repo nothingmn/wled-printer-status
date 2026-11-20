@@ -85,7 +85,7 @@ const zoneMissingNote = "No zone is named, so no brightness window can be saved 
 // mountTimezone adds the two zone routes to mux.
 func (api tableAPI) mountTimezone(mux *http.ServeMux) {
 	mux.HandleFunc("GET /timezone", api.readTimezone)
-	mux.HandleFunc("PUT /timezone", api.writeTimezone)
+	mutating(mux, "PUT /timezone", actionConfigureResource, api.writeTimezone)
 }
 
 // timezoneBody is the answer both routes make, from the document as it stands after the read or write.

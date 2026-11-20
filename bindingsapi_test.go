@@ -132,7 +132,7 @@ func (a *apiUnderTest) do(t *testing.T, method, path, body string) (int, map[str
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	a.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, strings.NewReader(body)))
+	a.mux.ServeHTTP(recorder, forwarded(method, path, strings.NewReader(body)))
 
 	var answer map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {
@@ -159,7 +159,7 @@ func (a *apiUnderTest) raw(t *testing.T, method, path string) (int, string) {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	a.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+	a.mux.ServeHTTP(recorder, forwarded(method, path, nil))
 
 	return recorder.Code, recorder.Body.String()
 }
@@ -564,7 +564,7 @@ func TestAPrinterListThatCannotBeReadIsARefusal(t *testing.T) {
 	}.mount(mux)
 
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/printers", nil))
+	mux.ServeHTTP(recorder, forwarded(http.MethodGet, "/printers", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /printers with no host answered %d, want %d", recorder.Code, http.StatusServiceUnavailable)

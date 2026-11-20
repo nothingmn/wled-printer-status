@@ -99,7 +99,7 @@ func (a *tablesUnderTest) do(t *testing.T, method, path, body string) (int, map[
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	a.mux.ServeHTTP(recorder, httptest.NewRequest(method, path, strings.NewReader(body)))
+	a.mux.ServeHTTP(recorder, forwarded(method, path, strings.NewReader(body)))
 
 	var answer map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {

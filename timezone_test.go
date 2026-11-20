@@ -499,7 +499,7 @@ func served(t *testing.T, handler http.Handler, method, path, body string) *http
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(method, path, strings.NewReader(body)))
+	handler.ServeHTTP(recorder, forwarded(method, path, strings.NewReader(body)))
 
 	return recorder
 }

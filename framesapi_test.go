@@ -73,7 +73,7 @@ func (a *framesUnderTest) do(t *testing.T) (int, map[string]any) {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	a.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/frames", nil))
+	a.mux.ServeHTTP(recorder, forwarded(http.MethodGet, "/frames", nil))
 
 	var body map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {
@@ -426,7 +426,7 @@ func TestNoFrameDecidedYetIsRefusedRatherThanDrawn(t *testing.T) {
 	under := newFramesUnderTest(t, bindings{panelBinding()})
 
 	recorder := httptest.NewRecorder()
-	under.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/frames", nil))
+	under.mux.ServeHTTP(recorder, forwarded(http.MethodGet, "/frames", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a module with no reading answered %d, want %d: %s",

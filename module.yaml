@@ -14,7 +14,7 @@ name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,
 # which is what a module with a process needs.
 kind: sink
-version: 0.7.0
+version: 0.8.0
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT
@@ -127,6 +127,29 @@ needs:
 permissions:
   # read one device and follow its event stream
   - observe
+
+# The two things this module asks the host about a person. It takes nothing as itself: it never
+# acts on this server's configuration or on a light as the module, it asks whether the person in
+# the request may.
+#
+# The host answers access.check for an action this list names and refuses a question about any
+# other, so an instance installed from this release is the only one that can be asked these
+# questions at all. A release that added a route changing something and no line here would be a
+# route that answers ACCESS_UNKNOWN and changes nothing — which is the failure this module wants,
+# and the reason the list is written out rather than left to a default.
+#
+# Without these two lines the module's own routes refuse every write: the host cannot say whether
+# a person may make the change, and this module will not make one on a guess. An instance upgraded
+# from 0.7.0 keeps the declaration it was installed with until it is added again, so the release
+# notes say so.
+checks:
+  # May this person rewrite this module's configuration: its lights, bindings, layouts, state
+  # words, moments, brightness windows and the zone. configure_resource on the sink kind, which a
+  # manager holds and a viewer never does.
+  - configure_resource
+  # May this person act on the lights now: pause and resume, refresh, identify, restore a snapshot,
+  # and put a picture up as a preview. operate_resource on the sink kind, which an operator holds.
+  - operate_resource
 # No events are declared. An entry here says something publishes an event on that
 # endpoint, and nothing in this tree does: no file names the type outside this
 # manifest, and no code in this module emits one. The key comes back with the

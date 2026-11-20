@@ -213,7 +213,7 @@ func postPattern(t *testing.T, query string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-pattern"+query, nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-pattern"+query, nil))
 
 	return recorder
 }
@@ -224,7 +224,7 @@ func postPreviewAt(t *testing.T, query string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/preview-finished"+query, nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/preview-finished"+query, nil))
 
 	return recorder
 }
@@ -439,7 +439,7 @@ func TestAHoldIsAWholeNumberOfSecondsWithADefaultAndACeiling(t *testing.T) {
 		{"?hold=1.5", 0, true},
 	} {
 		t.Run("hold="+shape.query, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/preview-finished"+shape.query, nil)
+			r := forwarded(http.MethodPost, "/preview-finished"+shape.query, nil)
 
 			got, err := holdFrom(r)
 
@@ -528,7 +528,7 @@ func TestBothPreviewRoutesTakeTheHoldAndRefusePastTheCeiling(t *testing.T) {
 			pen.fired.Store(nil)
 
 			recorder := httptest.NewRecorder()
-			routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, shape.path+shape.query, nil))
+			routes().ServeHTTP(recorder, forwarded(http.MethodPost, shape.path+shape.query, nil))
 
 			if recorder.Code != shape.status {
 				t.Fatalf("%s answered %d, want %d: %s", shape.path+shape.query, recorder.Code, shape.status, recorder.Body.String())

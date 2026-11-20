@@ -382,7 +382,7 @@ func TestThePresetsOfALightThisModuleDoesNotDriveAreRefused(t *testing.T) {
 	under := newDevicesUnderTest(t)
 
 	recorder := httptest.NewRecorder()
-	under.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/devices/10.0.0.99/presets", nil))
+	under.mux.ServeHTTP(recorder, forwarded(http.MethodGet, "/devices/10.0.0.99/presets", nil))
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("a light this module does not drive answered %d, want %d: %s",

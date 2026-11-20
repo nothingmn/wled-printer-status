@@ -210,7 +210,7 @@ func (h *identifyHarness) pressOn(name string) (int, map[string]any) {
 	path := "/devices/" + name + "/identify"
 
 	recorder := httptest.NewRecorder()
-	h.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
+	h.mux.ServeHTTP(recorder, forwarded(http.MethodPost, path, nil))
 
 	var body map[string]any
 	if raw := recorder.Body.Bytes(); len(raw) > 0 {

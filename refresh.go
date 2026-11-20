@@ -404,7 +404,7 @@ type refreshAPI struct{}
 
 // mountRefresh adds this route to the module's own mux.
 func (api refreshAPI) mount(mux *http.ServeMux) {
-	mux.HandleFunc("POST /refresh", api.refresh)
+	mutating(mux, "POST /refresh", actionOperateResource, api.refresh)
 }
 
 // refresh is the route: push the current picture to every light this module drives, now, and answer

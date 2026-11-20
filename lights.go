@@ -436,16 +436,16 @@ func (api lightsAPI) mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /lights", api.listLights)
 
 	// A light added by its address: probed first, and stored only if a light answered.
-	mux.HandleFunc("POST /lights", api.addLight)
+	mutating(mux, "POST /lights", actionConfigureResource, api.addLight)
 
 	// A light taken off the list, refused while a binding still drives it.
-	mux.HandleFunc("DELETE /lights/{name}", api.removeLight)
+	mutating(mux, "DELETE /lights/{name}", actionConfigureResource, api.removeLight)
 
 	// A light put out of the way — kept, and left out of every list that offers one — and the
 	// same light brought back. The two verbs are the two decisions, in the shape this surface
 	// already uses: the light is the noun, and what happens to it is the method.
-	mux.HandleFunc("POST /lights/{name}/ignore", api.ignoreLight)
-	mux.HandleFunc("DELETE /lights/{name}/ignore", api.unignoreLight)
+	mutating(mux, "POST /lights/{name}/ignore", actionConfigureResource, api.ignoreLight)
+	mutating(mux, "DELETE /lights/{name}/ignore", actionConfigureResource, api.unignoreLight)
 }
 
 // lightAnswer is one light as a caller reads it: its name on these routes, its address, and what it

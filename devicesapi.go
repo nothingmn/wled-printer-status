@@ -190,7 +190,7 @@ func (api deviceAPI) mount(mux *http.ServeMux) {
 	// A snapshot taken now, which is the screen's `refresh now`: the same reads the five-minute
 	// cycle would make, on demand, because the light in front of a person is the one worth copying
 	// before he changes something.
-	mux.HandleFunc("POST /devices/{name}/snapshot", api.takeSnapshot)
+	mutating(mux, "POST /devices/{name}/snapshot", actionOperateResource, api.takeSnapshot)
 
 	// One snapshot by id, with everything a restore would send and everything it would not.
 	mux.HandleFunc("GET /devices/{name}/snapshot/{id}", api.readSnapshot)
@@ -202,13 +202,13 @@ func (api deviceAPI) mount(mux *http.ServeMux) {
 
 	// Putting one back. See the file's own comment for why this one is hard to fire and slow to
 	// answer.
-	mux.HandleFunc("POST /devices/{name}/restore", api.restore)
+	mutating(mux, "POST /devices/{name}/restore", actionOperateResource, api.restore)
 
 	// `identify`: the light goes on and off, one second in each state, five times, so that a person
 	// can see which light a name means — and then it is put back exactly as it was found. It is the
 	// one route on this surface that writes a light's power, and it takes the light the way a preset
 	// moment does rather than writing behind the writer. See identify.go.
-	mux.HandleFunc("POST /devices/{name}/identify", api.identify)
+	mutating(mux, "POST /devices/{name}/identify", actionOperateResource, api.identify)
 }
 
 // deviceNamed is one light the running set drives, by the name these routes give it.

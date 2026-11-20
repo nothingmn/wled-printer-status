@@ -304,7 +304,7 @@ func TestARefreshWithNothingBoundSaysSo(t *testing.T) {
 	forgetPreview()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/refresh", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/refresh", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("POST /refresh answered %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -374,7 +374,7 @@ func TestASecondPressIsRefusedWhileOneRuns(t *testing.T) {
 
 	go func() {
 		recorder := httptest.NewRecorder()
-		routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/refresh", nil))
+		routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/refresh", nil))
 
 		first <- recorder
 	}()
@@ -389,7 +389,7 @@ func TestASecondPressIsRefusedWhileOneRuns(t *testing.T) {
 	waitFor(t, "the sweep to be running", func() bool { return sweepingRefresh.Load() })
 
 	second := httptest.NewRecorder()
-	routes().ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/refresh", nil))
+	routes().ServeHTTP(second, forwarded(http.MethodPost, "/refresh", nil))
 
 	if second.Code != http.StatusConflict {
 		t.Fatalf("the second press answered %d, want %d: %s", second.Code, http.StatusConflict, second.Body.String())
@@ -446,7 +446,7 @@ func TestTheRefreshRouteIsOnTheProcesssOwnMux(t *testing.T) {
 	forgetPreview()
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/refresh", nil))
+	routes().ServeHTTP(recorder, forwarded(http.MethodPost, "/refresh", nil))
 
 	if recorder.Code == http.StatusNotFound {
 		t.Fatalf("POST /refresh answered 404: the route is not on the process's own mux")

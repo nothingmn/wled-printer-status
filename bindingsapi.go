@@ -156,11 +156,11 @@ func (api bindingAPI) mount(mux *http.ServeMux) {
 	// and `<device id>@<light>:<segment>` once a printer sits on more than one light. GET
 	// /bindings answers that name for every binding.
 	mux.HandleFunc("GET /bindings/{id}", api.readBinding)
-	mux.HandleFunc("PUT /bindings/{id}", api.updateBinding)
-	mux.HandleFunc("DELETE /bindings/{id}", api.deleteBinding)
+	mutating(mux, "PUT /bindings/{id}", actionConfigureResource, api.updateBinding)
+	mutating(mux, "DELETE /bindings/{id}", actionConfigureResource, api.deleteBinding)
 
 	// A binding the set does not hold yet.
-	mux.HandleFunc("POST /bindings", api.createBinding)
+	mutating(mux, "POST /bindings", actionConfigureResource, api.createBinding)
 }
 
 // bindingAnswer is one binding as a caller reads it: the name it is addressed by, the light and

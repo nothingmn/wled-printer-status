@@ -10,6 +10,35 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## 0.8.0 — 2026-11-20
+
+**Every route that changes something now asks the server whether the person making the change may, and
+refuses when it may not.** The marketplace review found this and it was a real defect: the routes decided
+nothing about their caller, so whether a person could rewrite this module's configuration depended only on
+whether they could reach the module at all. A viewer could add a light — which makes the server probe any
+address typed — take one off the list, rebind it, pause the display or move the zone. **The manifest gains a
+`checks` block**, and an instance upgraded from 0.7.0 keeps the declaration it was installed with until it is
+added again; until then every write answers `ACCESS_UNKNOWN` and changes nothing.
+
+- **Configuration is a manager's, acting on a light is an operator's.** `POST` and `DELETE /lights`,
+  `POST /lights/{name}/ignore` and its `DELETE`, `POST`, `PUT` and `DELETE /bindings`, `PUT` and
+  `DELETE /states/{state}`, the two moment routes, `PUT` and `DELETE /bindings/{id}/layout`, `POST`, `PUT`
+  and `DELETE /windows`, and `PUT /timezone` ask the server for `configure_resource`. `PUT` and
+  `DELETE /pause`, both binding pauses, `POST /refresh`, the three preview routes, and the snapshot, restore
+  and identify on one controller ask for `operate_resource`. A viewer holds neither and is refused on all
+  twenty-eight.
+- **A refusal is a sentence about permission, not the server's error.** A person the server says no for is
+  answered `403` with `NOT_PERMITTED`: what the change needs, which role holds it, and that nothing was
+  changed. The light is not probed and the document is not written.
+- **A question that failed is a refusal, never a pass.** When the module cannot get an answer out of the
+  server — no session with it, a declaration installed without these two checks — the change is refused with
+  `503 ACCESS_UNKNOWN` and the module's log names the question that failed. Nothing is allowed because nobody
+  said no.
+- **The answer is kept for thirty seconds**, so a screen's handful of writes is one question, and a role
+  changed on the server takes effect within that.
+- **The screens are unchanged.** A refusal arrives as the same problem document every other refusal does, and
+  the sentence in it is what the screen shows.
+
 ## 0.7.0 — 2026-11-19
 
 **A layout writes its wall time on a 12-hour or a 24-hour clock, and the toggle is per binding.** The
