@@ -2323,6 +2323,121 @@ volume as `wled-release-c3ce253`, its binary is `7985ed85…` and its bundle `5a
 has two halves because this release has two** — the `module add` line and the schema-7 store copy. Restoring
 the binary alone leaves the module installed and not starting.
 
+## 11. `0.6.0`: the zone in this module's store, and a store step to 9
+
+Everything since `0.5.0` is one capability and the way back to it: a brightness window and a panel's ends
+line both needed an IANA zone, and since `0.4.0` took the manifest's `options` out there was nowhere to put
+one — so the zone moved into this module's own store, the Overview screen sets it, and `POST /refresh`
+pushes the current picture to every light on demand. **The store moves to schema 9**, which is the one thing
+here an operator can trip over: a `0.5.x` build refuses a document this one writes, by name, so the way back
+is not a binary on its own.
+
+**Both halves of the version moved together** and the release was built from `git archive HEAD`:
+
+```console
+$ grep -n '^version:' module.yaml
+17:version: 0.6.0
+$ grep -n 'release = extension.Version' main.go
+128:\trelease = extension.Version("0.6.0")
+$ git log --oneline -1
+f7d1d2a Refresh everything writes every binding from the reading taken now, and says what each light did
+```
+
+Gates on that export, in the containers: `go build ./...` exit 0, `go vet ./...` exit 0, `gofmt -l` silent,
+`go test ./... -count=1` with all seven packages `ok`, and `svelte-check found 0 errors and 0 warnings`. The
+UI bundle was **built fresh in the same act** (`pnpm install --frozen-lockfile`, `check`, `build`) — 303,281 B,
+`c099ec52…` against the 289,611 B `2b664c21…` that `0.5.0` shipped.
+
+**Staged through the container, installed with no `-settings`, one restart.** `/config/config.d` is
+`0700 prusa:prusa`, so the release went in with `docker cp` and was verified as the core's own uid before the
+install read it:
+
+```console
+$ docker cp ~/prusa/wled-build-f7d1d2a/release prusa_connect:/config/config.d/wled-release-f7d1d2a
+$ docker exec -u 10001 prusa_connect sh -c 'cd /config/config.d/wled-release-f7d1d2a && sha256sum -c checksums.txt'
+… ten lines, every one OK, EXIT=0
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.6.0 \
+    -from /config/config.d/wled-release-f7d1d2a -approve
+installed com.github.aux.nothingmn.wled-printer-status/wled-printer-status as sink:wled-printer-status
+  checksums   10 files verified against checksums.txt
+  memory      32 MiB, set by the author (memory_mib)
+  enabled     yes
+$ date -u +%H:%M:%SZ; docker restart prusa_connect; date -u +%H:%M:%SZ
+00:30:18Z
+prusa_connect
+00:30:19Z
+```
+
+**What it says about itself, straight after that restart** — the `was upgraded` line is the schema step:
+
+```console
+msg="wled-printer-status 0.6.0 is serving on stdio as pid 61"
+msg="wled-printer-status: the configuration store at /config/config.d/module-data/wled-printer-status/config.json
+     was upgraded from schema version 8 to 9"
+msg="wled-printer-status: the set this start runs is the one in this module's own store … schema version 9
+     (2 bindings); the settings are a migration source and are not applied again"
+msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128"
+msg="wled-printer-status: watching printer 07e893bb-… and driving segment 2 of http://10.0.0.253,
+     leaving its other segments and its brightness and power alone"
+msg="the child process is serving" … plugin_version=0.6.0 contract=1.1.0
+     mount=/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+msg=readiness ready=true serving=7 declared=7 …
+```
+
+The store across that start, read out of the volume before and after:
+
+```console
+before: version 8 | bindings 2 | lights 3 | layouts 1 | moments 2 | sha256 7e294586…
+after : version 9 | bindings 2 | lights 3 | layouts 1 | moments 2 | sha256 008e086f…
+        timezone "" then "America/Denver", timezone_origin "operator"
+```
+
+Both bindings survived — the panel whole at segment `-1` with brightness 128, the strip on segment `2` — and
+so did the three known lights (`morpheus`, `CyberDesk` unignored, `DamonAward` ignored) and the two moments.
+The step added an empty zone and changed no value.
+
+**The proofs, each with its answer:**
+
+| read | answer |
+|---|---|
+| `GET /status` | `200`, `build` `{"version":"0.6.0","contract":1,"store_schema":9,"repository":"https://github.com/nothingmn/wled-printer-status"}`, both bindings `ATTENTION`, colour `[210,165,0]`, `percent 64`, `stale false`, `last_send.ok: true` on both |
+| `GET /timezone` before the write | `origin: none`, `timezone: ""`, `stored: false` — nothing had captured a browser zone |
+| `PUT /timezone {"timezone":"America/Denver","source":"operator"}` | `200`, `origin: store`, `source: operator`, `stored: true`, `persisted: true`; `GET` then repeats `America/Denver` |
+| `GET …/ui/ui/index.js` | `200`, 303,281 B, `c099ec52…` — **byte-identical to the built bundle** (`cmp`, exit 0) |
+| `GET …/ui/ui/locales/en.json` | `200`, 56,812 B, `bb70766f…` — byte-identical to the built one |
+| the strip itself, `GET http://10.0.0.253/json/state` | segment 2 `"Front 1"` `on: true`, `col: [[210,165,0],…]`, pixels 14–20, so the borrowed segment is showing the module's colour |
+| `POST /refresh` | `200`, `count 2`, `refreshed 2`, `skipped 0`, `failed 0`: panel `outcome: refreshed, wrote: pixels`, strip `outcome: refreshed, wrote: segments` |
+
+**The panel is proved by its frame, not by its state.** A panel is painted over DDP, so its own
+`/json/state` keeps the black establishing body (`col [[0,0,0]]`) and is not evidence either way — the same
+finding as the `0.5.0` run. What says it is being driven is `last_send.ok: true` on a beat of seconds and
+the composed frame: `GET /frames` returns a 256 × 64 picture for it. What the picture carries is the row's
+own business, and this binding's row has `ends: false`: the picture is the bar, `64%`, `39M` and
+`HERMES MK4`, with no end time among them.
+
+**The ends line does not fit the layout the binding holds, and that is worth knowing before pressing the
+toggle.** The row has `percent_scale: 5`, `bar_rows: 12`, `remaining: true` and `printer_name: true`.
+Turning `ends` on makes three lines, and `/frames` refused the whole picture rather than cropping it:
+
+```
+This frame could not be drawn: … time remaining, the time it ends at and the printer's name are on, and this
+panel is 64 rows high with a 12-row bar, which leaves 52 rows for the text; the digits at scale 5 take 35 of
+them, so 2 of the 3 fit … A percent_scale of 3 would take all 3.
+```
+
+The line does fit at `percent_scale: 3`: the frame composes at 256 × 64 and the decoded PNG then shows the
+bar, `64%`, `39M`, `ENDS 18:10` and `HERMES MK4`, `18:10` being right for a sweep at `00:31Z` on a Denver
+evening at `MST (UTC−7)` with 39 minutes left. **That was a setting change and not a property of the
+release, and it was put back.** The ends line is the operator's to switch on, and it costs him the larger
+digits to have it: the row went back to `ends: false` with `percent_scale: 5`, and `GET /frames` composes
+the panel at 256 × 64 with `64%` in the larger digits and `39M` and `HERMES MK4` beneath them.
+
+The way back is `/home/robchartier/wled-rollback/0.6.0-572cc61/ROLLBACK-0.6.0-572cc61.md`: the `0.5.0`
+release is still on the volume as `wled-release-572cc61`, its binary is `7760db0f…` and its bundle
+`2b664c21…`, and **that document has two halves because this release has two** — the schema-8 store copy and
+the `module add` line. Restoring the binary alone leaves the module installed and not starting.
+
 ## Two facts a reader has to know
 
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read
