@@ -2438,6 +2438,223 @@ release is still on the volume as `wled-release-572cc61`, its binary is `7760db0
 `2b664c21…`, and **that document has two halves because this release has two** — the schema-8 store copy and
 the `module add` line. Restoring the binary alone leaves the module installed and not starting.
 
+## 12. `0.7.0`: the clock on a layout row, and a store step to 10
+
+Everything since `0.6.0` is one toggle and the way back to it: a layout row writes its wall time on a
+12-hour or a 24-hour clock, and it is the row's own key — `clock` — rather than a setting for the instance,
+because two panels showing two machines are read by two people. **The store moves to schema 10**, and this is
+the only step so far that writes nothing at all on a row: a version 9 document has no field to put a format
+in, an absent `clock` reads as 24-hour, so the upgrade cannot change what a panel draws. The way back is
+still two halves, because a `0.6.0` build refuses a document this one writes, by number.
+
+**Both halves of the version moved together, and the release was built from `git archive HEAD`.** Three
+commits make up the release: the `0.6.0` record, the toggle, and one removal — the browser harness that the
+toggle's own wave had committed under `ui/harness-clock/`, six files that mount the screens against a stub
+transport in Chromium, are not part of the bundle any install serves, and need an unpinned Playwright to run
+at all:
+
+```console
+$ grep -n '^version:' module.yaml
+17:version: 0.7.0
+$ grep -n 'release = extension.Version' main.go
+128:	release = extension.Version("0.7.0")
+$ git log --oneline -3
+8e61d04 The clock harness is not the repository's to carry
+e7dd56d A layout writes its wall time on a 12- or 24-hour clock, and the store moves to schema 10
+0575511 The 0.6.0 install, recorded
+$ git for-each-ref refs/tags --format='%(refname:short) %(objecttype) %(*objectname:short)'
+v0.1.0 tag 701d090
+v0.2.0 tag 905454f
+v0.3.0 tag 962371f
+v0.4.0 tag c3ce253
+v0.5.0 tag 572cc61
+```
+
+**No tag was made for `0.7.0`**, so this release is named by its commit `8e61d04` and nothing else;
+`v0.5.0` is still the last tag on the repository. The harness removal is the last commit, not the toggle's,
+and the gates were re-run on that commit rather than before it — removing files can break an import.
+
+**The gates, run on `8e61d04` with no tracked file dirty** (`HEAD=8e61d04 dirty=0`), in the containers:
+
+```console
+GATE[build] exit=0
+GATE[vet] exit=0
+GATE[gofmt] exit=0
+ok  	github.com/nothingmn/wled-printer-status	6.111s
+ok  	github.com/nothingmn/wled-printer-status/internal/ddp	0.006s
+ok  	…/internal/matrix, /internal/printer, /internal/render, /internal/text, /internal/wled — all ok
+GATE[test] exit=0
+… the same seven packages again under -race, all ok
+GATE[race] exit=0
+$ svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
+svelte-check found 0 errors and 0 warnings
+CHECK_EXIT=0
+$ vite build
+dist/ui/index.js  307.82 kB │ gzip: 59.44 kB
+✓ built in 816ms
+BUILD_EXIT=0
+```
+
+**That 307,822 B build is not the release, and the difference is worth stating rather than smoothing over.**
+The operator's tree carries two untracked source files, `ui/src/disclosure.svelte` and
+`ui/src/overview.orig.svelte`, that `git archive HEAD` does not carry; a build inside the tree is 1,794 B
+larger than the one that shipped. Built from the export instead, the bundle reproduces exactly:
+
+```console
+$ docker run … -w /home/robchartier/prusa/wled-build-8e61d04/src/ui node:22-bookworm \
+    sh -c '… pnpm install --frozen-lockfile; pnpm run build; sha256sum dist/ui/index.js; ls -l dist/ui/index.js'
+81e4683b9349c7f9e40dc0a486e121a9239346f058fd235f92628b61905f6592  dist/ui/index.js
+-rw-r--r--. 1 node node 306028 …  dist/ui/index.js
+```
+
+So the shipped bundle is `81e4683b…` at 306,028 B, against `0.6.0`'s `c099ec52…` at 303,281 B. The four
+binaries came out of the same export in `golang:1.26.11` with `CGO_ENABLED=0` and `-trimpath`; the linux one
+is 12,005,586 B and hashes to `a162b7ca…`, against `0.6.0`'s 11,991,922 B and `05c503b0…`. The release
+directory is the same ten files as before — `module.yaml`, `README.md`, `CHANGELOG.md`, `LICENSE`, `ui/`, four
+binaries, `checksums.txt` — and `sha256sum -c` reports **OK for all ten, exit 0**, in the build directory and
+again in the directory the core read it from:
+
+```console
+$ docker exec prusa_connect sh -c 'cd /config/config.d/wled-release-8e61d04 && sha256sum -c checksums.txt; echo EXIT=$?'
+module.yaml: OK   README.md: OK   CHANGELOG.md: OK   LICENSE: OK
+ui/index.js: OK   ui/locales/en.json: OK
+wled-printer-status_darwin_arm64: OK   wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK    wled-printer-status_windows_amd64.exe: OK
+EXIT=0
+```
+
+**Staged into the volume, installed with no `-settings`, one restart.** `/config/config.d` is
+`0700 prusa:prusa`, so the release went in through the container rather than a host-side copy, and the
+manifest the install read says `version: 0.7.0`. The install is one line:
+
+```console
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.7.0 \
+    -from /config/config.d/wled-release-8e61d04 -approve
+$ docker exec prusa_connect /prusa_connect module list | grep wled
+sink:wled-printer-status  com.github.aux.nothingmn.wled-printer-status/wled-printer-status  service  true  true  overlay  config/config.d/modules/wled-printer-status/bin
+```
+
+**`module add`'s own summary was not captured to a file this time, so it is not quoted here.** What the
+install wrote is in the declaration and the lock, and both were read back afterwards — this is the record
+`0.6.0`'s entry quotes from the terminal instead:
+
+```json
+"module":  { "version": "0.7.0", "constraint": "0.7.0",
+             "source": "/config/config.d/wled-release-8e61d04",
+             "asked": { "permissions": ["observe"], "memory_mib": 32, "data": true } },
+"service": { "checksum": "sha256:a162b7ca…", "contract_major": 1,
+             "assets": { "path": "config/config.d/modules/wled-printer-status/bundle",
+                         "checksum": "sha256:3ecc202a…" } },
+"enabled": true, "runtime": "service"
+```
+
+The lock file's entry for the namespace, read out of `/config/config.d/modules.lock.json`:
+
+```console
+namespace   com.github.aux.nothingmn.wled-printer-status
+version     0.7.0
+constraint  0.7.0
+source      /config/config.d/wled-release-8e61d04
+digest      none — the entry names a directory on this volume, not a download URL
+```
+
+**One restart, and it was the core's** — every module comes back with it, which is why the install is a
+single restart and not a restart per module. The module was asked to stop at `01:00:34.729Z`,
+the container's `StartedAt` is `01:00:35.066Z`, and the module was serving `0.7.0` 1.8 seconds later:
+
+```console
+msg="wled-printer-status was asked to stop"
+msg="wled-printer-status: gave segment 2 \"Front 1\" back to http://10.0.0.253: pixels 14-24, colour
+     8,255,0 0,0,0 0,0,0, effect 102, brightness 255"
+msg="wled-printer-status 0.7.0 is serving on stdio as pid 60"
+msg="wled-printer-status: the configuration store at /config/config.d/module-data/wled-printer-status/config.json
+     was upgraded from schema version 9 to 10"
+msg="wled-printer-status: the set this start runs is the one in this module's own store … schema version 10
+     (2 bindings); the settings are a migration source and are not applied again"
+msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128"
+msg="wled-printer-status: watching printer 07e893bb-… and driving segment 2 of http://10.0.0.253,
+     leaving its other segments and its brightness and power alone"
+msg="the child process is serving" … plugin_version=0.7.0 contract=1.1.0
+     mount=/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+msg=readiness ready=true serving=7 declared=7 …
+```
+
+**The store across that start, and the step wrote nothing.** Before and after, read out of the volume:
+
+```console
+before: version  9 | bindings 2 | lights 3 | layouts 1 | moments 2 | windows 0 | pauses 0
+        2,232 B, sha256 497f5dec…
+after : version 10 | bindings 2 | lights 3 | layouts 1 | moments 2 | windows 0 | pauses 0
+        2,233 B, sha256 6f417052…
+```
+
+Diffed, the two documents differ on one line and on nothing else:
+
+```console
+--- the document as version 9 wrote it
++++ the document as version 10 wrote it
+@@ -91,3 +91,3 @@
+  "timezone_origin": "operator",
+- "version": 9,
++ "version": 10,
+  "windows": []
+```
+
+The version byte is the step, and it costs one byte of file. The operator's zone is untouched —
+`timezone "America/Vancouver"`, `timezone_origin "operator"` — and so is his layout row, key for key:
+`bar`, `bar_band: top`, `bar_rows: 12`, `percent: true`, `percent_scale: 5`, `name: true`,
+`printer_name: true`, `remaining: true`, `ends: false`, temperatures/elapsed/material/layer `false`,
+rotation `take-turns` at 15 s. Both bindings and all three lights survived as they were (`morpheus` and
+`CyberDesk` unignored, `DamonAward` ignored), and both moments. **The row does not gain a `clock` key**, which
+is what "the step writes nothing" means here: the row answers `clock: 24-hour` from the default, not from the
+document, and `clock_origin: default` is the route saying so.
+
+**The proofs, each with its answer:**
+
+| read | answer |
+|---|---|
+| `GET /status` | `200`, `build` `{"version":"0.7.0","contract":1,"store_schema":10,"repository":"https://github.com/nothingmn/wled-printer-status"}`, both bindings `ATTENTION`, colour `[210,165,0]`, `percent 64`, `remaining_seconds 2340`, `stale false`, `last_send.ok: true` on both |
+| `GET /frames` | `200`, **two** frames: panel 256 × 64 (PNG 646 B), strip 10 × 1 (PNG 88 B), both `reason: progress`, `percent 64` |
+| `GET /bindings` | `200`, `count 2` — `07e893bb-…` at `-1` and `07e893bb-…@10.0.0.253:whole` at segment `2`, as the document holds them |
+| `GET /bindings/07e893bb-…/layout` | `200`, `origin: store`, `overridden: true`, `clock: 24-hour`, `clock_origin: default`, `zone: America/Vancouver`, and the row's own values above |
+| `GET …/@10.0.0.253:whole/layout` | `200`, `origin: default`, `overridden: false`, `clock: 24-hour`, `clock_origin: default` — the strip still has no row of its own |
+| `GET /timezone` | `200`, `America/Vancouver`, `origin: store`, `source: operator`, `stored: true`, `persisted: true` |
+| `GET …/ui/ui/index.js` | `200`, 306,028 B, `81e4683b…` — **byte-identical to the built bundle** (`cmp`, exit 0) and to the file in the staged release |
+| `GET …/ui/ui/locales/en.json` | `200`, 57,360 B, `0d72ca5f…` — the shipped catalogue |
+| the strip itself, `GET http://10.0.0.253/json/state` | segment 2 `"Front 1"` `on: true`, `col: [[210,165,0], …]`, so the borrowed segment is showing the module's colour |
+
+**The 12-hour clock has never been seen on the panel, and this release draws no wall time at all right now.**
+Turning the clock to 12-hour means writing the operator's layout row, and that write was not made: no live
+12-hour render was performed, by rule, so `ENDS 6:10 PM` has not been put on either light. The panel's row
+also holds `ends: false`, and the ends line is the only line the clock writes — the decoded 256 × 64 frame
+carries a top bar filled to 64%, then `64%`, `39M` and `HERMES MK4`, and no time of day anywhere in it. What
+is proved is the value and where it came from: `clock: 24-hour` with `clock_origin: default` on both
+bindings, which is also how a document that names no clock is read.
+
+**`POST /refresh` was skipped in this deploy, by rule** — it writes the current picture to every light, and a
+deploy's proofs are reads. The log carries no refresh line since the restart (`grep` count 0), which is
+consistent with that and is the absence of evidence rather than proof of it; what the route does is `0.6.0`'s
+business and its entry records the one run it had.
+
+**Two numbers here do not agree with the record above, and neither was written by this install.** The
+`0.6.0` entry closes with a schema-9 document at `008e086f…` holding `America/Denver`; the document this
+install stepped is `497f5dec…` holding `America/Vancouver`, still `timezone_origin: operator`. So the store
+moved between that reading and this deploy, and the zone is one of the things that moved; the record cannot
+say what else did, and this install wrote neither value. The other is the strip: the borrow line this start
+printed says segment 2 is `pixels 14-24`, which is what the module's own snapshot of that light taken at
+`2026-11-19T18:39:03Z` holds, while the controller answers `start 14 stop 20` — and `0.6.0`'s entry already
+recorded `14-20` at `00:31Z`. The controller's answer is the light's; the log line is the snapshot's.
+
+The way back is `/home/robchartier/wled-rollback/0.7.0-e7dd56d/ROLLBACK-0.7.0-e7dd56d.md`: the `0.6.0`
+release is still on the volume as `wled-release-f7d1d2a`, its binary is `05c503b0…` and its bundle
+`c099ec52…`, and **that document has two halves because this release has two** — the schema-9 store copy and
+the `module add` line. Restoring the binary alone leaves the module installed and not starting. One thing in
+it is worth naming here: it says the release it preceded was built from `e7dd56d`, while the directory that
+was actually installed, and the declaration that names it, read `wled-release-8e61d04`. Both commits carry
+`0.7.0` and differ only by the harness removal, which is in no bundle; the archive is of `0.6.0`, so the
+restore is the same either way. The two do not agree, and that is recorded rather than tidied.
+
 ## Two facts a reader has to know
 
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read
