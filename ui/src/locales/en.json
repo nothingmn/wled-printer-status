@@ -23,6 +23,8 @@
 
   "shell.screens": "Screens",
   "shell.pause_everything": "Pause everything",
+  "shell.refresh_everything": "Refresh everything",
+  "shell.refreshing": "Refreshing…",
   "shell.resume_now": "Resume now",
   "shell.stop_writing_for": "stop writing for",
   "shell.cancel": "cancel",
@@ -42,6 +44,18 @@
   "pause.read_failed": "The pause could not be read",
   "pause.failed": "That pause was not accepted",
   "pause.resume_failed": "That resume was not accepted",
+
+  "refresh.heading": "Refresh everything",
+  "refresh.summary": "{refreshed} of {count} refreshed · {skipped} left alone · {failed} not refreshed",
+  "refresh.nothing": "This module is driving nothing, so there is nothing to refresh. Add a printer on the Bindings screen and this button will push the picture to every light it drives.",
+  "refresh.outcome_refreshed": "refreshed",
+  "refresh.outcome_skipped": "left alone",
+  "refresh.outcome_failed": "did not take it",
+  "refresh.outcome_not_reached": "not reached",
+  "refresh.wrote_segments": "segments written",
+  "refresh.wrote_pixels": "pixels pushed",
+  "refresh.hide": "Hide",
+  "refresh.failed": "That refresh was not accepted",
 
   "overview.title": "Overview",
   "overview.summary_lights": "{count, plural, one {# light} other {# lights}}",

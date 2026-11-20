@@ -162,6 +162,7 @@ func TestTheFragmentParses(t *testing.T) {
 		"/preview-frame",
 		"/preview-pattern",
 		"/printers",
+		"/refresh",
 		"/states",
 		"/states/{state}",
 		"/status",

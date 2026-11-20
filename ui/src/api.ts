@@ -332,6 +332,58 @@ export interface PausedBinding {
   forever?: boolean;
 }
 
+/**
+ * One binding's answer to a refresh: the light, the segment of it this module owns, and what the
+ * write did. `RefreshLight` in openapi.json.
+ *
+ * It is one entry per binding because a binding is one segment of one light, which is the whole of
+ * the scope — other segments of the same controller are the operator's own WLED setup and were not
+ * touched. `light` is the controller's route name (its address without the scheme), which is what
+ * matches it to GET /lights and so to the name the light calls itself.
+ */
+export interface RefreshEntry {
+  /** The binding's id on these routes. */
+  binding: string;
+  /** The host's device id for the printer it watches. */
+  printer?: string;
+  /** The controller's name on these routes: its address without the scheme. */
+  light: string;
+  /** The base URL the operator wrote, which is where the light's own page is. */
+  controller: string;
+  /** The segment this binding drives, and -1 for the whole light. */
+  segment: number;
+  /** True when it drives the whole light. */
+  whole: boolean;
+  /**
+   * What the sweep did: the controller took the write, the light was left alone (inside a moment,
+   * holding a state's word, being flashed, or paused), the write failed, or the sweep's own time
+   * ran out before this light.
+   */
+  outcome: 'refreshed' | 'skipped' | 'failed' | 'not-reached';
+  /** On a refreshed binding: a JSON segment body, or pixels this module drew over DDP. */
+  wrote?: 'segments' | 'pixels';
+  /** The sentence behind skipped, failed and not reached, and absent on a refreshed one. */
+  why?: string;
+}
+
+/**
+ * POST /refresh: the whole sweep, one row per binding.
+ *
+ * There is no single "done" in this answer and that is deliberate: a person presses this because a
+ * light is showing something stale, and the useful answer is which lights took the picture and which
+ * did not. `count` is zero on an install driving nothing, which is the case the note explains.
+ */
+export interface RefreshBody {
+  /** The instant the sweep began, RFC 3339 in UTC. */
+  at: string;
+  lights: RefreshEntry[];
+  count: number;
+  refreshed: number;
+  skipped: number;
+  failed: number;
+  note: string;
+}
+
 /** GET /pause: every pause there is, and every binding's own fate. */
 export interface PauseBody {
   now: string;
@@ -908,6 +960,11 @@ const routes = (namespace: string) => {
     pauseBinding: operation('pause-binding', 'PUT', `${base}/bindings/{id}/pause`, 'json', 'application/json'),
     resumeBinding: operation('resume-binding', 'DELETE', `${base}/bindings/{id}/pause`, 'json'),
 
+    // `Refresh everything`, the header's button beside the pause: every binding the module drives,
+    // written from the reading taken as the sweep runs, whether or not the picture changed. It has
+    // no body — there is nothing to decide — and it answers per light and per segment.
+    refreshEverything: operation('refresh-everything', 'POST', `${base}/refresh`, 'json'),
+
     // The layout a binding composes with: one row per binding, because a 256x64 panel and a 48-LED
     // strip do not compose the same way and two bindings on one light can be laid out differently.
     // The list is keyed on the light and the write on the binding, which is what the screens need.
@@ -1106,6 +1163,13 @@ export const moduleApi = (host: ModuleHost) => {
         { path: { id } },
         host.signal,
       ),
+
+    /**
+     * Writes every binding this module drives, now, from the reading taken as the sweep runs, and
+     * answers what each light did with it. A sweep already running is refused by code
+     * (REFRESH_BUSY) rather than joined: see the refusal's own sentence.
+     */
+    refreshEverything: () => transport.call<RefreshBody>(held.refreshEverything, {}, host.signal),
 
     /** Every binding on one light, each with the layout it composes with and where each value came from. */
     listLayouts: (light: string) =>

@@ -505,6 +505,21 @@ var (
 		fault.ShowDetail,
 		"controller",
 	))
+
+	// RefreshBusy is a second press of `Refresh everything` while a sweep is already running.
+	//
+	// It is a 409 and not a queue: a sweep writes every binding the module drives, one light at a
+	// time, and two of them at once are two writes per light with two answers that disagree about
+	// what the last one did. The press that arrives second is told so, and the button on the screen
+	// is already showing the busy state — this is what holds when two browsers, or a double press on
+	// a page that had not yet been told, arrive together. It names no value: the thing to say is
+	// that a sweep is running, and every binding is in it.
+	RefreshBusy = fault.Register(faultDomain, "REFRESH_BUSY", http.StatusConflict, fault.Document(
+		"A refresh is already running",
+		"Refresh everything writes every binding this module drives, one light at a time, and it answers with what each light did. A second sweep started now would write over the first and neither answer would describe the lights. The detail says which press was taken: the one already in flight. Send this again when it has returned — a light that is slow to answer is named in that answer rather than retried behind it.",
+		fault.RetryAllowed,
+		fault.ShowDetail,
+	))
 )
 
 // mustDomain builds this module's fault domain. A name the sdk refuses is a

@@ -14,7 +14,12 @@
 	//     after it, and the strip scrolls sideways rather than wrapping;
 	//   - `Pause everything` sits in the header of every tab, because it is a panic
 	//     button and not a page feature: it is drawn here, once, above whichever screen
-	//     is showing, so no screen has to remember to carry it.
+	//     is showing, so no screen has to remember to carry it;
+	//   - `Refresh everything` sits immediately to the right of it, drawn here for the
+	//     same reason -- the operator asked for it "on all screens" -- and it is the one
+	//     control in this module whose answer is a list: the route writes every binding
+	//     the module drives and says what each light did with it, so the panel below the
+	//     header is one row per light and per segment and never a single "done".
 	//
 	// The shell's root element is also where the module says which colour scheme its
 	// controls are in (scheme.ts). `color-scheme` inherits, so one declaration here
@@ -29,8 +34,9 @@
 	// are the button primitive, and the two banners are panels.
 	import { onMount } from 'svelte';
 
-	import { lengthText } from './format';
+	import { lengthText, segmentText } from './format';
 	import { heldHost } from './host';
+	import { loadCalledNames } from './lights.svelte';
 	import {
 		LENGTHS,
 		everythingPaused,
@@ -40,9 +46,11 @@
 		refreshPauses,
 		resumeEverything,
 	} from './pause.svelte';
+	import { hideRefresh, outcomeKey, refresh, refreshEverything, wroteKey } from './refresh.svelte';
 	import { colourScheme } from './scheme';
 	import { SCREENS } from './screens';
 	import { Button, Panel, Tabs } from './ui';
+	import LightLink from './light-link.svelte';
 
 	const host = heldHost();
 	const t = host.t;
@@ -64,6 +72,31 @@
 		pauses.failure === null ? '' : `${t(pauses.failure.key)}: ${pauses.failure.problem}`,
 	);
 
+	/** The refresh's refusal, in the same shape and the same place. */
+	const refreshFailure = $derived(
+		refresh.failure === null ? '' : `${t(refresh.failure.key)}: ${refresh.failure.problem}`,
+	);
+
+	/** What the sweep did, in one line: how many of how many took the picture. */
+	const sweep = $derived(
+		refresh.view === null
+			? ''
+			: t('refresh.summary', {
+					refreshed: refresh.view.refreshed,
+					count: refresh.view.count,
+					skipped: refresh.view.skipped,
+					failed: refresh.view.failed,
+				}),
+	);
+
+	/** One row's outcome in the tone it is drawn in: a write, a leaving alone, or a failure. */
+	const outcomeTone = (outcome: string): string =>
+		outcome === 'refreshed'
+			? 'text-wled-text'
+			: outcome === 'skipped'
+				? 'text-wled-text-quiet'
+				: 'text-wled-danger';
+
 	const stopFor = async (length: (typeof LENGTHS)[number]['id']): Promise<void> => {
 		menu = false;
 		await pauseEverything(length);
@@ -71,6 +104,9 @@
 
 	onMount(() => {
 		void refreshPauses();
+		// The names lights call themselves, so a refresh's rows name a light the way every other
+		// screen does: `morpheus (http://10.0.0.136)`. A read that fails leaves the address standing.
+		void loadCalledNames();
 	});
 </script>
 
@@ -91,7 +127,8 @@
 		/>
 
 		<div class="flex min-w-0 flex-1 flex-col gap-section">
-			<!-- The header's panic button: on every tab, because §3 makes it one. -->
+			<!-- The header's two buttons: the panic button §3 puts on every tab, and the refresh
+			     immediately to its right, which the operator asked for on all screens. -->
 			<div class="flex flex-wrap items-center gap-row">
 				{#if paused}
 					<Button variant="secondary" disabled={pauses.busy} onclick={() => void resumeEverything()}>
@@ -107,8 +144,22 @@
 						{t('shell.pause_everything')}
 					</Button>
 				{/if}
+				<!-- The busy state is the control's own words, and `disabled` is what makes a second
+				     press in the same frame impossible from this screen; a press that arrives anyway
+				     — another window, a page not yet told — is refused by the route (REFRESH_BUSY). -->
+				<Button
+					variant="secondary"
+					disabled={refresh.busy}
+					aria-busy={refresh.busy}
+					onclick={() => void refreshEverything()}
+				>
+					{refresh.busy ? t('shell.refreshing') : t('shell.refresh_everything')}
+				</Button>
 				{#if failure !== ''}
 					<span class="text-xs text-wled-danger" role="alert">{failure}</span>
+				{/if}
+				{#if refreshFailure !== ''}
+					<span class="text-xs text-wled-danger" role="alert">{refreshFailure}</span>
 				{/if}
 			</div>
 
@@ -132,6 +183,42 @@
 						<span class="font-medium">{t('shell.paused_heading')}</span>
 						<span class="text-wled-text-quiet">{t('shell.paused_banner', { length: left })}</span>
 					</div>
+				</Panel>
+			{/if}
+
+			<!-- The sweep's answer: one row per light and per segment, never a single "done". A light
+			     left alone or unanswered is named beside its reason, because the one thing this panel
+			     must not do is read as six successes. -->
+			{#if refresh.view !== null}
+				<Panel title={t('refresh.heading')} hint={sweep} data-refresh-answer>
+					{#snippet meta()}
+						<Button variant="ghost" onclick={hideRefresh}>{t('refresh.hide')}</Button>
+					{/snippet}
+					{#if refresh.view.count === 0}
+						<p class="text-xs text-wled-text-quiet">{t('refresh.nothing')}</p>
+					{:else}
+						<ul class="flex flex-col">
+							{#each refresh.view.lights as row (row.binding)}
+								{@const wrote = wroteKey(row.wrote ?? '')}
+								<li
+									class="flex flex-wrap items-baseline gap-row border-b border-wled-line py-row last:border-b-0"
+									data-refresh-binding={row.binding}
+									data-refresh-outcome={row.outcome}
+								>
+									<LightLink name={row.light} address={row.controller} cls="font-medium" />
+									<span class="text-xs text-wled-text-quiet">
+										{segmentText(t, row.segment, undefined)}
+									</span>
+									<span class="ml-auto text-xs {outcomeTone(row.outcome)}">
+										{t(outcomeKey(row.outcome))}{wrote === '' ? '' : ` · ${t(wrote)}`}
+									</span>
+								</li>
+								{#if row.why}
+									<li class="pb-row text-xs text-wled-text-quiet">{row.why}</li>
+								{/if}
+							{/each}
+						</ul>
+					{/if}
 				</Panel>
 			{/if}
 

@@ -261,9 +261,14 @@ func (c watchConfig) start(parent context.Context) (context.CancelFunc, chan str
 
 	for _, r := range runners {
 		targets = append(targets, &previewTarget{
-			pen:   r.pen,
-			where: r.binding.Address,
-			light: lightName(r.binding.Address),
+			pen:     r.pen,
+			drive:   r.drive,
+			where:   r.binding.Address,
+			light:   lightName(r.binding.Address),
+			binding: r.binding.ID,
+			printer: r.binding.DeviceID,
+			segment: r.binding.Segment,
+			whole:   r.binding.Segment < 0,
 		})
 	}
 
@@ -588,11 +593,18 @@ func stateStarts(state string) []time.Time {
 	return starts
 }
 
-// previewTarget is one light POST /preview-* may fire a picture at: the writer that paints it,
-// the controller it writes, and the name a request targets it by, for the sentences the route and
-// the log need.
+// previewTarget is one light a route may act on: the writer that paints it, the driver that
+// composes its frames, the controller it writes, and the name a request targets it by, for the
+// sentences the route and the log need.
+//
+// The two routes that read this set mean different things by "a light": a preview fires a picture
+// at every light the module drives, and a refresh writes every *binding* — one segment of one
+// light — from the picture composed at that moment. So the binding's own facts travel here too, and
+// the driver does, because composing a frame is the driver's work and the frame a refresh writes
+// must be the frame this second, not the one the last tick painted. See refresh.go.
 type previewTarget struct {
 	pen   *writer
+	drive *driver
 	where string
 
 	// light is the name this light answers to on the routes beside these — the controller's
@@ -600,6 +612,14 @@ type previewTarget struct {
 	// preview's `light` parameter names, because a person reading GET /controllers is reading
 	// these names and should not have to translate.
 	light string
+
+	// binding is the binding's id on these routes, printer the host's device id for the machine it
+	// watches, and segment the segment of this light it drives — -1 and whole for the light itself.
+	// They are what a refresh's answer is written per row of.
+	binding string
+	printer string
+	segment int
+	whole   bool
 }
 
 // named reports whether one request's `light` parameter asks for this light. The three spellings a

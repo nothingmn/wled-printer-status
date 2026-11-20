@@ -386,6 +386,15 @@ type writer struct {
 	flashMu   sync.Mutex
 	flashPlan *identifyPlan
 
+	// refreshes is where a refresh leaves one forced repaint for this writer's goroutine, and
+	// nothing else: the steady pass deliberately skips a write whose picture has not changed, so
+	// the whole point of the button is a write that goes out anyway. The request is a slot rather
+	// than a flag because the caller has to be answered with what the light did — a light that did
+	// not take the write has to be named as such and not counted as refreshed — and this goroutine
+	// is the only one that talks to this controller, so the write itself has to happen here. See
+	// refresh.go.
+	refreshes chan *refreshCall
+
 	// flashed is set when an identify has just put the light back, so that the steady picture is
 	// painted in the same pass rather than on the heartbeat.
 	//
@@ -474,6 +483,7 @@ func prepare(light strip, logf func(format string, args ...any)) *writer {
 		after:      time.After,
 		wake:       make(chan struct{}, 1),
 		asks:       make(chan *identifyCall, 1),
+		refreshes:  make(chan *refreshCall, 1),
 		record:     recordSend,
 		dialPixels: dialPixels,
 		// A whole light is switched off by a pause, which is the rule and the answer pause.go
@@ -592,6 +602,15 @@ func (w *writer) run(ctx context.Context) {
 		// paused light has to be *refused* with the reason rather than left waiting for a pause
 		// nobody may end. See identify.go.
 		if w.serveIdentify(ctx) {
+			continue
+		}
+
+		// A refresh's forced write, before the pause and before anything else this pass would
+		// paint. It is asked here rather than on the driver's tick because it is a write the steady
+		// pass would skip as "already shown" — the picture has not changed, and going out anyway is
+		// the whole of what the button does — and because a light inside a moment, a word or a pause
+		// has to be *answered* rather than written over: see refresh.go.
+		if w.serveRefresh(ctx) {
 			continue
 		}
 
@@ -2057,6 +2076,19 @@ type driver struct {
 	shown      string
 	shownSince time.Time
 	shownEver  bool
+
+	// now is the clock a refresh composes at. A tick arrives with the instant it is being decided
+	// for and carries it; a refresh has no tick to borrow one from, so it reads the clock here. It
+	// is a field rather than a call so that a test can hand this driver the same clock it hands the
+	// writer, whose holds are judged against it.
+	now func() time.Time
+
+	// refreshes is where a refresh leaves one compose for this driver's goroutine. A frame is
+	// built out of the state this goroutine owns — the state a word is judged against, the
+	// controller's LED count, the colour the store holds for a row — so the second way to compose
+	// a frame would be a second answer to what the light shows. There is one way, and it lives on
+	// this goroutine: see compose.
+	refreshes chan *refreshAsk
 }
 
 // newDriver prepares the reader for one watch. It sends nothing until run is
@@ -2066,10 +2098,14 @@ func newDriver(source readings, pen *writer, light strip, logf func(format strin
 		logf = func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 	}
 
-	return &driver{source: source, writer: pen, light: light, logf: logf, tick: tickEvery, pub: publish}
+	return &driver{source: source, writer: pen, light: light, logf: logf, tick: tickEvery, pub: publish,
+		now: time.Now, refreshes: make(chan *refreshAsk, 1)}
 }
 
 // run decides a frame on every tick until ctx ends and hands it to the writer.
+//
+// A refresh is served between two ticks, on this same goroutine, because composing a frame is
+// this goroutine's work: see compose.
 func (d *driver) run(ctx context.Context) {
 	ticker := time.NewTicker(d.tick)
 	defer ticker.Stop()
@@ -2080,6 +2116,8 @@ func (d *driver) run(ctx context.Context) {
 			return
 		case at := <-ticker.C:
 			d.step(ctx, at)
+		case call := <-d.refreshes:
+			d.serveRefresh(ctx, call)
 		}
 	}
 }
@@ -2103,14 +2141,10 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 	// yet.
 	moments := d.note(snapshot)
 
-	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
-
-	// What the frame is about, and the colour the store has for it. Both are decided here rather
-	// than in the painter because a frame is what /status answers with and what the Overview draws
-	// its thumbnail from: a colour that only reached the pixels would be a page that disagrees with
-	// the wall.
-	shown, since := d.showing(snapshot, frame, at)
-	frame.Colour = d.colourOf(shown, frame.Colour)
+	// What this tick's frame is, the row of the state table it is about, and the moment this module
+	// began showing that state: one call, because a refresh composes a frame the same way and a
+	// second copy of this arithmetic would be a second answer to what the light shows.
+	frame, shown, since := d.compose(snapshot, at)
 
 	// The moment table acts after the frame, on the same tick, so that what a moment shows and what
 	// the steady picture shows are the same colour rules. The event takes the light from the writer
@@ -2124,6 +2158,26 @@ func (d *driver) step(ctx context.Context, at time.Time) {
 
 	d.pub(snapshot, frame)
 	d.writer.submitScene(scene{frame: frame, state: shown, since: since})
+}
+
+// compose is one printer reading as a frame: the picture this moment asks for, the row of the
+// state table it is about, and the moment this module began showing that state.
+//
+// It is the one place a frame is decided. A tick calls it and so does a refresh, which is the
+// difference between the two answers being the same answer and two functions happening to agree:
+// the requirement's own words for the button are a picture "based on the current state that
+// second", so a refresh that re-sent the frame it painted last would be reporting the past.
+//
+// The colour is looked up here rather than left to the painter because a frame is what /status
+// answers with and what the Overview draws its thumbnail from: a colour that only reached the
+// pixels would be a page that disagrees with the wall.
+func (d *driver) compose(snapshot printer.Snapshot, at time.Time) (render.Frame, string, time.Time) {
+	frame := render.Decide(snapshot, at, render.Config{LEDs: d.leds})
+
+	state, since := d.showing(snapshot, frame, at)
+	frame.Colour = d.colourOf(state, frame.Colour)
+
+	return frame, state, since
 }
 
 // showing is the row of the state table this frame is about, and the moment this module began

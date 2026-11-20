@@ -1635,6 +1635,61 @@
         }
       }
     },
+    "/refresh": {
+      "post": {
+        "operationId": "refresh-everything",
+        "summary": "Push the current picture to every light this module drives, now",
+        "description": "The header's button beside the pause. Every binding this module drives is composed again from the printer reading taken as the sweep runs - not from the frame painted last - and written whether or not the light already shows that picture, because the steady pass deliberately skips a write whose content has not changed and forcing that write is the whole of what this button does. The scope is every binding and the segment this module owns on each light: other segments of the same controller are the operator's own WLED setup and are not touched. A light inside a moment, holding a state's word, being flashed by an identify or paused is left alone and answered as skipped with the reason, never reported as refreshed. One light is written at a time, each with its own time limit, so a controller measured answering in seconds rather than milliseconds is named as not reached rather than counted as refreshed. The answer is per light and per segment; there is no single done. The host takes operate_resource on the module's instance before this is called.",
+        "responses": {
+          "200": {
+            "description": "The sweep finished. Every binding is one entry, whether it was refreshed, skipped, failed or not reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {"type": "string", "description": "The instant the sweep began, RFC 3339 in UTC."},
+                    "lights": {
+                      "type": "array",
+                      "description": "One entry per binding, in the operator's order.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "binding": {"type": "string", "description": "The binding's id on these routes."},
+                          "printer": {"type": "string", "description": "The host's device id for the printer it watches."},
+                          "light": {"type": "string", "description": "The controller's name on these routes: its address without the scheme, which is what GET /lights keys."},
+                          "controller": {"type": "string", "description": "The controller's base URL, as the operator wrote it."},
+                          "segment": {"type": "integer", "description": "The segment this binding drives, and -1 for the whole light."},
+                          "whole": {"type": "boolean", "description": "True when it drives the whole light."},
+                          "outcome": {"type": "string", "enum": ["refreshed", "skipped", "failed", "not-reached"], "description": "What the sweep did with this binding: the controller took the write, the light was left alone (inside a moment, holding a word, being flashed, or paused), the write failed, or the sweep's own budget ran out before this light."},
+                          "wrote": {"type": "string", "enum": ["segments", "pixels"], "description": "On a refreshed binding: segments for a JSON body, pixels for a composed panel drawn over DDP."},
+                          "why": {"type": "string", "description": "The sentence behind skipped, failed and not-reached, and absent on a refreshed one."}
+                        },
+                        "required": ["binding", "light", "controller", "segment", "whole", "outcome"]
+                      }
+                    },
+                    "count": {"type": "integer", "description": "How many bindings the sweep covered: zero when the module drives nothing."},
+                    "refreshed": {"type": "integer", "description": "How many of them took the write."},
+                    "skipped": {"type": "integer", "description": "How many were left alone, each with its reason in why."},
+                    "failed": {"type": "integer", "description": "How many did not take the write or were not reached, each named in why."},
+                    "note": {"type": "string", "description": "What the sweep does and does not touch, including that other segments of the same controller were left alone."}
+                  },
+                  "required": ["at", "lights", "count", "refreshed", "skipped", "failed", "note"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A sweep is already running (REFRESH_BUSY). This press was not taken; nothing was written by it, and the answer to the press already in flight describes the lights.",
+            "content": {
+              "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/Refusal"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "read-status",

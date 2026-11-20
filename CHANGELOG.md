@@ -35,6 +35,26 @@ data was on screen behind a `<select>`.
   and the field says so; after that no browser overwrites a stored value, and the operator can change it at any
   time. A browser that reports no zone writes nothing, and a refused save says so plainly and does not render
   as saved.
+- **`POST /refresh` pushes the current picture to every light this module drives, now.** Every binding is
+  composed again from the printer reading taken as the sweep runs — not from the frame painted last — and
+  written whether or not the light already shows it, because the steady pass deliberately skips a write whose
+  content has not changed and forcing that write is the whole of what the button does. The scope is every
+  binding: the segment this module owns on each light, and nothing else on that controller, so the operator's
+  own WLED zones are never touched. The answer is **per light and per segment** — `refreshed`, `skipped`,
+  `failed` or `not-reached`, each with its reason — because the person pressing it is looking at a light that
+  is showing something stale, and a controller that did not answer has to be named rather than counted. One
+  light is written at a time with its own time limit, so a slow controller costs its own row and not the
+  sweep. A light inside a moment, holding a state's word, being flashed by an identify or paused is **left
+  alone and answered as such**: nothing is written under a picture that owns the light, and the answer says
+  which picture. A second press while a sweep runs is refused with `REFRESH_BUSY` and nothing is written by
+  it; an install driving nothing answers that there is nothing to refresh. The same sweep is proved by
+  comparing the forced write against the one the light already took, by leaving a panel mid-moment untouched,
+  and by naming a controller that took no write.
+- **`Refresh everything` sits immediately to the right of `Pause everything` on every screen.** It is drawn in
+  the shell beside the pause, not on a screen, so it is on all of them; while a sweep runs it reads
+  `Refreshing…` and is disabled. The answer is a panel under the header with one row per light — its name and
+  address, the segment, and what happened — and a sentence saying how many of how many took the picture. No
+  screen has to carry it, and no screen can be the one where it is missing.
 
 ### Changed
 

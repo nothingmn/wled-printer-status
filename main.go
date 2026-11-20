@@ -978,6 +978,11 @@ func routes() http.Handler {
 		cache: newFrameCache(),
 	}.mount(mux)
 
+	// `Refresh everything`, the header's second button beside the pause: every binding the module
+	// drives, written from the reading taken at this moment, whether or not the picture changed.
+	// See refresh.go.
+	refreshAPI{}.mount(mux)
+
 	mux.HandleFunc("GET /wled-printer-status", func(w http.ResponseWriter, r *http.Request) {
 		answer(w, http.StatusOK, map[string]any{
 			"message": settings().Message,
