@@ -83,10 +83,15 @@ in [`docs/product-requirements.md`](docs/product-requirements.md).
 
 Three things here are not what a Connect module usually does.
 
-- **The module is driven by its own UI.** Its screens are served by the module and are the only editing
-  surface, and the manifest declares **no `options`** — so the module's page under Settings, Extensions has
-  one tab, its own, and no second and older pane to edit the same data in.
-- **Its configuration lives in the module's own store**, beside the installed module on Prusa Connect's
+- **The module is driven by its own UI**, with one exception: the five light addresses. `module.yaml`
+  declares five `url` options — `light1_address` to `light5_address` — and five matching `egress` entries,
+  because the manifest format cannot name a host the module learns at run time and the marketplace review
+  rightly refused a release that declared no connection at all. **Those five values are the only addresses
+  this module may contact.** The module's own store holds the bindings, segments, layouts, moments and
+  ignore flags keyed by address, but an address in that store which is not one of the five options is not
+  driven, not probed and never written to, and the Bindings screen reports it as refused. The count is a
+  limit and not a default: five empty slots permit nothing.
+- **Everything else lives in the module's own store**, beside the installed module on Prusa Connect's
   writable config volume: bindings, moments, the state table, layout, schedule, pause state and per-light
   snapshots.
 - **That store survives a restart and an upgrade, but not a `module purge` or a fresh install**, which
@@ -94,9 +99,15 @@ Three things here are not what a Connect module usually does.
   configuration to a file you keep outside the module.
 
 The host's settings, which used to carry this configuration, are read once at the first start as a
-migration source and never again — and after this release there are none to read: a fresh install starts on
-the module's own defaults, serves its pages, drives nothing, and its first light is added on the Bindings
-screen. What the light is meant to become is specified in the locked
+migration source and never again. A fresh install starts with five empty slots, serves its pages, and
+drives nothing until a light address is filled in the extension's own settings.
+
+**Migrating from 0.8.0.** Upgrading from 0.8.0? This module can no longer read light addresses from its own
+store: copy each light's address into the extension's own settings — `light1_address` to `light5_address`,
+five slots — and the Lights screen will fill them in. Until you do, nothing is driven, nothing is probed and
+nothing is written to. Adding a light by its address on the Lights screen is gone with the store's authority
+over addresses: that screen now draws the five declared slots, filled or empty, and says where an empty one
+is filled in. What the light is meant to become is specified in the locked
 [`docs/product-requirements.md`](docs/product-requirements.md); the eight screens it describes are design
 mockups, not the product, in [`docs/design/v2/`](docs/design/v2/README.md).
 
@@ -106,7 +117,7 @@ Every route that changes something asks the host whether the person making the c
 anything. The two questions are the host's own words for two different acts, and the difference is a
 permission:
 
-- **Rewriting the configuration** — adding, removing or ignoring a light, creating, replacing or deleting a
+- **Rewriting the configuration** — ignoring or bringing back a light, creating, replacing or deleting a
   binding, a layout, a state word or a moment, adding or removing a brightness window, and setting the zone
   — asks `configure_resource` on this module's instance kind. Only a **manager** holds it.
 - **Acting on a light now** — pause and resume, `POST /refresh`, the three previews, and the identify,
@@ -517,11 +528,11 @@ there: two writers to one controller do interleave, because WLED has one small w
 nothing about concurrent writes. What answers that now is one client per controller with one gate in
 front of it — writes to one box take turns — while each binding still decides its own frame.
 
-The address is **typed in, not discovered**. mDNS does not reach a container on a Docker bridge until the
+The address is **declared, not discovered**. The five `light1_address` … `light5_address` options in the
+extension's own settings are the whole of what this module may contact; it does not browse, and a light it
+was not told about is a light it cannot drive. mDNS does not reach a container on a Docker bridge until the
 host is told to carry it there — [`docs/mdns-in-docker.md`](docs/mdns-in-docker.md) is that change, one
-setting on the host, and the browse it makes possible has been measured working from inside the module's
-own container. What the module does not do yet is browse for lights itself; the address you write is the
-one it uses.
+setting on the host — and browsing for lights on that bridge is not in this build.
 
 ### Two printers, two controllers: the Bindings screen
 

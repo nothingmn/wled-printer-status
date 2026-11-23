@@ -238,8 +238,6 @@ var (
 		"POST /bindings",
 		"PUT /bindings/{id}",
 		"DELETE /bindings/{id}",
-		"POST /lights",
-		"DELETE /lights/{name}",
 		"POST /lights/{name}/ignore",
 		"DELETE /lights/{name}/ignore",
 		"PUT /lights/{light}/moments/{moment}",
@@ -551,7 +549,7 @@ func TestTheQuestionNamesTheKindAndThePerson(t *testing.T) {
 	withHost(t, host)
 
 	// One route of each kind, through the module's own mux.
-	submit(t, requestAs(t, "user:manager", http.MethodPost, "/lights"))
+	submit(t, requestAs(t, "user:manager", http.MethodPost, "/lights/10.0.0.253/ignore"))
 	submit(t, requestAs(t, "user:operator", http.MethodPost, "/refresh"))
 
 	want := []accessapi.CheckParams{
@@ -571,28 +569,32 @@ func TestTheQuestionNamesTheKindAndThePerson(t *testing.T) {
 }
 
 // TestAChangeWithTheQuestionRefusedTouchesNothing is the side effect rather than the answer: a light
-// whose address was sent by a viewer is never probed, and the store is the document it was.
+// a viewer asked to ignore is left exactly as the store had it, and nothing is read from or written
+// to the light.
 func TestAChangeWithTheQuestionRefusedTouchesNothing(t *testing.T) {
 	withHost(t, theLadder())
 
-	under := newLightsUnderTest(t, &probeFleet{answers: map[string]probeAnswer{
+	under := newLightsOverStore(t, &probeFleet{answers: map[string]probeAnswer{
 		lightKey("10.0.0.253"): {info: wled.Info{Name: "CyberDesk", LEDCount: 48}},
-	}})
+	}}, storedConfig{
+		Version: storeVersion,
+		Lights:  []storedLight{{Address: "http://10.0.0.253"}},
+	})
 
 	recorder := httptest.NewRecorder()
-	under.mux.ServeHTTP(recorder, requestAs(t, "user:viewer", http.MethodPost, "/lights",
-		`{"address": "10.0.0.253"}`))
+	under.mux.ServeHTTP(recorder, requestAs(t, "user:viewer", http.MethodPost, "/lights/10.0.0.253/ignore"))
 
 	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("a viewer adding a light answered %d, want 403: %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("a viewer ignoring a light answered %d, want 403: %s", recorder.Code, recorder.Body.String())
 	}
 
 	if len(under.fleet.asked) != 0 {
-		t.Fatalf("nothing may be probed for a caller who may not add a light, and %v was", under.fleet.asked)
+		t.Fatalf("nothing may be probed for a caller who may not ignore a light, and %v was", under.fleet.asked)
 	}
 
-	if lights := under.storedLights(t); len(lights) != 0 {
-		t.Fatalf("the store holds %d lights after a refused add, want none: %+v", len(lights), lights)
+	lights := under.storedLights(t)
+	if len(lights) != 1 || lights[0].Ignored {
+		t.Fatalf("the store holds %+v after a refused ignore, want the light still not ignored", lights)
 	}
 }
 

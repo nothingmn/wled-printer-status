@@ -10,6 +10,33 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## 0.9.0 — 2026-11-23
+
+**The manifest now declares the connections this module makes, and the five declared light addresses are
+the only addresses it may contact.** The marketplace review refused 0.8.0 because the process connects to
+WLED controllers and `module.yaml` declared no `egress`; the format cannot name a host the module learns
+at run time, and the argument for a list-shaped declaration is upstream (prusa3d/prusa-connect#49 and #58).
+So this release adopts the supported shape with a small cap, and makes it true rather than merely declared.
+
+- **`module.yaml` gains `options`: `light1_address` to `light5_address`, each `url` and not required, and
+  one `egress` entry per option with ports 80 and 4048.** The count is a limit and not a default: five empty
+  slots permit nothing. This is a manifest change, so **the operator re-approves the install** — a module
+  updated in place keeps the declaration it was installed with until it is added again.
+- **Those five values are the whole address set.** The module reads them from its settings on every pass;
+  a binding, a light row or a route naming any other address is not driven, not probed and never written to.
+  `GET /bindings` reports such a row under `refused`, with the sentence saying what to do, and the log names
+  it once. The store still holds bindings, segments, layouts, moments and ignore flags keyed by address.
+- **The Lights screen no longer adds or removes a light.** It draws the five declared slots: a filled one
+  with what the light calls itself, its firmware and its pixel count; an empty one saying plainly that it is
+  filled in the extension's own settings. Binding, ignoring and the tests stay, and the lights-with-no-printer
+  list stays. `POST /lights` and `DELETE /lights/{name}` are gone, and a viewer was already refused on both.
+- **`GET /lights` answers `slots` and `slot_count`**, and `lights` carries only declared addresses.
+- **Migrating from 0.8.0 is a one-time, manual step, and it is stated rather than silent.** Upgrading from
+  0.8.0? This module can no longer read light addresses from its own store: copy each light's address into
+  the extension's own settings — `light1_address` to `light5_address`, five slots — and the Lights screen
+  will fill them in. Until you do, nothing is driven, nothing is probed and nothing is written to. The
+  README and the Lights screen's empty state say the same words.
+
 ## 0.8.0 — 2026-11-20
 
 **Every route that changes something now asks the server whether the person making the change may, and

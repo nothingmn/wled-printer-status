@@ -375,8 +375,14 @@ type lightProber interface {
 	Info(ctx context.Context) (wled.Info, error)
 }
 
-// lightsAPI is the Lights screen's own surface: the list, adding one by address, and taking one
-// off.
+// lightsAPI is the Lights screen's own surface: the five declared slots, the lights that fill them,
+// and the ignore flag.
+//
+// There is no route that adds a light and none that removes one. The manifest's five `url` options
+// are the only addresses this module may contact (declared.go), and the extension's own settings
+// are where an operator fills them in; a screen that could add a sixth address would be a screen
+// that made the egress declaration false. Binding, ignoring and testing stay here, because all
+// three act on a light the declaration already names.
 //
 // It is a value with its own fields for the reason deviceAPI is: a test runs the same handlers over
 // a store of its own and a light that needs no network.
@@ -394,6 +400,40 @@ type lightsAPI struct {
 
 	// now dates a reading. Nil means time.Now.
 	now func() time.Time
+
+	// slots is the declaration in force: five entries, empty ones included. Nil means this
+	// instance has no declaration — a module built before the manifest carried options, and the
+	// tests that supply their own store — and the list is then the store's rows, as it was before
+	// the cap.
+	slots func() []declaredLight
+
+	// permits answers whether one address may be contacted. Nil means the same as slots' nil: no
+	// declaration is in force. The process sets it to addressDeclared, so an installed module
+	// always answers from its options and an empty answer permits nothing.
+	permits func(string) bool
+}
+
+// declaredSlots is the five slots this screen draws, or nil for an instance that has no
+// declaration in force.
+func (api lightsAPI) declaredSlots() []declaredLight {
+	if api.slots != nil {
+		return api.slots()
+	}
+
+	if api.permits != nil {
+		return declaredNow()
+	}
+
+	return nil
+}
+
+// allowed answers whether one address may be contacted, with the same nil rule as the two fields.
+func (api lightsAPI) allowed(address string) bool {
+	if api.permits == nil {
+		return true
+	}
+
+	return api.permits(address)
 }
 
 // probeFor is the client for one address: the test's when one was supplied, and the process's own
@@ -432,14 +472,10 @@ func (api lightsAPI) at() time.Time {
 // /devices/{name}/presets, POST /devices/{name}/identify — because those routes are about the same
 // light and renaming them would break every screen that already holds a path.
 func (api lightsAPI) mount(mux *http.ServeMux) {
-	// Every light this module knows, whether or not a binding sits on it.
+	// The five declared slots, and every light of those that has answered. A binding is not
+	// needed for a light to be listed: the declaration is what makes it a light this module may
+	// contact, and a slot is filled in the extension's own settings rather than here.
 	mux.HandleFunc("GET /lights", api.listLights)
-
-	// A light added by its address: probed first, and stored only if a light answered.
-	mutating(mux, "POST /lights", actionConfigureResource, api.addLight)
-
-	// A light taken off the list, refused while a binding still drives it.
-	mutating(mux, "DELETE /lights/{name}", actionConfigureResource, api.removeLight)
 
 	// A light put out of the way — kept, and left out of every list that offers one — and the
 	// same light brought back. The two verbs are the two decisions, in the shape this surface
@@ -509,8 +545,53 @@ func lightAnswerOf(light storedLight) lightAnswer {
 	return said
 }
 
+// lightSlot is one of the five declared addresses, as the Lights screen draws it: the slot number,
+// whether an address fills it, and — when it does — the light's own answer if it has ever been read
+// here.
+//
+// It is the declaration and not the store. A slot is empty because the operator has not filled that
+// option in yet, which is a different fact from a light this module has never managed to read, and
+// the two carry different notes.
+type lightSlot struct {
+	// Slot is the slot's number, counting from one: `light1_address` is slot 1.
+	Slot int `json:"slot"`
+
+	// Filled says the option names an address.
+	Filled bool `json:"filled"`
+
+	// Address is the address as this module dials it, absent on an empty slot.
+	Address string `json:"address,omitempty"`
+
+	// CallsItself, Firmware, Pixels, Kind, Width and Height are the light's own answer, absent
+	// together until it has been read here.
+	CallsItself string `json:"calls_itself,omitempty"`
+	Firmware    string `json:"firmware,omitempty"`
+	Pixels      int    `json:"pixels,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+
+	// ProbedAt is when those facts were read, absent until the light has answered.
+	ProbedAt string `json:"probed_at,omitempty"`
+
+	// FactsKnown is true when the facts above are the light's own answer.
+	FactsKnown bool `json:"facts_known"`
+
+	// Note is what a reader must not have to assume: an empty slot says where it is filled in, and
+	// a filled one that has not answered says so.
+	Note string `json:"note,omitempty"`
+}
+
 // lightsAnswer is GET /lights.
 type lightsAnswer struct {
+	// Slots is always the five declared slots, in order, empty ones included. A module whose
+	// settings name none answers five empty entries rather than nothing: the cap is the shape of
+	// the feature, and a person has to be able to see the slot he is meant to fill in.
+	Slots []lightSlot `json:"slots"`
+
+	// SlotCount is how many slots the manifest declares.
+	SlotCount int `json:"slot_count"`
+
 	Lights []lightAnswer `json:"lights"`
 	Count  int           `json:"count"`
 
@@ -526,25 +607,39 @@ type lightsAnswer struct {
 }
 
 const (
-	// lightsPersistedNote is read by a page that has lights.
-	lightsPersistedNote = "Finding lights on the network needs mDNS from your LAN to reach this container: the host has to " +
-		"pass that traffic across its Docker bridge (docs/mdns-in-docker.md). This module does not browse for them yet, " +
-		"so the way to add a light today is to type its address."
+	// lightsPersistedNote is read by a page that has at least one filled slot.
+	lightsPersistedNote = "The five addresses this module may contact are the extension's own settings, light1_address to " +
+		"light5_address. A light is bound, ignored and tested here; its address is filled in there. A settings save " +
+		"restarts this module."
 
-	// lightsEmptyNote is the same fact for a list with nothing in it, plus the thing a person can
-	// do about it now — because an empty screen with no sentence reads as a broken screen.
-	lightsEmptyNote = "This module knows no lights yet. Finding lights on the network needs mDNS from your LAN to reach this " +
-		"container: the host has to pass that traffic across its Docker bridge (docs/mdns-in-docker.md). Until this module " +
-		"browses, type a light's address and it will be read and added."
+	// lightsEmptyNote is the same fact for a page with no filled slot at all.
+	lightsEmptyNote = "None of the five light addresses is filled in, so this module is driving nothing. Open the " +
+		"extension's own settings and set light1_address to light5_address — one WLED controller's address each, such as " +
+		"http://10.0.0.136. The addresses are a fixed five-slot declaration because the manifest's egress block cannot name " +
+		"a host this module learns at run time (prusa3d/prusa-connect#49 and #58); filling a slot is what makes that host " +
+		"reachable, and nothing else is."
+
+	// lightsUpgradeNote is the one-time migration from a release that kept addresses in its store.
+	lightsUpgradeNote = "Upgrading from 0.8.0? This module can no longer read light addresses from its own store: copy " +
+		"each light's address into the extension's own settings — light1_address to light5_address, five slots — and this " +
+		"screen will fill them in. Until you do, nothing is driven, nothing is probed and nothing is written to."
 )
 
-// listLights is GET /lights: every light this module knows, in the operator's order.
+// listLights is GET /lights: the five declared slots, and the lights that fill them.
 //
 // It makes no read of any light. A light that is unplugged must not make this list slow or empty:
 // what it said when it last answered is the row, and `probed_at` is the age of that reading.
+//
+// Every row in `lights` is a declared address. A store row naming anything else is not a light this
+// module may contact, and it is left out rather than drawn as a card that could never be read: the
+// declaration is the list. An instance with no declaration in force — the shape of every build
+// before 0.9.0, and of the tests — answers the store's rows as it always did.
 func (api lightsAPI) listLights(w http.ResponseWriter, r *http.Request) {
 	if api.tables == nil {
+		slots := api.slotAnswers(nil)
+
 		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false,
+			Slots: slots, SlotCount: len(slots),
 			Note: noStoreNote + " " + lightsPersistedNote})
 
 		return
@@ -553,10 +648,12 @@ func (api lightsAPI) listLights(w http.ResponseWriter, r *http.Request) {
 	config, err := api.tables.load()
 	if err != nil {
 		// A list this module cannot read is a module with no store, which is not an error for the
-		// screen: it says so, and the add form's own refusal says why nothing can be kept. The
-		// sentence about discovery is still here, because it is true whether or not a document
-		// could be read, and a screen with no sentence about it reads as a screen that cannot say.
+		// screen: it says so. The sentence about where addresses live is still here, because it
+		// is true whether or not a document could be read.
+		slots := api.slotAnswers(nil)
+
 		answer(w, http.StatusOK, lightsAnswer{Lights: []lightAnswer{}, Count: 0, Persisted: false,
+			Slots: slots, SlotCount: len(slots),
 			Note: noStoreNote + " " + lightsPersistedNote})
 
 		return
@@ -565,203 +662,89 @@ func (api lightsAPI) listLights(w http.ResponseWriter, r *http.Request) {
 	known := make([]lightAnswer, 0, len(config.Lights))
 
 	for _, light := range config.Lights {
+		if !api.allowed(light.Address) {
+			continue
+		}
+
 		known = append(known, lightAnswerOf(light))
 	}
 
+	slots := api.slotAnswers(config.Lights)
+
 	note := lightsPersistedNote
-	if len(known) == 0 {
-		note = lightsEmptyNote
-	}
 
-	answer(w, http.StatusOK, lightsAnswer{Lights: known, Count: len(known), Persisted: true, Note: note})
-}
+	filled := false
 
-// lightRequest is the body POST /lights accepts: one address and nothing else.
-type lightRequest struct {
-	Address string `json:"address"`
-}
-
-// readLightRequest is one request body, and what is wrong with it.
-func readLightRequest(r *http.Request) (lightRequest, error) {
-	var sent lightRequest
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(&sent); err != nil {
-		return sent, fmt.Errorf("the body is not a light to add: %w: write address, and nothing else", err)
-	}
-
-	if strings.TrimSpace(sent.Address) == "" {
-		return sent, errors.New("the body names no address: write the light's IP address, such as 10.0.0.253, in address")
-	}
-
-	return sent, nil
-}
-
-// addLight is POST /lights: read the light at one address, and keep what answered.
-//
-// The order is the whole of it. The address is normalised and judged before anything is dialled, so
-// a typo is a refusal rather than a three-second wait. The list is checked before the light is
-// read, so adding a light twice says so instead of probing a light that is already here. And the
-// row is written only after the light answered with a WLED controller's own facts: a document with
-// a phantom light in it is worse than no row at all, because the card draws and never fills.
-func (api lightsAPI) addLight(w http.ResponseWriter, r *http.Request) {
-	if api.tables == nil {
-		refuse(w, r, StoreUnavailable.New(noStoreNote))
-
-		return
-	}
-
-	sent, err := readLightRequest(r)
-	if err != nil {
-		refuse(w, r, LightBodyInvalid.New(err.Error()))
-
-		return
-	}
-
-	address, err := normaliseLightAddress(sent.Address)
-	if err != nil {
-		refuse(w, r, LightBodyInvalid.New(err.Error()).
-			With(fault.StringParam("address", strings.TrimSpace(sent.Address))))
-
-		return
-	}
-
-	// The list, before the light: a light already here is a typo worth one line, not a probe.
-	if known, ok := api.tables.knownLightAt(address); ok {
-		refuse(w, r, LightAlreadyKnown.New(fmt.Sprintf(
-			"%s is already on the list, as %s. Nothing was added; read GET /lights for the row it holds.",
-			address, known.name())).With(fault.StringParam("address", address)))
-
-		return
-	}
-
-	light, refusal := api.probeLight(r.Context(), address)
-	if refusal != nil {
-		refuse(w, r, refusal)
-
-		return
-	}
-
-	if _, err := api.tables.revise(func(config *storedConfig) {
-		// Appended rather than replaced, and only when the row is not there: two requests arriving
-		// together both pass the check above, and the second must not write a second row.
-		if !holdsLight(config.Lights, light.key()) {
-			config.Lights = append(config.Lights, light)
+	for _, slot := range slots {
+		if slot.Filled {
+			filled = true
 		}
-	}); err != nil {
-		refuse(w, r, StoreUnavailable.New(fmt.Sprintf(
-			"%s answered and was read, but this module could not keep it: %v. Nothing was added.", address, err)))
-
-		return
 	}
 
-	answer(w, http.StatusCreated, map[string]any{
-		"light": lightAnswerOf(light),
-		"note": "The light was read before it was kept: the name it calls itself, its firmware, its pixel count and its " +
-			"shape above are its own answer, taken a moment ago. Adding a light is not the same as showing a printer on " +
-			"it — a binding is what does that, on the Bindings screen.",
+	if !filled {
+		note = lightsEmptyNote + " " + lightsUpgradeNote
+	}
+
+	answer(w, http.StatusOK, lightsAnswer{
+		Lights:    known,
+		Count:     len(known),
+		Slots:     slots,
+		SlotCount: len(slots),
+		Persisted: true,
+		Note:      note,
 	})
 }
 
-// probeLight reads one light and answers the row to keep, or the refusal that says what happened.
-//
-// The refusals are the three ways an address is not a light: nothing answered, something answered
-// that is not a WLED controller, and the address is one this module cannot build a client for —
-// though that last one is caught before this is called.
-func (api lightsAPI) probeLight(ctx context.Context, address string) (storedLight, *fault.Fault) {
-	light, err := api.probeFor(address)
-	if err != nil {
-		return storedLight{}, LightRefused.New(fmt.Sprintf(
-			"%s is not an address this module can read a light at: %v. Nothing was added.", address, err)).
-			With(fault.StringParam("address", address))
-	}
+// slotAnswers is the declaration as the screen draws it, with each filled slot's facts read from
+// the store row for that address.
+func (api lightsAPI) slotAnswers(stored []storedLight) []lightSlot {
+	declared := api.declaredSlots()
 
-	read, cancel := context.WithTimeout(ctx, api.waited())
-	defer cancel()
+	out := make([]lightSlot, 0, len(declared))
 
-	info, err := light.Info(read)
-	if err != nil {
-		return storedLight{}, LightRefused.New(fmt.Sprintf(
-			"Nothing answered at %s, so there is no light there to add: %v. Check the address, and that the light is "+
-				"powered and on this network. Nothing was added.", address, err)).
-			With(fault.StringParam("address", address))
-	}
+	for _, slot := range declared {
+		said := lightSlot{Slot: slot.Slot, Filled: slot.Filled}
 
-	if ok, why := answeredAsALight(info); !ok {
-		return storedLight{}, LightRefused.New(why + " Nothing was added.").
-			With(fault.StringParam("address", address))
-	}
+		if !slot.Filled {
+			said.Note = fmt.Sprintf(
+				"Slot %d is empty. Fill it in the extension's own settings — light%d_address — not on this screen; "+
+					"this module reads nothing at that slot until it has an address.", slot.Slot, slot.Slot)
 
-	return lightOf(address, info, api.at()), nil
-}
+			out = append(out, said)
 
-// removeLight is DELETE /lights/{name}: take one light off the list.
-//
-// It refuses while a binding still names the light, and names the bindings. A binding is the
-// module's promise to write to that light: removing the light under it would leave the writer with
-// an address nothing on the list holds, and a person who meant to stop a printer being shown would
-// have deleted the wrong card.
-func (api lightsAPI) removeLight(w http.ResponseWriter, r *http.Request) {
-	if api.tables == nil {
-		refuse(w, r, StoreUnavailable.New(noStoreNote))
+			continue
+		}
 
-		return
-	}
+		said.Address = slot.Address
 
-	named := strings.TrimSpace(r.PathValue("name"))
+		key := lightKey(slot.Address)
 
-	known, ok := api.tables.knownLightNamed(named)
-	if !ok {
-		refuse(w, r, LightNotFound.New(fmt.Sprintf(
-			"This module knows no light called %q. Read GET /lights for the ones it knows.", named)).
-			With(fault.StringParam("light", named)))
-
-		return
-	}
-
-	users, err := api.bindingsOn(known)
-	if err != nil {
-		refuse(w, r, StoreUnavailable.New(err.Error()))
-
-		return
-	}
-
-	if len(users) > 0 {
-		refuse(w, r, LightRefused.New(fmt.Sprintf(
-			"%s is shown by %s, so it cannot be removed: a binding is this module's promise to write to that light, "+
-				"and removing it here would leave the writer with an address the list does not hold. Delete the binding "+
-				"on the Bindings screen first, and then the light. Nothing was changed.",
-			known.name(), strings.Join(users, ", "))).
-			With(fault.StringParam("light", known.name())))
-
-		return
-	}
-
-	if _, err := api.tables.revise(func(config *storedConfig) {
-		kept := make([]storedLight, 0, len(config.Lights))
-
-		for _, one := range config.Lights {
-			if one.key() != known.key() {
-				kept = append(kept, one)
+		for _, light := range stored {
+			if light.key() != key {
+				continue
 			}
+
+			said.CallsItself = light.CallsItself
+			said.Firmware = light.Firmware
+			said.Pixels = light.Pixels
+			said.Kind = light.Kind
+			said.Width = light.Width
+			said.Height = light.Height
+			said.ProbedAt = light.ProbedAt
+			said.FactsKnown = light.read()
+
+			break
 		}
 
-		config.Lights = kept
-	}); err != nil {
-		refuse(w, r, StoreUnavailable.New(fmt.Sprintf(
-			"%s was not removed: %v. Nothing was changed.", known.name(), err)))
+		if !said.FactsKnown {
+			said.Note = "This slot names an address, and this module has not read a light there yet, so its own name, " +
+				"firmware and shape are not known here. The address is. It is read as soon as it answers."
+		}
 
-		return
+		out = append(out, said)
 	}
 
-	answer(w, http.StatusOK, map[string]any{
-		"deleted": known.name(),
-		"address": known.Address,
-		"note": "The light was taken off the list. Its snapshots are still in this module's data directory, " +
-			"where they are the last copy of a light nobody can read any more.",
-	})
+	return out
 }
 
 // ignoreLight is POST /lights/{name}/ignore: put one light out of the way without forgetting it.
@@ -940,13 +923,15 @@ func holdsLight(lights []storedLight, key string) bool {
 	return false
 }
 
-// rememberLightFacts writes what a reading of a light learned into its row, when the row is one
-// this module already holds.
+// rememberLightFacts writes what a reading of a light learned into its row, adding the row when
+// this module has no row for that address yet.
 //
-// It is how a light keeps its facts current without a timer: takeSnapshot already reads a light's
-// facts to name the copy it keeps (devicesapi.go), and a reading that has been taken is a reading
-// worth keeping. A light this module does not know is not added by it — adding is a person's act,
-// and a read must not smuggle one in.
+// It is how a light keeps its facts current without a timer: fillLightFacts reads the declared
+// addresses at start, takeSnapshot already reads a light's facts to name the copy it keeps
+// (devicesapi.go), and a reading that has been taken is a reading worth keeping. The row it adds is
+// for an address the caller has already proved is one of the declared slots — the declaration is
+// what makes a light this module may contact, so a reading of one is a reading worth recording, and
+// a route cannot reach any other address to smuggle a row in.
 func rememberLightFacts(tables *configTables, address string, info wled.Info, at time.Time) {
 	if tables == nil || strings.TrimSpace(info.Version) == "" {
 		return
@@ -964,19 +949,23 @@ func rememberLightFacts(tables *configTables, address string, info wled.Info, at
 
 			return
 		}
+
+		config.Lights = append(config.Lights, lightOf(address, info, at))
 	})
 }
 
-// fillLightFacts reads every light the module knows but has never read, and keeps what answered.
+// fillLightFacts reads every declared address whose facts are not known yet, and keeps what
+// answered.
 //
 // It runs in the background of a start, which is why it is written to be safe to lose: a light that
-// does not answer keeps its row with no facts on it, the card draws the address and says the facts
-// have not been read yet, and nothing waits on this. A light that does answer stops saying that.
+// does not answer keeps its slot with no facts on it, the card draws the address and says the facts
+// have not been read yet, and nothing waits on this. A light that does answer stops saying that,
+// and its row is added to the store if the declaration named an address the store had never held
+// — which is what a fresh install looks like the moment an operator fills the first slot in.
 //
-// It is a start's work and not a timer's: the document is one small file, a light's facts change
-// when somebody reflashes it, and a reading taken at start plus one taken whenever a snapshot is
-// taken (rememberLightFacts) covers both without a loop talking to a controller every minute.
-func fillLightFacts(ctx context.Context, tables *configTables, newLight func(string) (lightProber, error), log func(string, ...any)) {
+// declared is the five slots. Nil means no declaration is in force, and the store's own rows are
+// then read exactly as they were before the cap, which is what a test with a store of its own gets.
+func fillLightFacts(ctx context.Context, tables *configTables, newLight func(string) (lightProber, error), declared []declaredLight, log func(string, ...any)) {
 	if tables == nil {
 		return
 	}
@@ -986,14 +975,46 @@ func fillLightFacts(ctx context.Context, tables *configTables, newLight func(str
 		return
 	}
 
-	for _, light := range config.Lights {
-		if light.read() || strings.TrimSpace(light.Address) == "" {
-			continue
-		}
+	wanted := make([]string, 0, len(config.Lights))
 
+	if declared == nil {
+		for _, light := range config.Lights {
+			if light.read() || strings.TrimSpace(light.Address) == "" {
+				continue
+			}
+
+			wanted = append(wanted, light.Address)
+		}
+	} else {
+		for _, slot := range declared {
+			if !slot.Filled {
+				continue
+			}
+
+			key := lightKey(slot.Address)
+
+			known := false
+
+			for _, light := range config.Lights {
+				if light.key() != key {
+					continue
+				}
+
+				known = light.read()
+
+				break
+			}
+
+			if !known {
+				wanted = append(wanted, slot.Address)
+			}
+		}
+	}
+
+	for _, address := range wanted {
 		read, cancel := context.WithTimeout(ctx, lightProbeTimeout)
 
-		prober, err := newLight(light.Address)
+		prober, err := newLight(address)
 		if err != nil {
 			cancel()
 
@@ -1012,10 +1033,10 @@ func fillLightFacts(ctx context.Context, tables *configTables, newLight func(str
 			continue
 		}
 
-		rememberLightFacts(tables, light.Address, info, time.Now())
+		rememberLightFacts(tables, address, info, time.Now())
 
 		if log != nil {
-			log("%s: %s answered, and what it says about itself is now in the store", name, light.name())
+			log("%s: %s answered, and what it says about itself is now in the store", name, lightName(address))
 		}
 	}
 }

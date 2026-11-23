@@ -96,14 +96,136 @@ type runner struct {
 	// Nil means the module was granted no directory and runs from its settings, which is how this
 	// module behaved before the store existed.
 	tables *configTables
+
+	// permits answers whether one address is one of the settings' declared light slots. Nil means
+	// no declaration is in force — a module built before the manifest carried options, and every
+	// test that builds a runner of its own — and every address is then permitted exactly as it was.
+	// The process sets it from the settings block before the first watch is built
+	// (configure, setPermits), so on an installed module there is always an answer and an empty
+	// answer permits nothing.
+	permits func(string) bool
 }
 
-// set is the set in force, as a copy: the caller gets the bindings and not the lock.
-func (r *runner) set() bindings {
+// setPermits records the declaration this instance is running under: the five option values the
+// host just sent. It is called before apply, so the first watch is built from the settings block
+// being configured and not from the previous one.
+func (r *runner) setPermits(permits func(string) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.permits = permits
+}
+
+// permitsAddress is the one question every caller asks before building a client or driving a
+// binding. No declaration in force means the module has no options to enforce, which is the shape
+// of every build before 0.9.0 and of the tests that supply their own watch.
+func (r *runner) permitsAddress(address string) bool {
+	r.mu.Lock()
+	permits := r.permits
+	r.mu.Unlock()
+
+	if permits == nil {
+		return true
+	}
+
+	return permits(address)
+}
+
+// permittedOnly is one set reduced to the bindings whose address is one of the declared slots. A
+// binding left out is named in the log with the sentence a person reads on a screen, because a
+// module that quietly stopped driving a light is the failure this whole declaration exists to
+// avoid saying out loud.
+func (r *runner) permittedOnly(set bindings) bindings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.permittedOnlyLocked(set)
+}
+
+// permittedOnlyLocked is permittedOnly for a caller already holding the lock.
+func (r *runner) permittedOnlyLocked(set bindings) bindings {
+	if r.permits == nil {
+		return set
+	}
+
+	kept := make(bindings, 0, len(set))
+
+	for _, b := range set {
+		if r.permits(b.Address) {
+			kept = append(kept, b)
+
+			continue
+		}
+
+		r.logf("%s: binding %s is not driven: %s", name, b.ID, refusedReason(b.Address))
+	}
+
+	return kept
+}
+
+// refused is every binding in the set whose address is not a declared slot, in the operator's
+// order. It is what GET /bindings reports beside the running set so that a refused binding is a
+// thing a person can see, name and delete rather than a row that silently stopped working.
+func (r *runner) refused() bindings {
+	r.mu.Lock()
+	held, permits := cloneBindings(r.held), r.permits
+	r.mu.Unlock()
+
+	if permits == nil {
+		return nil
+	}
+
+	out := make(bindings, 0, len(held))
+
+	for _, b := range held {
+		if !permits(b.Address) {
+			out = append(out, b)
+		}
+	}
+
+	return out
+}
+
+// all is the whole set the store holds, refused bindings included. The routes that read or edit a
+// binding use this one: a binding whose address is no longer declared is exactly the row a person
+// has to find and change or delete, so it must not vanish from the editor.
+func (r *runner) all() bindings {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	return cloneBindings(r.held)
+}
+
+// set is the set in force, as a copy: the caller gets the bindings and not the lock.
+//
+// It is the permitted set — the bindings whose address is one of the declared light slots — and not
+// everything the store holds. Every listing and every client built from this answer is therefore
+// already inside the declaration: GET /controllers, the layout and moment tables, the frames the
+// status route reads, and the devices routes. A refused binding is not in here; it is in all() and
+// refused(), which are the editor's answers.
+func (r *runner) set() bindings {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.permittedLocked(r.held)
+}
+
+// permittedLocked is set()'s filter for a caller already holding the lock. It does not log: a read
+// route that answered five times a minute would turn one refusal into a log of its own.
+func (r *runner) permittedLocked(set bindings) bindings {
+	if r.permits == nil {
+		return cloneBindings(set)
+	}
+
+	kept := make(bindings, 0, len(set))
+
+	for _, b := range set {
+		if r.permits(b.Address) {
+			kept = append(kept, b)
+		}
+	}
+
+	return kept
 }
 
 // setOrigin records where the set in force came from. configure says which of its two shapes
@@ -317,7 +439,20 @@ func (r *runner) applyLocked(parent context.Context, next bindings) error {
 		return nil
 	}
 
-	cancel, done, err := r.build(parent, next)
+	// What actually runs is the declared part of the set. The whole set stays in held so that a
+	// binding refused by the declaration is still a row a person can see, change or delete; it is
+	// simply never handed to a writer.
+	run := r.permittedOnlyLocked(next)
+
+	r.held = next
+
+	if len(run) == 0 {
+		r.logf("%s: %d binding%s in the store, and none names one of the declared light addresses, so this module is driving nothing", name, len(next), bindingsPlural(next))
+
+		return nil
+	}
+
+	cancel, done, err := r.build(parent, run)
 	if err == nil {
 		r.cancel, r.done, r.held = cancel, done, next
 
@@ -327,7 +462,7 @@ func (r *runner) applyLocked(parent context.Context, next bindings) error {
 	// Put back what was running. A change that cannot start is a change that did not happen,
 	// and the operator's light must not be the thing that pays for it.
 	if len(previous) > 0 {
-		if again, back, rebuildErr := r.build(parent, previous); rebuildErr == nil {
+		if again, back, rebuildErr := r.build(parent, r.permittedOnlyLocked(previous)); rebuildErr == nil {
 			r.cancel, r.done, r.held = again, back, previous
 			r.logf("%s: the change was refused and the set it would have replaced is running again: %v",
 				name, err)
@@ -342,6 +477,15 @@ func (r *runner) applyLocked(parent context.Context, next bindings) error {
 	r.held = nil
 
 	return err
+}
+
+// bindingsPlural is the one letter this file needs, so that a log line reads as a sentence.
+func bindingsPlural(set bindings) string {
+	if len(set) == 1 {
+		return ""
+	}
+
+	return "s"
 }
 
 // stopLocked cancels the watch in force and waits for its goroutines, including every

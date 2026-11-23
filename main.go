@@ -126,7 +126,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.8.0")
+	release = extension.Version("0.9.0")
 
 	// repository is where this module's source lives. It is published with the build facts rather
 	// than written into the browser bundle, so the one address a screen links to comes off the
@@ -197,6 +197,24 @@ const (
 // a start with nothing configured runs on. The fields exist for the migration §4 describes and
 // for an install granted no data directory.
 type Settings struct {
+	// Light1Address … Light5Address are the five addresses this module may ever
+	// connect to, and the only place a light's address comes from. They are the
+	// manifest's `options` block, declared there so that every `egress` entry can
+	// name the host it reaches through one of them; the manifest has no form for a
+	// list or for a range, and the argument for one is upstream
+	// (prusa3d/prusa-connect#49 and #58).
+	//
+	// They are read every time the settings are read, and the store's own rows are
+	// never consulted for the question "may this module contact this address". A
+	// binding, a light row or a route that names anything else is refused in words
+	// and never dialled (declared.go). The five are a limit and not a default: an
+	// empty slot permits nothing.
+	Light1Address string `json:"light1_address"`
+	Light2Address string `json:"light2_address"`
+	Light3Address string `json:"light3_address"`
+	Light4Address string `json:"light4_address"`
+	Light5Address string `json:"light5_address"`
+
 	// Message is the line GET /wled-printer-status answers with.
 	Message string `json:"message"`
 
@@ -309,6 +327,10 @@ type Settings struct {
 // nothing reads would refuse a start over a field that has no effect. Each line of a
 // list is judged where it is parsed, which is where a refusal can name the line.
 func (s Settings) validate() error {
+	if err := s.checkDeclaredAddresses(); err != nil {
+		return err
+	}
+
 	if err := s.checkSchedule(); err != nil {
 		return err
 	}
@@ -612,6 +634,12 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 
 	live.setSchedule(schedule)
 
+	// The five addresses this instance may contact. It is recorded before anything is built, from
+	// the settings block being configured and not from the one before it: the manifest's options are
+	// the whole of the address set (declared.go), and a binding whose address is not one of them is
+	// never handed to a writer.
+	live.setPermits(sent.declares)
+
 	// The arrangement of a panel, in the one form the writers read. A layout this build cannot act
 	// on has already refused the start in validate, before anything is built and before the light
 	// is touched; this is the reading the writers are given.
@@ -661,7 +689,7 @@ func configure(ctx context.Context, sent Settings, grants wirerpc.Grants) error 
 	// unplugged is not a reason to be slow, and fillLightFacts keeps nothing it could not read.
 	go fillLightFacts(sessionCtx, tables, func(address string) (lightProber, error) {
 		return wled.New(address)
-	}, logf)
+	}, sent.DeclaredLights(), logf)
 
 	held.Store(&sent)
 
@@ -955,6 +983,9 @@ func routes() http.Handler {
 		// module's own document rather than into a list this process happens to be holding.
 		// See reviseStored.
 		tables: tables,
+		// The declaration, so a route that answers a controller's segments cannot reach an
+		// address the settings do not name. See declared.go.
+		permits: addressDeclared,
 	}.mount(mux)
 
 	// The two tables the screens edit, on the same terms: the same watch, the same host list, and
@@ -971,11 +1002,19 @@ func routes() http.Handler {
 	deviceAPI{
 		live:   live,
 		tables: tables,
+		// A snapshot, a preset list, a restore and an identify all read or write one light, so
+		// all four ask the declaration first.
+		permits: addressDeclared,
 	}.mount(mux)
 
-	// The lights this module knows: the list a screen draws a card per light from, a light added by
-	// its address, and a light taken off the list. See lights.go.
-	lightsAPI{tables: tables}.mount(mux)
+	// The five declared light slots, and the lights that fill them: the list a screen draws a card
+	// per light from, and the ignore flag. There is no add and no remove — the addresses are the
+	// extension's own settings. See lights.go.
+	lightsAPI{
+		tables:  tables,
+		slots:   declaredNow,
+		permits: addressDeclared,
+	}.mount(mux)
 
 	// The Overview screen's thumbnails: one reconstructed picture per binding, drawn by the same
 	// code that draws the light and cheap enough to ask for on every draw. See framesapi.go.

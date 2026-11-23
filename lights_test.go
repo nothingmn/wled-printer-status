@@ -242,161 +242,30 @@ func TestARowIsWrittenAsAListAndNeverAsNull(t *testing.T) {
 	}
 }
 
-// TestAddingALightReadsItFirstAndKeepsWhatAnswered is the flow the operator asked for: type an
-// address, and what comes back is the light's own name, firmware, pixel count and shape — read
-// before it was kept, and kept exactly as it answered.
-func TestAddingALightReadsItFirstAndKeepsWhatAnswered(t *testing.T) {
-	fleet := &probeFleet{answers: map[string]probeAnswer{
-		"http://10.0.0.253": {info: wled.Info{
-			Name: "CyberDesk", Version: "0.16.0", LEDCount: 48, MaxSegments: 16,
-		}},
-	}}
-
-	api := newLightsUnderTest(t, fleet)
-
-	status, body := api.do(t, http.MethodPost, "/lights", `{"address":"10.0.0.253"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /lights answered %d, want %d: %v", status, http.StatusCreated, body)
-	}
-
-	light := body["light"].(map[string]any)
-
-	if light["name"] != "10.0.0.253" || light["address"] != "http://10.0.0.253" {
-		t.Fatalf("the light reads %v/%v, want 10.0.0.253/http://10.0.0.253", light["name"], light["address"])
-	}
-
-	if light["calls_itself"] != "CyberDesk" || light["firmware"] != "0.16.0" ||
-		light["pixels"].(float64) != 48 || light["kind"] != lightKindStrip {
-		t.Fatalf("the answer does not carry what the light said: %v", light)
-	}
-
-	if light["facts_known"] != true || light["probed_at"] == nil {
-		t.Fatalf("the answer does not say the facts were read: %v", light)
-	}
-
-	// A typed address with no scheme is read as http before it is probed, so the light was asked
-	// at one address and not two.
-	if len(fleet.asked) != 1 || fleet.asked[0] != "http://10.0.0.253" {
-		t.Fatalf("the light was probed at %v, want one read of http://10.0.0.253", fleet.asked)
-	}
-
-	held := api.storedLights(t)
-	if len(held) != 1 || held[0].Address != "http://10.0.0.253" || held[0].CallsItself != "CyberDesk" ||
-		held[0].Pixels != 48 || held[0].Kind != lightKindStrip {
-		t.Fatalf("the document holds %+v, want one row carrying what the light answered", held)
-	}
-}
-
 // TestAPanelIsAPanelAndAStripIsAStrip is the shape test on the one field a person reads to tell two
 // lights apart: a controller that publishes a matrix is a panel with width and height, and one that
-// does not is a strip.
+// does not is a strip. The row is the store's, as the start's own read writes it; nothing is dialled
+// to answer the list.
 func TestAPanelIsAPanelAndAStripIsAStrip(t *testing.T) {
-	fleet := &probeFleet{answers: map[string]probeAnswer{
-		"http://10.0.0.136": {info: wled.Info{
-			Name: "morpheus", Version: "0.14.0", LEDCount: 16384, MatrixWidth: 256, MatrixHeight: 64,
+	api := newLightsOverStore(t, nil, storedConfig{
+		Version: storeVersion,
+		Lights: []storedLight{{
+			Address: "http://10.0.0.136", CallsItself: "morpheus", Firmware: "0.14.0",
+			Pixels: 16384, Kind: lightKindPanel, Width: 256, Height: 64,
+			ProbedAt: time.Now().UTC().Format(time.RFC3339),
 		}},
-	}}
+	})
 
-	api := newLightsUnderTest(t, fleet)
-
-	status, body := api.do(t, http.MethodPost, "/lights", `{"address":"http://10.0.0.136"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("POST /lights answered %d, want %d: %v", status, http.StatusCreated, body)
+	status, body := api.do(t, http.MethodGet, "/lights", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /lights answered %d, want %d: %v", status, http.StatusOK, body)
 	}
 
-	light := body["light"].(map[string]any)
+	light := body["lights"].([]any)[0].(map[string]any)
 
 	if light["kind"] != lightKindPanel || light["width"].(float64) != 256 || light["height"].(float64) != 64 ||
 		light["pixels"].(float64) != 16384 {
 		t.Fatalf("the panel reads %v, want a 256 x 64 panel of 16384 pixels", light)
-	}
-}
-
-// TestAnAddressThatIsNotALightIsRefusedInWordsAndNothingIsStored is the refusal half, and the one
-// thing it must be: a sentence a person can act on, and a document that did not change.
-//
-// Four ways to be wrong, and each one is the operator's own list: nothing answers; something answers
-// that is not a WLED light; the light is already on the list; and the address is not an address.
-func TestAnAddressThatIsNotALightIsRefusedInWordsAndNothingIsStored(t *testing.T) {
-	known := storedConfig{
-		Version: storeVersion,
-		Lights:  []storedLight{{Address: "http://10.0.0.253", CallsItself: "CyberDesk"}},
-	}
-
-	cases := []struct {
-		name     string
-		body     string
-		want     string
-		wantSays []string
-	}{
-		{
-			name:     "nothing answers",
-			body:     `{"address":"10.0.0.99"}`,
-			want:     LightRefused.Code().String(),
-			wantSays: []string{"Nothing answered at http://10.0.0.99", "Nothing was added"},
-		},
-		{
-			name:     "something that is not a WLED light",
-			body:     `{"address":"10.0.0.98"}`,
-			want:     LightRefused.Code().String(),
-			wantSays: []string{"not a WLED light", "no firmware version"},
-		},
-		{
-			name:     "already on the list",
-			body:     `{"address":"http://10.0.0.253/"}`,
-			want:     LightAlreadyKnown.Code().String(),
-			wantSays: []string{"already on the list", "10.0.0.253"},
-		},
-		{
-			name:     "not an address at all",
-			body:     `{"address":"not a light"}`,
-			want:     LightBodyInvalid.Code().String(),
-			wantSays: []string{"not a light"},
-		},
-		{
-			name:     "no address in the body",
-			body:     `{"address":"  "}`,
-			want:     LightBodyInvalid.Code().String(),
-			wantSays: []string{"names no address"},
-		},
-		{
-			name:     "a body with a key this module does not read",
-			body:     `{"adress":"10.0.0.253"}`,
-			want:     LightBodyInvalid.Code().String(),
-			wantSays: []string{"adress"},
-		},
-	}
-
-	for _, one := range cases {
-		t.Run(one.name, func(t *testing.T) {
-			fleet := &probeFleet{answers: map[string]probeAnswer{
-				"http://10.0.0.99":   {err: errors.New("dial tcp 10.0.0.99:80: connect: connection refused")},
-				"http://10.0.0.98":   {info: wled.Info{Name: "some-nas"}},
-				"http://not a light": {info: wled.Info{Version: "0.16.0"}},
-			}}
-
-			api := newLightsOverStore(t, fleet, known)
-
-			status, body := api.do(t, http.MethodPost, "/lights", one.body)
-			if status < 400 {
-				t.Fatalf("POST /lights answered %d for %s, want a refusal: %v", status, one.name, body)
-			}
-
-			if got := code(t, body); got != one.want {
-				t.Fatalf("%s was refused with %q, want %q: %v", one.name, got, one.want, body)
-			}
-
-			for _, says := range one.wantSays {
-				if !strings.Contains(detail(body), says) {
-					t.Fatalf("the refusal for %s reads %q, which does not say %q", one.name, detail(body), says)
-				}
-			}
-
-			held := api.storedLights(t)
-			if len(held) != 1 || held[0].Address != "http://10.0.0.253" {
-				t.Fatalf("%s left the document holding %+v, want the one light it started with", one.name, held)
-			}
-		})
 	}
 }
 
@@ -434,79 +303,11 @@ func TestALightWithNoPrinterIsALight(t *testing.T) {
 		t.Fatalf("GET /lights probed %v, want no read of any light", fleet.asked)
 	}
 
-	// And the screen is told, in the answer, what discovery needs — mDNS carried across the Docker
-	// bridge — and that typing an address is the way today: the sentence a person reads instead of a
-	// card that can never fill.
+	// And the screen is told, in the answer, where an address is filled in — the extension's own
+	// five settings — because there is no longer a typed address on this screen to point at.
 	note, _ := body["note"].(string)
-	if !strings.Contains(note, "mDNS") || !strings.Contains(note, "Docker bridge") || !strings.Contains(note, "type") {
-		t.Fatalf("the note reads %q, want the sentence about what discovery needs and the typed address", note)
-	}
-}
-
-// TestRemovingALightIsRefusedWhileABindingUsesIt is the other half of a light being a thing: you can
-// take one off the list, but not out from under a binding that is writing to it.
-func TestRemovingALightIsRefusedWhileABindingUsesIt(t *testing.T) {
-	const printer = "printer-a"
-	whole := wholeStrip
-
-	api := newLightsOverStore(t, nil, storedConfig{
-		Version: storeVersion,
-		Bindings: []json.RawMessage{rawBinding(t, storedEntry{
-			ID: printer, Printer: printer, Controller: "http://10.0.0.253", Segment: &whole,
-		})},
-		Lights: []storedLight{{Address: "http://10.0.0.253"}},
-	})
-
-	status, body := api.do(t, http.MethodDelete, "/lights/10.0.0.253", "")
-	if status != http.StatusConflict {
-		t.Fatalf("DELETE /lights/10.0.0.253 answered %d, want 409: %v", status, body)
-	}
-
-	if got := code(t, body); got != LightRefused.Code().String() {
-		t.Fatalf("the refusal carries %q, want %q: %v", got, LightRefused.Code().String(), body)
-	}
-
-	if !strings.Contains(detail(body), printer) || !strings.Contains(detail(body), "cannot be removed") {
-		t.Fatalf("the refusal reads %q, want it to name the binding that uses the light", detail(body))
-	}
-
-	if held := api.storedLights(t); len(held) != 1 {
-		t.Fatalf("the refused removal left %d lights, want the one it had", len(held))
-	}
-}
-
-// TestALightNobodyUsesComesOffTheList is the removal that works, and the name it is addressed by:
-// the address without the scheme, which is the name GET /lights gives it.
-func TestALightNobodyUsesComesOffTheList(t *testing.T) {
-	api := newLightsOverStore(t, nil, storedConfig{
-		Version: storeVersion,
-		Lights: []storedLight{
-			{Address: "http://10.0.0.136"},
-			{Address: "http://10.0.0.253"},
-		},
-	})
-
-	status, body := api.do(t, http.MethodDelete, "/lights/10.0.0.136", "")
-	if status != http.StatusOK {
-		t.Fatalf("DELETE /lights/10.0.0.136 answered %d, want 200: %v", status, body)
-	}
-
-	if body["deleted"] != "10.0.0.136" || body["address"] != "http://10.0.0.136" {
-		t.Fatalf("the answer reads %v, want the light that was removed", body)
-	}
-
-	held := api.storedLights(t)
-	if len(held) != 1 || held[0].Address != "http://10.0.0.253" {
-		t.Fatalf("the document holds %+v, want the one light nobody asked to remove", held)
-	}
-
-	status, body = api.do(t, http.MethodDelete, "/lights/10.0.0.99", "")
-	if status != http.StatusNotFound {
-		t.Fatalf("DELETE of a name the list does not hold answered %d, want 404: %v", status, body)
-	}
-
-	if got := code(t, body); got != LightNotFound.Code().String() {
-		t.Fatalf("the refusal carries %q, want %q: %v", got, LightNotFound.Code().String(), body)
+	if !strings.Contains(note, "light1_address") || !strings.Contains(note, "settings") {
+		t.Fatalf("the note reads %q, want the sentence naming light1_address and the extension's settings", note)
 	}
 }
 
@@ -529,7 +330,7 @@ func TestASeededLightIsFilledInWhenItAnswers(t *testing.T) {
 		},
 	})
 
-	fillLightFacts(context.Background(), api.tables, fleet.client, nil)
+	fillLightFacts(context.Background(), api.tables, fleet.client, nil, nil)
 
 	held := api.storedLights(t)
 	if len(held) != 2 {
@@ -548,7 +349,7 @@ func TestASeededLightIsFilledInWhenItAnswers(t *testing.T) {
 	// timer, and a second start must not dial a light it already has facts for. The one that was
 	// dark is tried again, because a light that was unplugged is exactly what a later read fixes.
 	before := len(fleet.asked)
-	fillLightFacts(context.Background(), api.tables, fleet.client, nil)
+	fillLightFacts(context.Background(), api.tables, fleet.client, nil, nil)
 
 	second := fleet.asked[before:]
 	if len(second) != 1 || lightKey(second[0]) != lightKey("http://10.0.0.253") {
@@ -609,86 +410,6 @@ func rawBinding(t *testing.T, line storedEntry) json.RawMessage {
 // test that fails on a machine that has none. The command, on the host the lights are on:
 //
 //	WLED_LIVE_LIGHT=10.0.0.253 go test -run TestAddingARealLightByItsAddress -v .
-func TestAddingARealLightByItsAddress(t *testing.T) {
-	address := strings.TrimSpace(os.Getenv("WLED_LIVE_LIGHT"))
-	if address == "" {
-		t.Skip("set WLED_LIVE_LIGHT to a light's address to run this against the real thing")
-	}
-
-	dir := t.TempDir()
-
-	tables := &configTables{}
-	tables.grant(dir)
-
-	// The document an installed module already has: the store is written at the first start, and
-	// adding a light is a change to a document that exists rather than the creation of one.
-	if _, err := saveStore(dir, storedConfig{Version: storeVersion}); err != nil {
-		t.Fatalf("write the empty store an install has: %v", err)
-	}
-
-	mux := http.NewServeMux()
-	lightsAPI{tables: tables}.mount(mux)
-
-	body, err := json.Marshal(map[string]string{"address": address})
-	if err != nil {
-		t.Fatalf("render the request body: %v", err)
-	}
-
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, forwarded(http.MethodPost, "/lights", strings.NewReader(string(body))))
-
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("POST /lights with %s answered %d: %s", address, recorder.Code, recorder.Body.String())
-	}
-
-	var added struct {
-		Light lightAnswer `json:"light"`
-	}
-
-	if err := json.Unmarshal(recorder.Body.Bytes(), &added); err != nil {
-		t.Fatalf("the answer is not JSON: %v (%s)", err, recorder.Body.String())
-	}
-
-	t.Logf("%s answered: calls itself %q, firmware %q, %d pixels, a %s of %d x %d",
-		added.Light.Address, added.Light.CallsItself, added.Light.Firmware,
-		added.Light.Pixels, added.Light.Kind, added.Light.Width, added.Light.Height)
-
-	if !added.Light.FactsKnown || added.Light.Pixels == 0 || added.Light.Kind == "" {
-		t.Fatalf("the light answered but its facts were not kept: %+v", added.Light)
-	}
-
-	held, err := loadStore(dir)
-	if err != nil {
-		t.Fatalf("read the store the light was added to: %v", err)
-	}
-
-	if len(held.Config.Lights) != 1 || !held.Config.Lights[0].read() {
-		t.Fatalf("the document holds %+v, want one light with facts on it", held.Config.Lights)
-	}
-
-	// And adding it twice is the refusal the operator would see for a typo, not a second row.
-	again := httptest.NewRecorder()
-	mux.ServeHTTP(again, forwarded(http.MethodPost, "/lights", strings.NewReader(string(body))))
-
-	if again.Code != http.StatusConflict {
-		t.Fatalf("adding the same light twice answered %d, want 409: %s", again.Code, again.Body.String())
-	}
-
-	if after, err := loadStore(dir); err != nil {
-		t.Fatalf("read the store after the refused add: %v", err)
-	} else if len(after.Config.Lights) != 1 {
-		t.Fatalf("the refused second add left %d lights, want the one it had", len(after.Config.Lights))
-	}
-}
-
-// TestIgnoringALightKeepsItOutOfTheWayAndBringingItBackUndoesIt is the third bucket's whole
-// mechanism at the route: a light nothing drives can be put out of the way, the row stays in the
-// store and in GET /lights — which is where the Lights screen builds its Ignored list from — and
-// one call brings it back.
-//
-// The proof that it is a decision the document holds and not the answer of one request is made the
-// way the bindings were: the file on disk is read for the literal, and then handed to a reader that
-// has never seen this process's memory.
 func TestIgnoringALightKeepsItOutOfTheWayAndBringingItBackUndoesIt(t *testing.T) {
 	api := newLightsOverStore(t, nil, storedConfig{
 		Version: storeVersion,

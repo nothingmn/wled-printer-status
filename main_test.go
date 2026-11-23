@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -80,28 +81,55 @@ func TestAPathThisModuleDoesNotServeIsRefusedByCode(t *testing.T) {
 	}
 }
 
-// TestTheManifestDeclaresNoSettingsAndTheCodeHoldsTheDefaults is §4 held against the file and the
-// file held against the code.
+// TestTheManifestDeclaresTheFiveLightSlotsAndNothingElse holds the file and the code together.
 //
-// The manifest carries no `options`. docs/product-requirements.md §3 decision 1 and §4: the host's
-// settings pane is not this module's editing surface, the store is, and the manifest "keeps only
-// what the host requires". So a fresh install sends an empty settings block — which means the
-// defaults in this file are what that install runs on, and nothing may refuse it for want of a
-// setting the host has no way to send.
-func TestTheManifestDeclaresNoSettingsAndTheCodeHoldsTheDefaults(t *testing.T) {
+// The manifest declares five `url` options — `light1_address` to `light5_address` — because the
+// egress block can only name a host an operator types into a declared option, and those five values
+// are therefore the whole of the address set (declared.go). Nothing else is a setting: the store is
+// still the editing surface for bindings, moments, layouts and the rest.
+//
+// An empty block is what a fresh install sends, and it has to be accepted: five empty slots permit
+// nothing, the module starts, serves its pages, and drives nothing.
+func TestTheManifestDeclaresTheFiveLightSlotsAndNothingElse(t *testing.T) {
 	manifest := readManifest(t)
 
-	if strings.Contains(manifest, "\noptions:") {
-		t.Fatal("module.yaml declares an options block, and the host renders a settings pane from it")
+	want := []string{
+		"light1_address",
+		"light2_address",
+		"light3_address",
+		"light4_address",
+		"light5_address",
 	}
 
-	if keys := settingsKeys(t); len(keys) != 0 {
-		t.Fatalf("module.yaml declares the settings %v, want none: the store owns the configuration", keys)
+	keys := settingsKeys(t)
+	if !slices.Equal(keys, want) {
+		t.Fatalf("module.yaml declares the settings %v, want exactly %v: the five values are the whole of the address set", keys, want)
+	}
+
+	for _, key := range want {
+		if !strings.Contains(manifest, "- key: "+key+"\n    type: url") {
+			t.Fatalf("option %s is not declared as a url", key)
+		}
+	}
+
+	if slot := (Settings{Light1Address: "10.0.0.1"}).DeclaredLights()[0]; slot.Slot != 1 || !slot.Filled ||
+		!(Settings{Light1Address: "10.0.0.1"}).declares("http://10.0.0.1") {
+		t.Fatalf("light1_address read as slot %d filled=%v, or did not permit the address it names", slot.Slot, slot.Filled)
 	}
 
 	// The fresh install, which is every install now: an empty block, accepted.
 	if err := (Settings{}).validate(); err != nil {
 		t.Fatalf("an empty settings block was refused, and that is what every fresh install sends: %v", err)
+	}
+
+	if declared := (Settings{}).DeclaredLights(); len(declared) != declaredLightSlots {
+		t.Fatalf("an empty block declares %d slots, want %d empty ones", len(declared), declaredLightSlots)
+	}
+
+	for _, slot := range (Settings{}).DeclaredLights() {
+		if slot.Filled {
+			t.Fatalf("an empty settings block filled slot %d with %q", slot.Slot, slot.Address)
+		}
 	}
 
 	storeSettings(t, nil)
@@ -155,7 +183,6 @@ func TestTheFragmentParses(t *testing.T) {
 		"/lights/{light}/layouts",
 		"/lights/{light}/moments",
 		"/lights/{light}/moments/{moment}",
-		"/lights/{name}",
 		"/lights/{name}/ignore",
 		"/pause",
 		"/preview-finished",
@@ -234,8 +261,12 @@ func TestTheManifestKeepsOnlyWhatTheHostRequires(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(manifest, "\noptions:") || strings.Contains(manifest, "- key: ") {
-		t.Fatal("module.yaml carries a setting, and a setting is what the store replaced")
+	// The only settings are the five declared light addresses, and the test above names them. A sixth
+	// key would be a second editing surface for the store's data, which §4 removed.
+	for _, key := range settingsKeys(t) {
+		if !strings.HasPrefix(key, "light") || !strings.HasSuffix(key, "_address") {
+			t.Fatalf("module.yaml declares the setting %q, and only the five light addresses belong there", key)
+		}
 	}
 
 	// The fields are still read, so the struct is not empty and the migration has something to
@@ -245,30 +276,101 @@ func TestTheManifestKeepsOnlyWhatTheHostRequires(t *testing.T) {
 	}
 }
 
-// TestTheManifestDeclaresNoConnections holds the release to the one claim its egress block used to
-// make: it declares nothing. The controllers this module drives are the ones the operator adds on
-// the Lights screen, and their addresses are kept in this module's own store, so the manifest cannot
-// name them. The host's parser (sdk/manifest/egress.go, checkEgressTarget) accepts an exact host, a
-// `*.domain` whose remainder carries a dot, or an IP address, and has no form for a range or for
-// "whatever light the operator points it at". Naming the author's own two lights instead described
-// the wrong hosts for every other install, so the key is gone.
+// TestEveryEgressEntryNamesOneOfTheDeclaredOptions is the declaration held against itself: the
+// manifest may not name a connection whose host is not one of the five options, and it may not
+// declare an option that no egress entry reads. A future edit cannot desynchronise the two lists
+// without failing here.
 //
-// Absence has to be checked as absence: an `egress` key left behind is a connection an installer is
-// asked to approve, and a literal address in this file is the author's home network in every release.
-func TestTheManifestDeclaresNoConnections(t *testing.T) {
+// It also holds the shape the host's own parser enforces: one of `host` or `option` per entry, an
+// explicit `ports` list (an entry that forgets them means 443), `from: process`, and no literal
+// address of the author's home network anywhere in the file.
+func TestEveryEgressEntryNamesOneOfTheDeclaredOptions(t *testing.T) {
 	manifest := readManifest(t)
 
-	if strings.Contains(manifest, "\negress:") {
-		t.Fatal("module.yaml declares egress, and this release connects nowhere outside Prusa Connect " +
-			"until an operator adds a light on the Lights screen")
+	options := declaredOptionKeys(t)
+	if !slices.Equal(options, []string{
+		"light1_address", "light2_address", "light3_address", "light4_address", "light5_address",
+	}) {
+		t.Fatalf("module.yaml declares the options %v, want the five light slots", options)
 	}
 
-	for _, unwanted := range []string{"\n  - host: ", "\n  - option: ", "10.0.0."} {
-		if strings.Contains(manifest, unwanted) {
-			t.Fatalf("module.yaml carries %q, and every address this module drives is the operator's, "+
-				"kept in the store", unwanted)
+	egress := egressOptionNames(t)
+	if !slices.Equal(options, egress) {
+		t.Fatalf("egress names %v and the options are %v: every declared address must be approved, and no entry may name a host that is not an option", egress, options)
+	}
+
+	if strings.Contains(manifest, "\n    host:") {
+		t.Fatal("module.yaml pins egress to a literal host, and the address is the operator's to type")
+	}
+
+	for _, want := range []string{"\n    ports: [80, 4048]", "\n    from: process"} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("module.yaml does not carry %q beside an egress entry", want)
 		}
 	}
+
+	// Every why and sends is inside the host's own limits, because a longer one refuses the release.
+	for _, line := range strings.Split(manifest, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "why: ") && len([]rune(strings.TrimPrefix(trimmed, "why: "))) > 200 {
+			t.Fatalf("an egress why is %d characters, and the host refuses over 200", len([]rune(trimmed)))
+		}
+
+		if strings.HasPrefix(trimmed, "sends: ") && len([]rune(strings.TrimPrefix(trimmed, "sends: "))) > 300 {
+			t.Fatalf("an egress sends is %d characters, and the host refuses over 300", len([]rune(trimmed)))
+		}
+	}
+}
+
+// declaredOptionKeys is the `key:` of every option block in the manifest, in file order.
+func declaredOptionKeys(t *testing.T) []string {
+	t.Helper()
+
+	var keys []string
+
+	inOptions := false
+
+	for _, line := range strings.Split(readManifest(t), "\n") {
+		if strings.TrimSpace(line) == "options:" {
+			inOptions = true
+
+			continue
+		}
+
+		if inOptions && strings.HasPrefix(line, "egress:") {
+			break
+		}
+
+		if inOptions && strings.HasPrefix(line, "  - key: ") {
+			keys = append(keys, strings.TrimSpace(strings.TrimPrefix(line, "  - key: ")))
+		}
+	}
+
+	return keys
+}
+
+// egressOptionNames is the `option:` of every egress entry, in file order.
+func egressOptionNames(t *testing.T) []string {
+	t.Helper()
+
+	var names []string
+
+	inEgress := false
+
+	for _, line := range strings.Split(readManifest(t), "\n") {
+		if strings.TrimSpace(line) == "egress:" {
+			inEgress = true
+
+			continue
+		}
+
+		if inEgress && strings.HasPrefix(line, "  - option: ") {
+			names = append(names, strings.TrimSpace(strings.TrimPrefix(line, "  - option: ")))
+		}
+	}
+
+	return names
 }
 
 // TestTheManifestAsksForObserveBecauseTheReaderIsWired keeps the grant and the
@@ -597,8 +699,13 @@ func TestTheLightsRouteIsOnTheProcesssOwnMux(t *testing.T) {
 	}
 
 	var body struct {
-		Lights    []any  `json:"lights"`
-		Count     int    `json:"count"`
+		Lights []any `json:"lights"`
+		Count  int   `json:"count"`
+		Slots  []struct {
+			Slot   int  `json:"slot"`
+			Filled bool `json:"filled"`
+		} `json:"slots"`
+		SlotCount int    `json:"slot_count"`
 		Persisted bool   `json:"persisted"`
 		Note      string `json:"note"`
 	}
@@ -615,9 +722,19 @@ func TestTheLightsRouteIsOnTheProcesssOwnMux(t *testing.T) {
 		t.Fatalf("count reads %d and the list holds %d", body.Count, len(body.Lights))
 	}
 
-	// The sentence names what discovery needs — the host carrying mDNS across the Docker bridge —
-	// rather than saying it is coming, and it still points at the typed address.
-	if !strings.Contains(body.Note, "mDNS") || !strings.Contains(body.Note, "type") {
-		t.Fatalf("the note reads %q, want the sentence about what discovery needs and the typed address", body.Note)
+	// The sentence says where an address is filled in — the extension's own settings — and it does
+	// not point at a typed address on this screen, because there is no longer one.
+	if !strings.Contains(body.Note, "light1_address") || !strings.Contains(body.Note, "settings") {
+		t.Fatalf("the note reads %q, want the sentence naming light1_address and the extension's settings", body.Note)
+	}
+
+	if len(body.Slots) != declaredLightSlots || body.SlotCount != declaredLightSlots {
+		t.Fatalf("the answer carries %d slots (count %d), want the five the manifest declares", len(body.Slots), body.SlotCount)
+	}
+
+	for i, slot := range body.Slots {
+		if slot.Filled || slot.Slot != i+1 {
+			t.Fatalf("slot %d reads slot=%d filled=%v, want an empty slot numbered %d", i+1, slot.Slot, slot.Filled, i+1)
+		}
 	}
 }

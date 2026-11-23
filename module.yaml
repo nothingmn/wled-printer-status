@@ -14,7 +14,7 @@ name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,
 # which is what a module with a process needs.
 kind: sink
-version: 0.8.0
+version: 0.9.0
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT
@@ -51,35 +51,89 @@ platforms:
   - darwin_arm64
   - windows_amd64
 
-# There is no `options` block, and its absence is the rule rather than an oversight.
-# docs/product-requirements.md §3 decision 1 and §4: the host's settings pane is not an
-# editing surface for this module. The configuration a person edits — the lights, the
-# moments, the state words, the layout, the brightness windows and a pause — lives in
-# this module's own store, in the data directory the host grants it (`needs.data`
-# below), and is edited through this module's own pages and routes. §4's own words:
+# Five address slots, and they are the whole of this module's network reach.
 #
-#   "The manifest keeps only what the host requires: name, kind, version, platforms,
-#    permissions, egress, memory, lifecycle. No `options` carrying the product's data
-#    model."
+# The marketplace's review refused the release before this one because the process connects to
+# WLED controllers and the manifest declared no `egress`: a person approving the install was
+# told this module connects nowhere while it drove the lights in his room. The manifest format
+# names a connection by an exact host, a `*.domain`, an exact IP, or one *declared option* whose
+# value the operator types — there is no list and no range, and no form for "whatever light the
+# operator points it at". A list-shaped declaration is the right answer and is argued for
+# upstream (prusa3d/prusa-connect#49 and #58); until the format grows one, the honest shape it
+# does support is a small number of named slots.
 #
-# Two consequences a reader should not have to work out for themselves:
+# So these five are the only addresses this module may ever connect to. The module's own store
+# still holds the bindings, segments, layouts, moments and ignore flags, keyed by address, but
+# the *set of addresses* comes from here and nowhere else: the process reads these five on every
+# pass the way it reads the rest of its settings, and an address in the store that is not one of
+# these values is not driven, not probed, and never written to. A binding that names one is
+# reported as refused, in words, on the Bindings screen.
 #
-#   - the host sends an empty settings block on plugin.configure, and this module starts
-#     on the defaults its own code holds. It serves its pages, it drives nothing, and the
-#     first light is added on its own Bindings screen. Nothing refuses to start for want
-#     of a setting, because there is no setting to want.
-#   - the host settings are still read once, as a migration source. An instance
-#     installed from a release that did carry them seeds the store from them on its
-#     first start and never reads them again — §4 again. That path exists for the one
-#     upgrade and is not a surface anyone edits.
+# The count is a limit, not a default. Five empty slots permit nothing at all: a fresh install
+# starts, serves its pages, and drives nothing until an operator fills a slot in the extension's
+# own settings. Raising the number is a manifest change and every installer re-approves it,
+# which is why it is five and not fifty.
+#
+# One consequence a reader should not have to work out: an install upgrading from 0.8.0 has
+# light addresses in its own store and none in these options, so nothing is driven until the
+# operator copies them into the extension's settings. The README, the changelog entry and the
+# Lights screen's empty state all say so.
+options:
+  - key: light1_address
+    type: url
+    required: false
+    summary: The address of a WLED controller, such as http://10.0.0.136.
+  - key: light2_address
+    type: url
+    required: false
+    summary: The address of a second WLED controller, such as http://10.0.0.253.
+  - key: light3_address
+    type: url
+    required: false
+    summary: The address of a third WLED controller, such as http://10.0.0.137.
+  - key: light4_address
+    type: url
+    required: false
+    summary: The address of a fourth WLED controller, such as http://10.0.0.254.
+  - key: light5_address
+    type: url
+    required: false
+    summary: The address of a fifth WLED controller, such as http://10.0.0.138.
 
-# No `egress` block, and its absence is a statement: this release declares no
-# connections. The controllers it drives are the ones the operator adds on its own Lights
-# screen, and their addresses are kept in this module's own store rather than here. The
-# manifest format names a connection by an exact host, a `*.domain`, or an IP address —
-# it has no form for a range, nor for a bare `*.local` — so it cannot say "whatever light
-# the operator points it at". Naming the author's own two lights instead would describe
-# the wrong hosts for everybody else, so the release names none.
+# One egress entry per declared slot, and not one more. Each names the option an operator fills in,
+# and the module reads the host from exactly that value; there is no code path that dials anything
+# else (declared.go holds the rule, and the tests prove it with a fake controller that records
+# requests).
+#
+# Port 80 is WLED's own web interface — `/json/info`, `/json/state`, `/json/cfg`, `/presets.json`
+# and the control writes — and 4048 is DDP, the pixel path, which is UDP. A manifest port carries
+# no protocol, so the approval prompt shows 4048 as if it were TCP; `sends` says what it really is.
+egress:
+  - option: light1_address
+    ports: [80, 4048]
+    from: process
+    why: A WLED controller's address, as the operator typed it. The module reads that controller and paints a printer's state on it.
+    sends: The printer's state as a colour, a progress bar and a short word. Reads the controller's name, firmware, segments, presets and configuration over HTTP port 80; writes pixels over DDP, UDP port 4048.
+  - option: light2_address
+    ports: [80, 4048]
+    from: process
+    why: A WLED controller's address, as the operator typed it. The module reads that controller and paints a printer's state on it.
+    sends: The printer's state as a colour, a progress bar and a short word. Reads the controller's name, firmware, segments, presets and configuration over HTTP port 80; writes pixels over DDP, UDP port 4048.
+  - option: light3_address
+    ports: [80, 4048]
+    from: process
+    why: A WLED controller's address, as the operator typed it. The module reads that controller and paints a printer's state on it.
+    sends: The printer's state as a colour, a progress bar and a short word. Reads the controller's name, firmware, segments, presets and configuration over HTTP port 80; writes pixels over DDP, UDP port 4048.
+  - option: light4_address
+    ports: [80, 4048]
+    from: process
+    why: A WLED controller's address, as the operator typed it. The module reads that controller and paints a printer's state on it.
+    sends: The printer's state as a colour, a progress bar and a short word. Reads the controller's name, firmware, segments, presets and configuration over HTTP port 80; writes pixels over DDP, UDP port 4048.
+  - option: light5_address
+    ports: [80, 4048]
+    from: process
+    why: A WLED controller's address, as the operator typed it. The module reads that controller and paints a printer's state on it.
+    sends: The printer's state as a colour, a progress bar and a short word. Reads the controller's name, firmware, segments, presets and configuration over HTTP port 80; writes pixels over DDP, UDP port 4048.
 
 # The memory in MiB the server may budget for the process, children included.
 # 32 is a measurement, not a guess.

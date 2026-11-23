@@ -356,7 +356,7 @@
       "get": {
         "operationId": "list-lights",
         "summary": "The lights this module knows",
-        "description": "Every light this module knows, whether or not a binding sits on it: the address as the operator wrote it, and what the light said about itself the last time it was read — the name it calls itself, its firmware, its pixel count, and whether it is a panel or a strip. This is the list the Lights screen draws a card per entry from, and it is docs/product-requirements.md §2.6's 'one card per light' made true: a light somebody owns is a fact whether or not anything is shown on it. Nothing here asks a light anything, so a light that is unplugged answers with what it last said and probed_at is the age of that reading. The note carries the one thing a reader must not have to work out: finding lights needs mDNS carried across the host's Docker bridge (docs/mdns-in-docker.md), this module does not browse for them yet, and the way to add one today is to type its address. The host takes view_resource on the module's instance before this is called.",
+        "description": "The five addresses the manifest declares as options \u2014 light1_address to light5_address \u2014 and, for each one that is filled in, the light that answered there: the name it calls itself, its firmware, its pixel count and whether it is a panel or a strip. The slots are the whole of what this module may contact; an address in the module's own store which is not one of them is not driven, not probed and never written to, and a binding that names one is reported as refused on GET /bindings. The list makes no read of any light: what it answers is what the light last said, and probed_at is the age of that reading. The note says where an empty slot is filled in \u2014 the extension's own settings, never this screen \u2014 and, on a page with no filled slot, the one-time migration from 0.8.0. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The lights this module knows, in the order they were added.",
@@ -365,6 +365,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "slots": {
+                      "type": "array",
+                      "description": "The five declared slots, in order, empty ones included. Always five entries: the cap is the shape of the feature, and a person has to be able to see the slot he is meant to fill in.",
+                      "items": {"$ref": "#/components/schemas/LightSlot"}
+                    },
+                    "slot_count": {"type": "integer", "description": "How many slots the manifest declares. Five."},
                     "lights": {
                       "type": "array",
                       "description": "Every light this module knows. Empty on an install that has named none, which is not an error.",
@@ -372,7 +378,7 @@
                     },
                     "count": {"type": "integer", "description": "How many lights the list holds."},
                     "persisted": {"type": "boolean", "description": "True when the list is the one in this module's own configuration store, so the next start reads it. False means no document could be read, and then nothing here can be kept either."},
-                    "note": {"type": "string", "description": "What this module has to say about the list: that finding lights needs mDNS carried across the host's Docker bridge (docs/mdns-in-docker.md), that this module does not browse yet, and that typing an address works now."}
+                    "note": {"type": "string", "description": "What this module has to say about the addresses: that the five values live in the extension's own settings, light1_address to light5_address, and — when no slot is filled — the one-time migration from 0.8.0, whose store the module no longer reads addresses from."}
                   },
                   "required": ["lights", "count", "persisted", "note"]
                 }
@@ -380,143 +386,7 @@
             }
           }
         }
-      },
-      "post": {
-        "operationId": "add-light",
-        "summary": "Add a light by its address",
-        "description": "Reads the light at one address and keeps what answered. The read is GET /json/info through this module's own WLED client — the same path every other read of a light takes — and nothing is stored unless something answered there and the answer was a WLED controller's. The address may be written with or without a scheme; one written without is read as http. A light does not need a printer to be free: a light you own is a fact whether or not anything is shown on it. A light already on the list, an address nothing answers at, an address that answers with something that is not a WLED controller, and an address this module cannot build a client for are all refused in words, and the store is left exactly as it was. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "description": "One light to add, by address. No other key is read, so a misspelt one is refused rather than ignored.",
-                "properties": {
-                  "address": {"type": "string", "description": "The light's IP address or its full URL: 10.0.0.253 or http://10.0.0.253. Read as http when it carries no scheme."}
-                },
-                "required": ["address"]
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "The light answered, was read, and is on the list.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "light": {"$ref": "#/components/schemas/Light"},
-                    "note": {"type": "string", "description": "That the facts above are the light's own answer, and that adding a light is not the same as showing a printer on it."}
-                  },
-                  "required": ["light", "note"]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The body does not name an address, or names one this module cannot build a client for (LIGHT_BODY_INVALID).",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "403": {
-            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "409": {
-            "description": "Nothing answered at that address, something answered that is not a WLED light (LIGHT_REFUSED), or the light is already on the list (LIGHT_ALREADY_KNOWN). Nothing was stored.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "503": {
-            "description": "This module has no configuration store it could keep the light in (STORE_UNAVAILABLE). Nothing was added. A change here is also refused with ACCESS_UNKNOWN when this module could not ask the host who is asking, and then nothing was changed either.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/lights/{name}": {
-      "parameters": [
-        {
-          "name": "name",
-          "in": "path",
-          "required": true,
-          "description": "The light's name on these routes: its address without the scheme, which is the name GET /lights gives it. http://10.0.0.253 is 10.0.0.253 here.",
-          "schema": {"type": "string"}
-        }
-      ],
-      "delete": {
-        "operationId": "remove-light",
-        "summary": "Take a light off the list",
-        "description": "Removes one light from this module's own list. It is refused while a binding still names that address, and the refusal says which bindings do: a binding is this module's promise to write to that light, and removing the light under it would leave the writer with an address the list does not hold. A person who meant to stop a printer being shown deletes the binding, not the light. Snapshots already taken of the light are kept, because they are the last copy of a light nobody can read any more. The host takes operate_resource on the module's instance before this is called. This module then asks the host whether the caller may configure it, which is configure_resource on the sink kind, and refuses a caller the host says no for with NOT_PERMITTED before anything is touched.",
-        "responses": {
-          "200": {
-            "description": "The light was taken off the list.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "deleted": {"type": "string", "description": "The light's name on these routes."},
-                    "address": {"type": "string", "description": "The address it had, as the operator wrote it."},
-                    "note": {"type": "string", "description": "That the light's snapshots are still in this module's data directory."}
-                  },
-                  "required": ["deleted", "address", "note"]
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The host answered that the caller may not make this change, so nothing was changed (NOT_PERMITTED). Rewriting this module's configuration is configure_resource on the sink kind, which a manager holds; acting on a light now is operate_resource, which an operator holds.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "503": {
-            "description": "The host could not answer whether the caller may make this change, so nothing was changed (ACCESS_UNKNOWN). A question that failed is a refusal and never a pass.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "404": {
-            "description": "This module knows no light of that name (LIGHT_NOT_FOUND).",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          },
-          "409": {
-            "description": "A binding still names the light, so it cannot be removed (LIGHT_REFUSED). Nothing was changed.",
-            "content": {
-              "application/problem+json": {
-                "schema": {"$ref": "#/components/schemas/Refusal"}
-              }
-            }
-          }
-        }
-      }
-    },
+      }    },
     "/lights/{name}/ignore": {
       "parameters": [
         {
@@ -2688,6 +2558,25 @@
           "answers": {"type": "string", "description": "For a diagnostic pattern, what the picture answers on this light."}
         },
         "required": ["controller", "light"]
+      },
+      "LightSlot": {
+        "type": "object",
+        "description": "One of the five declared light addresses: the slot number, whether an address fills it, and, when it does, what the light there answered. It is the declaration and not the store: an empty slot is a value the operator has not filled in, which is a different fact from a light this module has never managed to read.",
+        "properties": {
+          "slot": {"type": "integer", "description": "The slot number, counting from one: light1_address is slot 1."},
+          "filled": {"type": "boolean", "description": "Whether the option names an address."},
+          "address": {"type": "string", "description": "The address as this module dials it, absent on an empty slot."},
+          "calls_itself": {"type": "string", "description": "The name the light calls itself, absent until it has answered here."},
+          "firmware": {"type": "string", "description": "The firmware it reports, absent until it has answered here."},
+          "pixels": {"type": "integer", "description": "How many LEDs it drives, absent until it has answered here."},
+          "kind": {"type": "string", "enum": ["panel", "strip"], "description": "Which shape it is, absent until it has answered here."},
+          "width": {"type": "integer", "description": "The panel's width in pixels; absent on a strip."},
+          "height": {"type": "integer", "description": "The panel's height in pixels; absent on a strip."},
+          "probed_at": {"type": "string", "description": "When those facts were read, absent until the light has answered here."},
+          "facts_known": {"type": "boolean", "description": "True when the facts above are the light's own answer."},
+          "note": {"type": "string", "description": "What a reader must not have to assume: an empty slot says where it is filled in, and a filled one that has not answered says so."}
+        },
+        "required": ["slot", "filled", "facts_known"]
       },
       "Light": {
         "type": "object",

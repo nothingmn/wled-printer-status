@@ -12,7 +12,7 @@
 // requirements asked for before any segment picker could be built (§5). A light that
 // will not answer is not a failed screen: it is a light with no segments to offer,
 // which is why the read is caught here and carried as a fact on the light.
-import { moduleApi, type Binding, type Controller, type ControllerDetail, type KnownLight, type Segment } from './api';
+import { moduleApi, type Binding, type Controller, type ControllerDetail, type KnownLight, type LightSlot, type Segment } from './api';
 import { describe, lightName } from './format';
 import { heldHost } from './host';
 
@@ -204,7 +204,11 @@ export const loadLights = async (): Promise<void> => {
  * pickers from it; a light with nothing on it would be a row in a picker that selects nothing. This
  * is the Lights screen's own list, and it is the only screen that draws a card per light.
  */
-export const known = $state<{ list: KnownLight[]; note: string }>({ list: [], note: '' });
+export const known = $state<{ list: KnownLight[]; slots: LightSlot[]; note: string }>({
+	list: [],
+	slots: [],
+	note: '',
+});
 
 /**
  * Reads every light this module knows, its own segments, and the bindings on it, in that order —
@@ -223,6 +227,7 @@ export const loadKnownLights = async (): Promise<void> => {
 		const [all, set] = await Promise.all([api.listLights(), api.listBindings()]);
 
 		known.list = all.lights;
+		known.slots = all.slots;
 		known.note = all.note;
 
 		// The names the lights call themselves travel with this read, so a screen that already

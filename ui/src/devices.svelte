@@ -8,10 +8,13 @@
 	// the operator could not find a light on it — a device on this host means a printer session — so it
 	// is named for what it holds.
 	//
-	// Adding a light is the one thing this screen does that changes anything: a person types an
-	// address, POST /lights reads the light before it keeps it, and the card that appears carries what
-	// answered. A light does not need a printer to be free: it is a fact whether or not anything is
-	// shown on it.
+	// The addresses are not this screen's to add. The manifest declares five `url` options —
+	// `light1_address` to `light5_address` — and one `egress` entry per option, because that is the
+	// only shape in which an operator can approve the hosts this module reaches (declared.go). The
+	// screen draws those five slots, fills a card from what each light answered, and says plainly
+	// that an empty slot is filled in the extension's own settings. Binding, ignoring and the tests
+	// stay here; adding and removing a light do not exist, because either would make the declaration
+	// false.
 	//
 	// A card carries, in the requirement's own order:
 	//
@@ -111,7 +114,7 @@
 		type LightBucket,
 		type LightFacts,
 	} from './lights.svelte';
-	import { Button, Chip, Disclosure, Field, FieldInput, Panel, TAB_BAR, TAB_CURRENT, TAB_RESTING } from './ui';
+	import { Button, Chip, Disclosure, Panel, TAB_BAR, TAB_CURRENT, TAB_RESTING } from './ui';
 
 	const host = heldHost();
 	const api = moduleApi(host);
@@ -155,16 +158,6 @@
 	let failure = $state('');
 	let loading = $state(true);
 
-	/** The address a person is typing. Cleared once the light has answered and been added. */
-	let typed = $state('');
-	/** Whether an address is being read. Adding reads the light, so it is not instant. */
-	let adding = $state(false);
-	/** What the last added light answered, in the words of the route's own sentence. */
-	let added = $state('');
-	/** Why the last address was refused. A refusal is a sentence, and nothing was stored. */
-	let addFailed = $state('');
-	/** One line per light, saying what the last removal did, or why it could not. */
-	let removeSaid = $state<Record<string, string>>({});
 	/** One line per light, saying what the last ignore or un-ignore did. */
 	let ignoreSaid = $state<Record<string, string>>({});
 
@@ -537,48 +530,6 @@
 		}
 	};
 
-	/** Reads the light at the address a person typed, and keeps what answered.
-	 *
-	 * Nothing is kept unless the light answered: the route refuses an address nothing is at, an
-	 * address that answers with something that is not a WLED light, and one already on the list, and
-	 * each of those is a sentence here rather than a card that never fills.
-	 */
-	const addLight = async (): Promise<void> => {
-		const address = typed.trim();
-		if (address === '' || adding) return;
-
-		adding = true;
-		added = '';
-		addFailed = '';
-
-		try {
-			const answer = await api.addLight(address);
-			const light = answer.light;
-
-			added = t('devices.added', {
-				address: light.address,
-				called: (light.calls_itself ?? '') === '' ? t('devices.added_unnamed') : (light.calls_itself ?? ''),
-				firmware: (light.firmware ?? '') === '' ? t('devices.fact_firmware_unknown') : (light.firmware ?? ''),
-				pixels: light.pixels,
-				shape: light.kind === 'panel' ? t('devices.shape_panel') : t('devices.shape_strip'),
-			});
-
-			typed = '';
-			await load();
-
-			// The light somebody just added is the one he wants to look at, so the screen goes to
-			// the tab it landed on rather than leaving it behind a bucket he has to guess. A light
-			// that has never answered has no name yet, and its tab is titled by its address — which
-			// is exactly the light he is looking at.
-			bucket = 'available';
-			selected = light.address;
-		} catch (problem) {
-			addFailed = t('devices.add_refused', { why: describe(problem) });
-		} finally {
-			adding = false;
-		}
-	};
-
 	/**
 	 * Puts one light out of the way, or brings it back.
 	 *
@@ -614,19 +565,6 @@
 		}
 	};
 
-	/** Takes one light off the list. Refused while a binding still shows a printer on it, in words. */
-	const takeOff = async (one: LightFacts): Promise<void> => {
-		const light = nameOf(one);
-		removeSaid[light] = '';
-
-		try {
-			await api.removeLight(light);
-			await load();
-		} catch (problem) {
-			removeSaid[light] = t('devices.remove_refused', { why: describe(problem) });
-		}
-	};
-
 	onMount(() => {
 		void load();
 	});
@@ -639,41 +577,45 @@
 		<p class="font-ui text-xs text-wled-text-quiet">{known.note === '' ? t('devices.discovery_note') : known.note}</p>
 	</header>
 
-	<!-- Adding a light: a person types an address, and the module reads the light before it keeps
-	     it, so what comes back is what answered. Nothing is kept when something refuses. -->
-	<Panel>
-		<div class="flex flex-wrap items-end gap-section">
-			<Field id="light-address" label={t('devices.add_label')}>
-				{#snippet children()}
-					<FieldInput
-						id="light-address"
-						class="w-64 font-data"
-						placeholder={t('devices.add_placeholder')}
-						autocomplete="off"
-						spellcheck="false"
-						value={typed}
-						oninput={(value) => (typed = value)}
-					/>
-				{/snippet}
-			</Field>
-			<Button variant="secondary" disabled={adding || typed.trim() === ''} onclick={() => void addLight()}>
-				{adding ? t('devices.add_busy') : t('devices.add_button')}
-			</Button>
-			<span class="pb-tight font-ui text-xs text-wled-text-quiet">{t('devices.add_hint')}</span>
-		</div>
+	<!-- The five declared slots. They are the manifest's own options, and the only addresses this
+	     module may contact: an empty slot is filled in the extension's settings, never here, and
+	     saying so on the screen is what stops a person looking for an add button that would make
+	     the egress declaration false. A filled slot carries what the light answered; the tabs below
+	     carry the rest of its card. -->
+	<Panel title={t('devices.slots_heading')} pad="none">
+		{#snippet meta()}
+			<span class="font-ui text-xs text-wled-text-quiet">{t('devices.slots_meta')}</span>
+		{/snippet}
+		<ul class="divide-y divide-wled-line" data-slot-list>
+			{#each known.slots as slot (slot.slot)}
+				<li class="flex flex-col gap-tight px-panel py-row" data-slot={slot.slot} data-slot-filled={slot.filled}>
+					<div class="flex flex-wrap items-center gap-row">
+						<span class="font-data text-xs text-wled-text-quiet">{t('devices.slot_label', { slot: slot.slot })}</span>
+						{#if slot.filled && (slot.address ?? '') !== ''}
+							<span class="font-data text-xs">{slot.address}</span>
+							{#if slot.facts_known && (slot.calls_itself ?? '') !== ''}
+								<span class="font-ui text-xs font-medium">{slot.calls_itself}</span>
+							{/if}
+							{#if slot.facts_known}
+								<span class="font-data text-xs text-wled-text-quiet">{slot.firmware ?? t('devices.fact_firmware_unknown')}</span>
+								<span class="font-data text-xs text-wled-text-quiet">{t('devices.slot_pixels', { pixels: slot.pixels ?? 0 })}</span>
+								<span class="font-ui text-xs text-wled-text-quiet">
+									{slot.kind === 'panel' ? t('devices.shape_panel') : slot.kind === 'strip' ? t('devices.shape_strip') : t('devices.shape_unknown')}
+								</span>
+							{:else}
+								<span class="font-ui text-xs text-wled-text-quiet">{t('devices.slot_unread')}</span>
+							{/if}
+						{:else}
+							<span class="font-ui text-xs text-wled-text-quiet">{t('devices.slot_empty', { slot: slot.slot })}</span>
+						{/if}
+					</div>
+					{#if slot.filled && (slot.note ?? '') !== ''}
+						<p class="font-ui text-xs text-wled-text-quiet">{slot.note}</p>
+					{/if}
+				</li>
+			{/each}
+		</ul>
 	</Panel>
-
-	{#if added !== ''}
-		<Panel>
-			<p class="font-ui text-sm" role="status">{added}</p>
-		</Panel>
-	{/if}
-
-	{#if addFailed !== ''}
-		<Panel>
-			<p class="font-ui text-sm text-wled-danger" role="alert">{addFailed}</p>
-		</Panel>
-	{/if}
 
 	{#if failure !== ''}
 		<Panel>
@@ -1008,25 +950,6 @@
 						<p class="font-ui text-xs" role="status">{ignoreSaid[light]}</p>
 					{/if}
 
-					<!-- Taking the light off the list. Off while a binding still writes to it, with the
-					     reason beside it, and the route refuses it too if it is called some other way. -->
-					<div class="flex flex-wrap items-center gap-row border-t border-wled-line pt-row">
-						<Button
-							variant="ghost"
-							size="sm"
-							disabled={busy[light] === true || one.bindings.length > 0}
-							onclick={() => void takeOff(one)}
-						>
-							{t('devices.remove_button')}
-						</Button>
-						<span class="font-ui text-xs text-wled-text-quiet">
-							{one.bindings.length > 0 ? t('devices.remove_bound', { count: one.bindings.length }) : t('devices.remove_note')}
-						</span>
-					</div>
-
-					{#if (removeSaid[light] ?? '') !== ''}
-						<p class="font-ui text-xs text-wled-danger" role="alert">{removeSaid[light]}</p>
-					{/if}
 				</div>
 			</Panel>
 		{/snippet}

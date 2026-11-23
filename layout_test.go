@@ -190,11 +190,13 @@ func TestTheLayoutIsOptionalAndItsDefaultsAreThePictureTheOperatorAskedFor(t *te
 		t.Fatalf("the settings with no layout read as %+v, want %+v", got, want)
 	}
 
-	// The manifest declares no layout setting any more: the layout is one of the things the store
-	// owns (docs/product-requirements.md §4), and the default above is what a start with nothing
-	// configured composes with. Nothing about the picture changed with it.
-	if keys := settingsKeys(t); len(keys) != 0 {
-		t.Fatalf("module.yaml declares the settings %v, and the layout is the store's", keys)
+	// The manifest declares no layout setting: the layout is one of the things the store owns
+	// (docs/product-requirements.md §4), and the default above is what a start with nothing
+	// configured composes with. The only options are the five light addresses (declared.go).
+	for _, key := range settingsKeys(t) {
+		if !strings.HasPrefix(key, "light") || !strings.HasSuffix(key, "_address") {
+			t.Fatalf("module.yaml declares the setting %q, and the layout is the store's", key)
+		}
 	}
 
 	// A layout that draws nothing of its own is a panel drawn exactly as it was before this setting

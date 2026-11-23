@@ -141,13 +141,45 @@ export interface KnownLight {
   note?: string;
 }
 
-/** GET /lights: every light this module knows, and the sentence about discovery. */
+/**
+ * One of the five declared light addresses, as GET /lights answers with it.
+ *
+ * The slots are the manifest's `options` block — `light1_address` to `light5_address` — and the
+ * only addresses this module may contact. An empty slot is filled in the extension's own settings
+ * and nowhere else, which is why the screen draws it rather than offering a way to add one.
+ */
+export interface LightSlot {
+  /** The slot's number, counting from one: `light1_address` is slot 1. */
+  slot: number;
+  /** Whether the option names an address. */
+  filled: boolean;
+  /** The address as this module dials it, absent on an empty slot. */
+  address?: string;
+  calls_itself?: string;
+  firmware?: string;
+  pixels?: number;
+  kind?: 'panel' | 'strip';
+  width?: number;
+  height?: number;
+  probed_at?: string;
+  facts_known: boolean;
+  /** What the slot must not leave a reader to assume: where an empty one is filled in, or that a
+   * filled one has not answered yet. */
+  note?: string;
+}
+
+/** GET /lights: the five declared slots, and the lights that fill them. */
 export interface LightsBody {
+  slots: LightSlot[];
+  slot_count: number;
   lights: KnownLight[];
   count: number;
   persisted: boolean;
-  /** That finding lights needs the host to carry mDNS across its Docker bridge, that this module
-   * does not browse yet, and that typing an address works. */
+  /**
+   * The sentence about where addresses live: the five options in the extension's settings, and —
+   * when no slot is filled — the one-time migration from 0.8.0, whose addresses are in the store
+   * but no longer in any option.
+   */
   note: string;
 }
 
@@ -928,13 +960,10 @@ const routes = (namespace: string) => {
     listControllers: operation('list-controllers', 'GET', `${base}/controllers`, 'json'),
     readController: operation('read-controller', 'GET', `${base}/controllers/{name}`, 'json'),
 
-    // The lights this module knows, which is not the same list as the controllers it drives: a
-    // light somebody owns is a fact whether or not a printer is shown on it. The list is what the
-    // Lights screen draws a card per entry from; the add route is a person typing an address, which
-    // is read before it is kept.
+    // The five declared light addresses and the lights that fill them. There is no add and no
+    // remove: the addresses are the extension's own settings, and a screen that could add a sixth
+    // would make the manifest's egress declaration false.
     listLights: operation('list-lights', 'GET', `${base}/lights`, 'json'),
-    addLight: operation('add-light', 'POST', `${base}/lights`, 'json', 'application/json'),
-    removeLight: operation('remove-light', 'DELETE', `${base}/lights/{name}`, 'json'),
 
     // Putting one light out of the way, and bringing it back. Two verbs on one noun, the way the
     // rest of this surface works: the light is the thing, and the method is the decision. Ignoring
@@ -1068,22 +1097,6 @@ export const moduleApi = (host: ModuleHost) => {
 
     /** Every light this module knows, whether or not a printer is shown on it. */
     listLights: () => transport.call<LightsBody>(held.listLights, {}, host.signal),
-
-    /**
-     * Adds a light by its address. The route reads the light before it keeps it, so what comes back
-     * is what answered: its own name, its firmware, its pixels and its shape. A refusal is the
-     * sentence saying what happened, and nothing was stored.
-     */
-    addLight: (address: string) =>
-      transport.call<{ light: KnownLight; note: string }>(held.addLight, { body: { address } }, host.signal),
-
-    /** Takes a light off the list. Refused while a binding still names it, and the refusal says so. */
-    removeLight: (name: string) =>
-      transport.call<{ deleted: string; address: string; note: string }>(
-        held.removeLight,
-        { path: { name } },
-        host.signal,
-      ),
 
     /**
      * Puts one light out of the way: it stays on the list and off every screen that offers a

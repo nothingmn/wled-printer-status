@@ -146,6 +146,21 @@ type deviceAPI struct {
 	// rest is how the wait passes its time. Nil means time.Sleep; a test hands it a fake clock,
 	// so that the sequence of a reboot can be walked through in microseconds.
 	rest func(time.Duration)
+
+	// permits answers whether one address is one of the settings' declared light slots. Nil means
+	// no declaration is in force — a module built before the manifest carried options, and every
+	// test that builds this value of its own. The process sets it to addressDeclared, so every
+	// read, snapshot, restore and identify on this surface asks the same question the writers do.
+	permits func(string) bool
+}
+
+// allows answers whether one address may be contacted, with the nil rule above.
+func (api deviceAPI) allows(address string) bool {
+	if api.permits == nil {
+		return true
+	}
+
+	return api.permits(address)
 }
 
 // now is the instant this surface judges a snapshot and a reboot at.
@@ -233,7 +248,7 @@ func (api deviceAPI) deviceNamed(name string) (controllerAnswer, bool, error) {
 	// bound to it (lights.go). Its entry says exactly that — no printers, no taken segments — and
 	// the address is the light's own, so the reads below reach it.
 	if api.tables != nil {
-		if light, known := api.tables.knownLightNamed(name); known {
+		if light, known := api.tables.knownLightNamed(name); known && api.allows(light.Address) {
 			return controllerAnswer{
 				Name:     light.name(),
 				Address:  light.Address,
@@ -282,6 +297,11 @@ func (api deviceAPI) deviceAndLight(name string) (controllerAnswer, controllerCo
 
 	if !ok {
 		return controllerAnswer{}, nil, api.unknownDevice(name)
+	}
+
+	if !api.allows(found.Address) {
+		return controllerAnswer{}, nil, ControllerNotFound.New(refusedReason(found.Address)).With(
+			fault.StringParam("controller", strings.TrimSpace(name)))
 	}
 
 	light, err := api.lightFor(found.Address)

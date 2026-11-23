@@ -99,6 +99,21 @@ type bindingAPI struct {
 	// module was granted no data directory, and then a change is refused rather than applied and
 	// lost — see reviseStored.
 	tables *configTables
+
+	// permits answers whether one address is one of the settings' declared light slots. Nil means
+	// no declaration is in force — a module built before the manifest carried options, and every
+	// test that builds this value of its own — and the route then behaves as it did before the cap.
+	// The process sets it to addressDeclared.
+	permits func(string) bool
+}
+
+// allows answers whether one address may be contacted, with the nil rule above.
+func (api bindingAPI) allows(address string) bool {
+	if api.permits == nil {
+		return true
+	}
+
+	return api.permits(address)
 }
 
 // kept answers whether this module has a store it can keep a change in, which is what `persisted`
@@ -221,6 +236,40 @@ type bindingsAnswer struct {
 
 	// NamesReadFailed says why a printer's name is missing, absent when the host answered.
 	NamesReadFailed string `json:"names_read_failed,omitempty"`
+
+	// Refused is every binding the store holds whose address is not one of the five declared light
+	// slots. It is not driven, not probed and never written to (declared.go). It is reported here
+	// rather than silently dropped, because the row is exactly what a person has to see in order
+	// to copy its address into the extension's settings, or delete it.
+	Refused []refusedBinding `json:"refused,omitempty"`
+}
+
+// refusedBinding is one binding the declaration refuses, and why.
+type refusedBinding struct {
+	ID         string `json:"id"`
+	Controller string `json:"controller"`
+	Light      string `json:"light"`
+	Segment    int    `json:"segment"`
+	Whole      bool   `json:"whole"`
+	Reason     string `json:"reason"`
+}
+
+// refusedAnswersOf renders the refused rows, in the operator's order.
+func refusedAnswersOf(set bindings) []refusedBinding {
+	out := make([]refusedBinding, 0, len(set))
+
+	for _, b := range set {
+		out = append(out, refusedBinding{
+			ID:         b.ID,
+			Controller: b.Address,
+			Light:      lightName(b.Address),
+			Segment:    b.Segment,
+			Whole:      b.Segment < 0,
+			Reason:     refusedReason(b.Address),
+		})
+	}
+
+	return out
 }
 
 // answerOf renders one binding for a caller, with the printer's name when there is one.
@@ -308,12 +357,15 @@ func (api bindingAPI) printerNames(ctx context.Context) (map[string]string, stri
 
 // listBindings is GET /bindings: the set this module is driving.
 func (api bindingAPI) listBindings(w http.ResponseWriter, r *http.Request) {
-	set := api.live.set()
+	// The whole stored set, refused rows included: a binding the declaration will not drive is a
+	// row a person has to be able to find, so it is answered in `refused` rather than left out.
+	running := api.live.set()
 	names, why := api.printerNames(r.Context())
 
 	answer(w, http.StatusOK, bindingsAnswer{
-		Bindings:        answersOf(set, names),
-		Count:           len(set),
+		Bindings:        answersOf(running, names),
+		Count:           len(running),
+		Refused:         refusedAnswersOf(api.live.refused()),
 		Source:          api.live.source(),
 		Persisted:       api.kept(),
 		NamesReadFailed: why,
@@ -323,7 +375,7 @@ func (api bindingAPI) listBindings(w http.ResponseWriter, r *http.Request) {
 // readBinding is GET /bindings/{id}: one binding, by its own name.
 func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	set := api.live.set()
+	set := api.live.all()
 
 	found, ok := set.find(id)
 	if !ok {
@@ -338,11 +390,17 @@ func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 
 	foundAnswer := answerOf(found, positionOf(set, found.ID), names)
 
-	answer(w, http.StatusOK, map[string]any{
+	said := map[string]any{
 		"binding":           foundAnswer,
 		"persisted":         api.kept(),
 		"names_read_failed": why,
-	})
+	}
+
+	if !api.allows(found.Address) {
+		said["refused"] = refusedAnswersOf(bindings{found})
+	}
+
+	answer(w, http.StatusOK, said)
 }
 
 // bindingRequest is what POST and PUT accept: one binding, written the way the `bindings`
@@ -427,6 +485,16 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The declaration first, before the host is asked and before the store is touched: an address
+	// the settings do not name is a binding this module may not drive, so it is refused in words
+	// and nothing is written. This is the route-level half of declared.go's rule; the watch is the
+	// other half, for a binding that reached the store before the rule existed.
+	if !api.allows(strings.TrimSpace(asked.Controller)) {
+		refuse(w, r, BindingRefused.New(refusedReason(strings.TrimSpace(asked.Controller))))
+
+		return
+	}
+
 	deviceID, err := api.resolveName(r.Context(), asked.Printer)
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
@@ -484,6 +552,14 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 	asked, err := readBindingRequest(r)
 	if err != nil {
 		refuse(w, r, BindingBodyInvalid.New(err.Error()))
+
+		return
+	}
+
+	// A move to an address the declaration does not name is refused before anything is read or
+	// written, for the same reason a create is: the watch would never drive it.
+	if !api.allows(strings.TrimSpace(asked.Controller)) {
+		refuse(w, r, BindingRefused.New(refusedReason(strings.TrimSpace(asked.Controller))))
 
 		return
 	}
@@ -864,7 +940,7 @@ func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 	// point is that a light exists before anything is shown on it (lights.go). Its entry carries no
 	// printers and no taken segments, because nothing is bound to it yet.
 	if api.tables != nil {
-		if light, ok := api.tables.knownLightNamed(name); ok {
+		if light, ok := api.tables.knownLightNamed(name); ok && api.allows(light.Address) {
 			answer(w, http.StatusOK, api.readSegments(r.Context(), controllerAnswer{
 				Name:     light.name(),
 				Address:  light.Address,
@@ -918,6 +994,10 @@ func (api bindingAPI) readSegments(ctx context.Context, one controllerAnswer) co
 // the outer bound for a socket that hangs without answering at all. The host gives a route ten
 // seconds before the caller gets nothing, so this one must not be able to spend them.
 func (api bindingAPI) stateOf(ctx context.Context, address string) (wled.State, error) {
+	if !api.allows(address) {
+		return wled.State{}, errors.New(refusedReason(address))
+	}
+
 	light, err := api.lightFor(address)
 	if err != nil {
 		return wled.State{}, err
