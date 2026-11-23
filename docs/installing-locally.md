@@ -2655,6 +2655,166 @@ was actually installed, and the declaration that names it, read `wled-release-8e
 `0.7.0` and differ only by the harness removal, which is in no bundle; the archive is of `0.6.0`, so the
 restore is the same either way. The two do not agree, and that is recorded rather than tidied.
 
+## 13. `0.9.0`: five declared addresses, and a settings change that restarts the module only
+
+Everything since `0.7.0` is one shape and the way back to it. The marketplace refused `0.8.0` because the
+process connects to WLED controllers and the manifest declared no `egress`; the format cannot name a host a
+module learns at run time, and has no form for a list, so this release adopts the shape it does support:
+five `url` options, `light1_address` to `light5_address`, each with one `egress` entry on ports 80 and 4048
+from the process. Those five values are then the whole of the address set — the module reads them from its
+own settings on every pass, and a binding, a light row or a route naming any other address is not driven,
+not probed and never written to. The Lights screen stops adding and removing lights and draws the five
+slots instead; `POST /lights` and `DELETE /lights/{name}` are gone, and `GET /lights` answers `slots` and
+`slot_count`. **The store does not step**: `storeVersion` is `10`, the number `0.7.0` wrote, so nothing here
+is refused by an older build for its version — the way back is still two halves, because this release's
+declaration carries `options` and `checks` that `0.7.0`'s code cannot read.
+
+**Both halves of the version moved together, and the release was built from `git archive`.** The tag is
+annotated and points at this commit:
+
+```console
+$ grep -n '^version:' module.yaml
+17:version: 0.9.0
+$ grep -n 'release = extension.Version' main.go
+129:	release = extension.Version("0.9.0")
+$ git log --oneline -1
+987fb81 Declare the five light addresses, and reach nothing else
+$ git for-each-ref refs/tags/v0.9.0 --format='%(refname:short) %(objecttype) %(*objectname:short)'
+v0.9.0 tag 987fb81
+```
+
+The four gates and the race run were made in the containers against this commit before the build, as
+every release here has been. Unlike §12 this record does not carry their output: the transcript was not captured
+to a file, so what follows is the release they produced and the install that followed it, and nothing about
+the gates is claimed beyond that they were run.
+
+**The release directory is the same ten files as `0.7.0`, and `sha256sum -c` reports OK for all ten** —
+verified in the container, as the core's own uid, in the directory the install read:
+
+```console
+$ docker exec prusa_connect sh -c 'cd /config/config.d/wled-release-987fb81 && sha256sum -c checksums.txt; echo EXIT=$?'
+CHANGELOG.md: OK
+LICENSE: OK
+module.yaml: OK
+README.md: OK
+ui/index.js: OK
+ui/locales/en.json: OK
+wled-printer-status_darwin_arm64: OK
+wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK
+wled-printer-status_windows_amd64.exe: OK
+EXIT=0
+```
+
+The linux binary is 12,060,486 B and hashes to `01db3056…`, against `0.7.0`'s 12,005,586 B and `a162b7ca…`.
+The shipped bundle is `800e3992…` at 305,175 B, against `81e4683b…` at 306,028 B, so 853 B smaller than
+`0.7.0`'s; nothing here measured why, and the two screens differ in both directions. `ui/locales/en.json` is
+`e99a4ced…` at 57,406 B.
+
+**Staged through the container, installed with `-settings`, one restart.** `/config/config.d` is
+`0700 prusa:prusa`, so both the release and the settings document went in with `docker cp`, and the
+settings file was read from inside the container like the release:
+
+```console
+$ cat wled-settings-987fb81.json
+{
+  "light1_address": "http://10.0.0.136",
+  "light2_address": "http://10.0.0.253",
+  "light3_address": "",
+  "light4_address": "",
+  "light5_address": ""
+}
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.9.0 \
+    -from /config/config.d/wled-release-987fb81 \
+    -settings /config/config.d/wled-settings-987fb81.json -approve
+```
+
+The flag is `-approve`; `module add -h` lists no `-accept`, and a line carrying one fails before it reads
+anything. **That command's own stdout was not captured to a file, so it is not quoted here** — the `0.7.0`
+entry above is the one that quotes it from the terminal. What it read and what it wrote were both read
+back afterwards. It read five egress entries, one per option, each naming that option and ports 80 and
+4048 from the process — the manifest's `egress` block is those five lines — and two checks this release
+adds, `configure_resource` and `operate_resource`, which are what its write routes ask the host about the
+person in the request:
+
+```json
+"module": { "asked": { "permissions": ["observe"],
+                       "checks": ["configure_resource", "operate_resource"],
+                       "memory_mib": 32, "data": true },
+            "title": "WLED Printer Status", "version": "0.9.0",
+            "options": [ { "key": "light1_address", "type": "url", … }, … five ] },
+"config": { "light1_address": "http://10.0.0.136", "light2_address": "http://10.0.0.253",
+            "light3_address": "", "light4_address": "", "light5_address": "" },
+"enabled": true, "runtime": "service", "generation": 31
+```
+
+**One restart, and it was the core's**: it was asked to stop at `18:10:43.750Z`, the container answered
+`StartedAt=2026-11-23T18:10:44.294Z`, and the module was serving `0.9.0` 675 ms after that:
+
+```console
+msg="wled-printer-status was asked to stop"
+msg="wled-printer-status: gave segment 2 \"Front 1\" back to http://10.0.0.253: pixels 14-24, colour
+     8,255,0 0,0,0 0,0,0, effect 102, brightness 255"
+msg="wled-printer-status 0.9.0 is serving on stdio as pid 23"
+msg="wled-printer-status: the set this start runs is the one in this module's own store at
+     /config/config.d/module-data/wled-printer-status/config.json, schema version 10 (2 bindings);
+     the settings are a migration source and are not applied again"
+msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at brightness 128"
+msg="wled-printer-status: watching printer 07e893bb-… and driving segment 2 of http://10.0.0.253,
+     leaving its other segments and its brightness and power alone"
+msg="the child process is serving" … plugin_version=0.9.0 contract=1.1.0
+     mount=/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+msg=readiness ready=true serving=6 declared=6 …
+```
+
+**There is no upgrade line, and its absence is the record.** `grep -c "was upgraded"` over the log since
+that start answers 0, and the store is byte-identical to the copy archived before the install — schema
+`10`, 2,259 B, `sha256 c80b4238…`, the same hash the rollback document carries. So the settings document
+was a migration source for a store that already had everything in it, which is exactly what the start line
+says.
+
+**The proofs, each with its answer**, read at `18:19Z` with a print running:
+
+| read | answer |
+|---|---|
+| `GET …/status` | `200`, `build` `{"version":"0.9.0","contract":1,"store_schema":10,"repository":"https://github.com/nothingmn/wled-printer-status"}`, **two** bindings, `last_send.ok: true` on both, panel frame `progress` at `5%` of 16,384 pixels and strip frame `progress` at `5%` of 48 |
+| `GET …/lights` | `200`, `slot_count: 5` — slots 1 and 2 filled (`http://10.0.0.136` `morpheus`, `14.7.0-mdev`, 16,384 pixels, panel; `http://10.0.0.253` `CyberDesk`, `16.0.1`, 48 pixels, strip), slots 3, 4 and 5 empty with the sentence saying where an address is filled in |
+| `GET /api/v1/readiness` | `200`, `ready: true`, `serving 6 declared 6`, `blocked: []`, this module `ready` |
+| the store | `version 10`, 2,259 B, `c80b4238…` — unchanged from before the install |
+
+**A settings change restarts the module process and not the core, and that was tested rather than assumed.**
+The instance's record for this module was written twice, the way a settings save writes it: first with
+`light3_address` filled with `http://127.0.0.1`, then back to `""`. Each write made the host restart the
+child, and neither touched the container:
+
+```console
+fill    record generation 32, child stopped 18:12:02.154, "0.9.0 is serving on stdio as pid 152" 18:12:02.668,
+        readiness serving=6 declared=6 at 18:12:03.494
+empty   record generation 33, child stopped 18:12:16.122, "0.9.0 is serving on stdio as pid 166" 18:12:18.232,
+        readiness serving=6 declared=6 at 18:12:18.494
+        and, in the gap: msg="a module refused a request" path=/frames
+        error="core.internal/RESOURCE_NOT_READY: sink:wled-printer-status is stopping"
+        (the same for /pause and /printers, at 18:12:17.228Z)
+```
+
+The container's `StartedAt` stayed `18:10:44.294Z` across both, so the core never restarted; the module
+child was serving again 0.5 s after the first stop and 2.1 s after the second, readiness was back at 6
+half a second later still, and a page open through either saw one `RESOURCE_NOT_READY` per route in flight. Filling a slot that names no
+light changed nothing else: the two bindings, the three known lights, the layout row and the moments all
+survived both restarts unchanged.
+
+**`egress` is not persisted in the instance's `resources.json` on this build.** `grep -c egress` over that
+file answers `0` on an install whose manifest declares five entries and whose prompt read all five. The
+declaration keeps the `config`, the permissions, the checks and the memory budget; the network reach lives
+in the release's manifest and nowhere else, so the record cannot be read as evidence for it.
+
+The way back is `/home/robchartier/wled-rollback/0.9.0-987fb81/ROLLBACK-987fb81.md`: the `0.7.0` release is
+still on the volume as `wled-release-8e61d04`, its binary is `a162b7ca…` and its bundle `3ecc202a…`, and
+**that document has two halves because going back is two acts** — the schema-10 store copy and the
+`module add` line — followed by one restart. `0.9.0` does not step the schema, so the store half is there
+because a write made during this deploy would otherwise survive a rollback, not because the number moved.
+
 ## Two facts a reader has to know
 
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read

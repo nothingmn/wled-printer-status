@@ -471,48 +471,180 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **229 tests** — 123 in
-the root package, 23 in `internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in
-`internal/ddp`, 6 in `internal/matrix` and 5 in `internal/text` — and they pass without touching a network
+`gofmt -l .` prints nothing when the tree is formatted. As of this commit there are **473 tests** — 358 in
+the root package, 24 in `internal/printer`, 21 in `internal/render`, 43 in `internal/wled`, 14 in
+`internal/ddp`, 6 in `internal/matrix` and 7 in `internal/text` — and they pass without touching a network
 or a real controller:
 the light and the printer are both faked in the tests that need one, and the ones about a minute-long
 heartbeat or a five-minute outage move a fake clock instead of waiting. There is no `go.sum`: the only
 dependency is the SDK, replaced by a directory, so nothing is fetched and there is no hash to record.
 
-## Installing
+## Installing it yourself, without the marketplace
 
-There is an install path, and it has been walked. [`docs/installing-locally.md`](docs/installing-locally.md)
-is the record of one install on a running Prusa Connect, with the commands as they were run and the output
-they gave: the release directory and the checksums a release has to carry, the ownership the core needs
-before it can read the files, the `module add` that writes the declaration, and the restart the install owes
-afterwards. Start there rather than here — and read its §4a first, which is what a person installing this
-release needs and every earlier run in that record did not: the manifest declares no settings, so `-settings`
-is left off.
+The marketplace is not open yet, so the way to install this today is by hand: build the release from the
+commit you want, put the directory where the Prusa Connect container can read it, and let the server's own
+`module add` write the declaration. What follows is the recipe, and
+[`docs/installing-locally.md`](docs/installing-locally.md) §13 is the run of it that installed `0.9.0`, with
+its output.
 
-`install.sh` in this tree is the project generator's script and is stale: it wants a Go toolchain on your
-machine and a Prusa Connect checkout at a fixed path. Do not read it as documentation of how this module
-installs.
+One thing this path is not. `install.sh` in this tree is the project generator's script and is stale: it
+wants a Go toolchain on your machine and a Prusa Connect checkout at a fixed path. It is not how this
+module installs.
 
-A module is installed through the server's own command, which verifies the release, records its digest,
-and writes the declaration:
+### What the machine that builds it needs
+
+- **Docker.** Every build and every test below runs in a container.
+- **No Go toolchain, and none is wanted.** The compiler lives in `golang:1.26.11`, which is the whole
+  toolchain, and the binary it produces is static so that it runs inside the Prusa Connect container
+  rather than on your host.
+- **A Prusa Connect source checkout beside this one**, at `../prusa-connect`, with the relative symlink
+  `ln -s ../prusa-connect .core`. `go.mod` replaces the SDK with `./.core/sdk`, which is the path the
+  marketplace's own builder creates for itself. It has to be a sibling because a container that mounts
+  the parent directory is what makes that path resolve here and in the builder both.
+- **Node 22**, and not on the host either: the bundle is built in `node:22-bookworm`.
+
+### Build the release from a commit
+
+Build from what is committed, out of the object store, and not from the working tree — one writer per
+checkout, and the export is the only thing that cannot carry somebody else's half-finished file:
 
 ```bash
-prusa-connect module add github.com/nothingmn/wled-printer-status@0.1.0 -from dist
+ROOT=~/wled-build-987fb81
+git -C ~/prusa/wled-printer-status status --porcelain --untracked-files=no   # must print nothing
+mkdir -p "$ROOT/src" "$ROOT/release"
+git -C ~/prusa/wled-printer-status archive 987fb81 | tar -x -C "$ROOT/src"
 ```
 
-Without `-approve` the declaration is written switched off, and the command prints what the module asked
-for so you can read it first. This module asks for `observe`, which is what lets it read one printer and
-follow that printer's event stream as itself, with nobody behind the call; for `configure_resource` and
-`operate_resource` under `checks`, which are the two questions it asks the host about the person in a
-request and are not grants to act as itself ([who may change what](#who-may-change-what)); and for one writable
-directory — its own configuration store, one versioned JSON document holding the bindings and the five
-tables the Colours, Events, Layout, Brightness and Overview screens edit, which is what lets a change made
-through any of its routes survive a restart and an upgrade. It declares **two** outbound
-connections, both from this process: port 80, where the status colour and the progress are written as JSON
-state, and **UDP port 4048**, where pixels go over DDP once a second while a panel or a word holds one. Both
-were once declared against the setting the address was typed into; a manifest with no settings has nothing to
-point at, so the two controllers this release is proven against are named in the block and the note beside it
-says what that costs.
+The binaries, one for each platform `module.yaml` declares — `linux_amd64`, `linux_arm64`,
+`darwin_arm64`, `windows_amd64` — built in the Go container with cgo off and the paths trimmed, because
+the binary has to be static and the paths in it are not the machine it was built on:
+
+```bash
+docker run --rm --user $(id -u):$(id -g) \
+  -e HOME=/tmp -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath -e CGO_ENABLED=0 \
+  -v ~/prusa:/work -v "$ROOT/src":/src -v "$ROOT/release":/out -w /src \
+  golang:1.26.11 sh -c 'set -eu; ln -s /work/prusa-connect /src/.core;
+    for p in linux_amd64 linux_arm64 darwin_arm64 windows_amd64; do
+      goos=${p%%_*}; goarch=${p#*_}; ext=; [ "$goos" = windows ] && ext=.exe
+      GOOS=$goos GOARCH=$goarch go build -trimpath -o /out/wled-printer-status_${goos}_${goarch}${ext} .
+    done'
+```
+
+The bundle, built fresh in the node container. `--frozen-lockfile` so the lock that was reviewed is the
+one that builds, and `check` before `build` so a type error stops the release instead of shipping:
+
+```bash
+docker run --rm --user $(id -u):$(id -g) -e HOME=/tmp -e CI=true \
+  -v "$ROOT/src":/src -w /src/ui node:22-bookworm \
+  sh -c 'set -eu; mkdir -p /tmp/bin; corepack enable --install-directory /tmp/bin;
+         export PATH=/tmp/bin:$PATH;
+         pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store
+           && pnpm run check && pnpm run build'
+```
+
+Then the release directory, in the shape the install reads: `module.yaml` at its root with `ui/` beneath
+it, because that is the manifest it parses and the bundle it copies under `bundle/`.
+
+```bash
+cp "$ROOT/src/module.yaml" "$ROOT/src/README.md" "$ROOT/src/CHANGELOG.md" "$ROOT/src/LICENSE" "$ROOT/release/"
+cp -a "$ROOT/src/ui/dist/ui" "$ROOT/release/ui"
+chmod 644 "$ROOT/release/module.yaml"
+cd "$ROOT/release"
+find . -type f ! -name checksums.txt -printf '%P\n' | sort | xargs sha256sum > checksums.txt
+sha256sum -c checksums.txt
+```
+
+Ten files: the manifest, three documents, `ui/index.js`, `ui/locales/en.json`, the four binaries and
+`checksums.txt`. `checksums.txt` covers every one of the others and not itself, and the install verifies
+every line of it before it writes anything.
+
+### Put the release where the core can read it
+
+`/config/config.d` inside the container is `0700 prusa:prusa`, so a copy made from the host lands where
+the core cannot read it. Stage it through the container, and verify it as the core's own user before the
+install reads it:
+
+```bash
+docker cp "$ROOT/release" prusa_connect:/config/config.d/wled-release-987fb81
+docker exec -u 10001 prusa_connect sh -c \
+  'cd /config/config.d/wled-release-987fb81 && sha256sum -c checksums.txt; echo EXIT=$?'
+```
+
+### Write the settings document
+
+Five options, and they are the module's whole network reach: it contacts the addresses named there and
+nothing else, and a light it was not told about is a light it cannot drive. A filled-in document, with the
+last three slots left empty, is this and nothing more:
+
+```json
+{
+  "light1_address": "http://10.0.0.136",
+  "light2_address": "http://10.0.0.253",
+  "light3_address": "",
+  "light4_address": "",
+  "light5_address": ""
+}
+```
+
+It goes into the container too, beside the release, because `-settings` is read inside the container:
+
+```bash
+docker cp wled-settings.json prusa_connect:/config/config.d/wled-settings-987fb81.json
+```
+
+### Install it, and restart the core once
+
+**The full repository path matters.** `github.com/nothingmn/wled-printer-status`, not the bare repository
+name, which answers 404. `-approve` writes the declaration and switches the instance on; without it the
+declaration is written switched off, and the command prints what the module asks for so that you can read
+it first.
+
+```bash
+docker exec prusa_connect /prusa_connect module add \
+  github.com/nothingmn/wled-printer-status@0.9.0 \
+  -from /config/config.d/wled-release-987fb81 \
+  -settings /config/config.d/wled-settings-987fb81.json -approve
+
+docker restart prusa_connect
+```
+
+That restart is the core's, and it is the only one: a running core read its record when it started and
+will not read it again, so the install is not finished until the container comes back. Every other module
+comes back with it, which is why this is one restart and not one per module.
+
+### What to check afterwards
+
+| read | what it says |
+|---|---|
+| `GET …/status` | the `build` block names what is actually running: `{"version":"0.9.0","contract":1,"store_schema":10,…}` |
+| `GET /api/v1/readiness` | `serving` equals `declared`, and this module's own line is `ready` |
+| `GET …/status` again | one entry per binding, each with `last_send.ok: true`, so both lights were written |
+| `GET /api/v1/modules/com.github.aux.nothingmn.wled-printer-status/ui/` | the module's own page, served from the bundle you just installed |
+
+The module's routes are under that mount. `GET …/lights` answers the five slots — a filled one with what
+the light calls itself, its firmware and how many pixels it drives; an empty one saying plainly that it is
+filled in the extension's own settings.
+
+### Changing a slot later
+
+Fill or empty one of the five on the extension's settings page and save. The module process restarts —
+about two seconds — and a page you have open answers `RESOURCE_NOT_READY` once while it does. The core does
+not restart and no other module is touched. An emptied slot takes effect the same way: an address no
+longer named there is not driven, whatever the store still holds for it.
+
+### Rolling back
+
+A store document is refused by a build older than the number in it, so going back is two things and then
+one restart: put the previous store document back, and reinstall the previous release with its own
+`module add` line. Restoring the binary alone leaves the module installed and not starting. The archives,
+each with the store copy and the exact line to run, are under `~/wled-rollback/`, one directory per
+release, each with a `ROLLBACK-*.md`.
+
+### Upgrading from 0.8.0
+
+`0.8.0` kept its light addresses in its own store; this release reads them from these five settings and
+nowhere else. An instance upgraded from it drives **nothing** until each address is copied into a slot —
+the Lights screen says so on every empty slot and the changelog entry says it too.
 
 ## Binding a printer to a light
 

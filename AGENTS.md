@@ -106,9 +106,9 @@ build go test ./... -count=1
 build gofmt -l .
 ```
 
-`gofmt -l .` printing any path is a failure. Today there are **229 tests**: 123 in the root package, 23 in
-`internal/printer`, 20 in `internal/render`, 38 in `internal/wled`, 14 in `internal/ddp`, 6 in
-`internal/matrix` and 5 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
+`gofmt -l .` printing any path is a failure. Today there are **473 tests**: 358 in the root package, 24 in
+`internal/printer`, 21 in `internal/render`, 43 in `internal/wled`, 14 in `internal/ddp`, 6 in
+`internal/matrix` and 7 in `internal/text`. That number is a fact about this commit, not a target — update it here when it
 changes, and never quote it without re-running.
 
 The tests never touch a network and never touch a device. They are fakes and `httptest` servers. If a test
@@ -124,6 +124,77 @@ worst failure shape available: green here, refused at review.
 The workflow pins `core-ref: sdk/v0.1.0-beta.1`. **Pin it, and raise it deliberately.** That pin decides
 which SDK the published binary is built against, so raising it is a change to the shipping artefact's
 dependency and needs the tests re-run against the new tag — not a tidy-up.
+
+## 4a. Installing a release by hand
+
+The marketplace is not open, so a release reaches an instance the way `docs/installing-locally.md` records
+it: a directory under the container's `/config/config.d/`, the core's own `module add`, and one restart.
+The README's install section is the operator's version of this; what follows is the same procedure with the
+ordering that matters to an agent, and the traps that have each cost a session already.
+
+```bash
+# 1. the release, from the object store and never from the working tree
+git -C ~/prusa/wled-printer-status archive <sha> | tar -x -C ~/wled-build-<sha>/src
+#    binaries: golang:1.26.11, CGO_ENABLED=0, -trimpath, one per platform in module.yaml
+#    bundle:   node:22-bookworm, pnpm install --frozen-lockfile && pnpm run check && pnpm run build
+#    layout:   module.yaml and ui/ at the release root; checksums.txt over every other file in it
+
+# 2. stage it through the container — /config/config.d is 0700 prusa:prusa
+docker cp ~/wled-build-<sha>/release prusa_connect:/config/config.d/wled-release-<sha>
+docker exec -u 10001 prusa_connect sh -c \
+  'cd /config/config.d/wled-release-<sha> && sha256sum -c checksums.txt; echo EXIT=$?'
+
+# 3. the settings document, inside the container beside the release
+docker cp ~/prusa/wled-settings-<sha>.json prusa_connect:/config/config.d/wled-settings-<sha>.json
+
+# 4. install, then exactly one restart, and it is the core's
+docker exec prusa_connect /prusa_connect module add \
+  github.com/nothingmn/wled-printer-status@<version> \
+  -from /config/config.d/wled-release-<sha> \
+  -settings /config/config.d/wled-settings-<sha>.json -approve
+docker restart prusa_connect
+
+# 5. prove it, read-only
+curl -s http://127.0.0.1:8080/api/v1/modules/com.github.aux.nothingmn.wled-printer-status/status
+curl -s http://127.0.0.1:8080/api/v1/readiness          # serving must equal declared
+```
+
+**The traps, in the order they bite.**
+
+- **The full namespace, always.** `github.com/nothingmn/wled-printer-status@<version>`. The bare repository
+  name answers 404, and so does anything the host cannot resolve to a record.
+- **Both halves of the version, or the module installs and never starts.** `module.yaml`'s `version` and
+  `main.go`'s `release = extension.Version("…")` are read by different halves of the host: the manifest by
+  `module add`, the constant by the process at handshake. A mismatch writes a declaration naming a version
+  the binary will not claim — the record says installed, the process never becomes serving, and the log
+  says why once. Grep both before building.
+- **A container that mounts only the repository cannot see the host's `/tmp`.** `-from` and `-settings` are
+  paths inside the container. A release staged under the host's `/tmp` and passed to `module add` fails as
+  "no such directory" while the directory is plainly there, one namespace over. Stage through `docker cp`,
+  or tar over stdin.
+- **`module add -settings` rewrites the instance record and needs the core restarted; a settings save on
+  the extension's page needs only the module's own restart.** The first writes `config/config.d/resources.json`,
+  which a running core has already read. The second is the host restarting the child: about two seconds,
+  `RESOURCE_NOT_READY` on any request in flight, no other module touched. Do not reach for
+  `docker restart prusa_connect` because a settings save did not seem to land — look for a new
+  `is serving on stdio as pid` in the module's log first.
+- **The egress list is read at approval and is not persisted on this build.** `resources.json` keeps the
+  settings (`config`), the permissions, the checks and the memory budget; it does not keep the manifest's
+  `egress` entries, so `grep egress resources.json` finds nothing on a perfectly good install. The manifest
+  is the evidence for what the module may reach, not the record. Do not "repair" the record by adding them.
+- **`checks:` only take effect when the instance is re-added.** The host answers `access.check` for an
+  action the *installed* declaration names. A release that adds one, installed by swapping the binary or
+  by a plain restart, leaves the instance holding the old list and its write routes answering
+  `ACCESS_UNKNOWN`. The `module add` line is the fix, and there is no shorter one.
+- **One writer per checkout.** Another agent may be building, testing or editing in the same tree. That is
+  why the release comes from `git archive` and never from the working tree, and why a build script refuses
+  to run when the tracked tree is dirty. Never clean, reset or reformat somebody else's files to make a
+  build go green.
+
+**`install.sh` is not the documented path**, and this file must not call it one. It is the generator's
+script: it wants a Go toolchain on the machine and a Prusa Connect checkout at a fixed `/work/prusa-connect`,
+and nothing a person installs comes out of it. It is left where it is because removing it is a change of
+its own; do not run it, do not cite it, and do not "fix" it as a side errand.
 
 ## 5. The invariants that cost blood
 

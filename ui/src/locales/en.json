@@ -438,8 +438,6 @@
   "devices.unignore_note": "Bringing it back puts it under Available and offers it again everywhere.",
   "devices.unignore_refused": "That light was not brought back: {why}",
   "devices.discovery_note": "The five addresses this module may contact are the extension's own settings, light1_address to light5_address. A light is bound, ignored and tested here; its address is filled in there.",
-  "devices.added": "{address} answered and is on the list. It calls itself {called}, runs firmware {firmware}, drives {pixels} pixels and is a {shape}.",
-  "devices.added_unnamed": "nothing yet — it reports no name",
   "devices.loading": "Reading the lights…",
   "devices.load_failed": "The lights could not be read",
   "devices.no_lights": "None of the five light addresses is filled in, so this module is driving nothing. Open the extension's own settings and set light1_address to light5_address — one WLED controller's address each, such as http://10.0.0.136. Upgrading from 0.8.0? This module can no longer read light addresses from its own store: copy each light's address into those five settings, and this screen will fill them in. Until you do, nothing is driven, nothing is probed and nothing is written to.",
