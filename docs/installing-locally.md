@@ -2815,6 +2815,176 @@ still on the volume as `wled-release-8e61d04`, its binary is `a162b7ca…` and i
 `module add` line — followed by one restart. `0.9.0` does not step the schema, so the store half is there
 because a write made during this deploy would otherwise survive a rollback, not because the number moved.
 
+## 14. `0.9.1`: read as the caller, and a light on plain http only
+
+Everything since `0.9.0` is one fix under the same declaration. Every read route now asks the core which
+printers the person making the request may see and answers with that person's own printers, so a viewer who
+could open the extension no longer reads the whole fleet; the driver, the bindings and the five declared
+addresses are untouched. A light address is accepted only as plain `http` on port 80 — `https://`, a port of
+its own or a path is refused in words that name the two ports the manifest declares — so nothing this
+release dials sits outside what the core approved. **The store does not step**: `storeVersion` is `10`
+before and after, the number `0.7.0` wrote, and no upgrade line appears in the log.
+
+**Both halves of the version moved together.** The tag is annotated and points at this commit:
+
+```console
+$ grep -n '^version:' module.yaml
+17:version: 0.9.1
+$ grep -n 'release = extension.Version' main.go
+129:	release = extension.Version("0.9.1")
+$ git log --oneline -1
+5de8f74 0.9.1: read as the caller, and accept only http on port 80
+$ git for-each-ref refs/tags/v0.9.1 --format='%(refname:short) %(objecttype) %(*objectname:short)'
+v0.9.1 tag 5de8f74
+```
+
+**The manifest is `0.9.0`'s shape, and the declaration this install wrote is that manifest read back.**
+Five `options`, `light1_address` to `light5_address`, each a `url`; and five `egress` entries, one per
+option, each `from: process` on ports 80 and 4048. The instance's `resources.json` holds the five options,
+the two checks `configure_resource` and `operate_resource`, `permissions: [observe]`, `memory_mib: 32` and
+the five slot values under `"version": "0.9.1"` and `"source": "/config/config.d/wled-release-5de8f74"`,
+so the declaration is not a claim about the manifest — it is the manifest the host stored.
+
+`/home/robchartier/prusa/build-5de8f74.log` carries step 2's gates for this commit — `build=0`, `vet=0`,
+`gofmt=clean`, seven packages of tests, and the UI check at `0 errors and 0 warnings` — and it carries no
+`-race` run, so none is claimed here.
+
+**The release directory is the same ten files as `0.9.0`, and `sha256sum -c` reports OK for all ten as the
+core's own uid.** `docker exec -u 10001` prints `10001` first, so the read is made as the account that
+serves the module and not as root:
+
+```console
+$ docker exec -u 10001 prusa_connect sh -c 'id -u; cd /config/config.d/wled-release-5de8f74 && sha256sum -c checksums.txt; echo EXIT=$?'
+10001
+CHANGELOG.md: OK
+LICENSE: OK
+module.yaml: OK
+README.md: OK
+ui/index.js: OK
+ui/locales/en.json: OK
+wled-printer-status_darwin_arm64: OK
+wled-printer-status_linux_amd64: OK
+wled-printer-status_linux_arm64: OK
+wled-printer-status_windows_amd64.exe: OK
+EXIT=0
+```
+
+**The linux binary is `2ca5f5b9…` at 12,103,805 B, against `0.9.0`'s `01db3056…` at 12,060,486 B**, and the
+build log's step 6 carries the same `2ca5f5b966516e4b2e640a7eafa6e74790d2cd733b1555368feb39b484f92e02`
+out of `wled-build-5de8f74/release/`, so the digest in the directory the core reads is the one that was
+built. **The bundle did not change**: `800e3992…` at 305,175 B, byte-identical to `0.9.0`'s bundle and to
+this build's `dist/ui/index.js`. This release moved routes and refusals, not screens; the one UI file that
+moved is `ui/locales/en.json`, `19924148…` at 57,608 B against `e99a4ced…` at 57,406 B, which is where the
+new refusal sentences live.
+
+**Staged through the container, installed with `-settings`, one restart.** The settings document is on the
+volume as `wled-settings-5de8f74.json`, 157 B, `sha256 67708f23…`, and it is the install's whole input:
+
+```console
+$ cat /config/config.d/wled-settings-5de8f74.json
+{
+  "light1_address": "http://10.0.0.136",
+  "light2_address": "http://10.0.0.253",
+  "light3_address": "",
+  "light4_address": "",
+  "light5_address": ""
+}
+$ docker exec prusa_connect /prusa_connect module add \
+    github.com/nothingmn/wled-printer-status@0.9.1 \
+    -from /config/config.d/wled-release-5de8f74 \
+    -settings /config/config.d/wled-settings-5de8f74.json -approve
+```
+
+**That command's stdout was not kept on the host, so the lines it printed are not quoted here as freshly
+read.** Nothing under `/config/config.d` holds a transcript and the container's log carries no install
+line, so `checksums 10 files verified`, one `may check configure_resource` and one
+`may check operate_resource` are part of the deploy's own record and cannot be re-read now. Each is
+answered by the thing it named, and those were re-read: the ten checksums verify as uid `10001` above, and
+the two checks are the `checks` array `resources.json` holds above. What the install wrote, the host's own
+document shows — `"version": "0.9.1"`, five options, both checks.
+
+The one restart was `docker restart prusa_connect`, and the container's own clock says so:
+
+```console
+$ docker inspect -f 'StartedAt={{.State.StartedAt}} RestartCount={{.RestartCount}}' prusa_connect
+StartedAt=2026-11-27T17:11:25.001499506Z RestartCount=0
+```
+
+**The module was serving `0.9.1` two seconds after the container started**, and it borrowed the same
+segment back that `0.9.0` had held. These are the container's log lines around that start, filtered by the
+strings quoted:
+
+```console
+17:11:27.050Z msg="wled-printer-status 0.9.1 is serving on stdio as pid 49"
+17:11:27.068Z msg="wled-printer-status: the set this start runs is the one in this module's own store at
+              /config/config.d/module-data/wled-printer-status/config.json, schema version 10
+              (2 bindings); the settings are a migration source and are not applied again"
+17:11:27.068Z msg="wled-printer-status: watching printer 07e893bb-… and driving http://10.0.0.136 at
+              brightness 128"
+17:11:27.068Z msg="wled-printer-status: watching printer 07e893bb-… and driving segment 2 of
+              http://10.0.0.253, leaving its other segments and its brightness and power alone"
+17:11:27.071Z msg="the child process is serving" … plugin_version=0.9.1 contract=1.1.0
+              mount=/api/v1/modules/com.github.aux.nothingmn.wled-printer-status
+17:11:27.136Z msg="wled-printer-status: borrowed segment 2 \"Front 1\" from http://10.0.0.253: pixels
+              14-24, colour 8,255,0 0,0,0 0,0,0, effect 102, brightness 255; its other segments and the
+              controller's own brightness and power are not touched"
+17:11:27.199Z msg=readiness ready=true serving=6 declared=6 …
+17:11:28.086Z msg="wled-printer-status: the controller is a 256x64 panel, so a frame is drawn as a
+              rectangle"
+```
+
+**There is no upgrade line, and its absence is the record.** `grep -c "was upgraded"` over the container's
+log answers `0`, and the store is byte-identical to the copy archived before the install: schema `10`,
+2,259 B, `sha256 c80b42384b37a230ff56a2e06971cf623e25af2f9c21ea9c8a465356872a8979` on both, the live
+document and the archive's `store/config.json`. The settings document was a migration source for a store
+that already had everything in it, which is what the start line says.
+
+**The proofs, each with its answer**, read at `17:13`–`17:14Z` with a print running:
+
+| read | answer |
+|---|---|
+| `GET …/status` | `200`, `build` `{"version":"0.9.1","contract":1,"store_schema":10,"repository":"https://github.com/nothingmn/wled-printer-status"}`, **two** bindings, `last_send.ok: true` on both; panel frame 1,146 of 16,384 (`7%`), strip frame 3 of 48 (`7%`), both at colour `0,170,0`, the strip on its own **segment 2** |
+| `GET …/lights` | `200`, `slot_count: 5` — slot 1 `http://10.0.0.136` `morpheus` `14.7.0-mdev`, 16,384 pixels, `panel` `256`×`64`; slot 2 `http://10.0.0.253` `CyberDesk` `16.0.1`, 48 pixels, `strip`; slots 3, 4 and 5 empty, each with the sentence saying the address is filled in the extension's own settings |
+| `GET …/printers` | `200`, `count: 1`, `total: 1`, `Hermes MK4`, `bound_count: 2` — **the operator's own view is not empty**, which is the check that reading as the caller did not filter the person who owns the printer out of it |
+| `GET …/bindings` | `200`, `count: 2`, both rows `Hermes MK4`, one at `http://10.0.0.136` whole with `brightness 128`, one at `http://10.0.0.253` `segment 2` |
+| `GET /api/v1/readiness` | `200`, `ready: true`, `serving 6 declared 6`, `blocked: []`, this module `ready` |
+| the store | `version 10`, 2,259 B, `c80b4238…a8979` — unchanged from before the install |
+
+**One write was attempted and refused, and the refusal is this release's other half.** `POST /bindings`
+naming `https://127.0.0.1` answered `409`, and both the code and the sentence name the two ports. The
+store's hash was taken either side of it and did not move:
+
+```console
+$ docker exec prusa_connect sha256sum …/module-data/wled-printer-status/config.json
+BEFORE c80b42384b37a230ff56a2e06971cf623e25af2f9c21ea9c8a465356872a8979
+$ curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"printer":"07e893bb-…","controller":"https://127.0.0.1"}' …/bindings
+HTTP=409
+{"code":"com.github.aux.nothingmn.wled-printer-status/BINDING_REFUSED",
+ "title":"The set that change would make breaks a rule this module holds two bindings to",
+ "detail":"\"https://127.0.0.1\" is not a light address this module may use: its scheme is \"https\",
+  and a light answers plain http. A light address is plain http on port 80 — a bare host such as
+  10.0.0.253, or the same address written 10.0.0.253:80. Those are the two ports this release declares:
+  80 for the controller's own web interface, and 4048 for DDP, the path a picture takes. Nothing else is
+  dialled — not https, not another port, and not a path — because the manifest's egress block approves
+  those two ports and no others.", "retryable":false, "status":409, …}
+AFTER  c80b42384b37a230ff56a2e06971cf623e25af2f9c21ea9c8a465356872a8979
+```
+
+`GET /bindings` still answered 2 and `GET /printers` still answered `Hermes MK4` with `bound_count 2`
+after it, so nothing the operator can see moved. This probe was made when this record was written, not
+during the install; what it proves is the refusal, and the same refusal is what the release's changelog
+names for `light1_address` to `light5_address` as well as a binding's `controller`.
+
+**The way back is `/home/robchartier/wled-rollback/0.9.1-5de8f74/`, and it holds `0.9.0`, not this
+release**: `release/wled-release-987fb81/`, the `installed/` binary and bundle the host ran, the schema-10
+store as `store/config.json`, both settings documents, the declaration's `config` block and
+`ROLLBACK-987fb81.md`. Its `SHA256SUMS` lists 23 entries; `sha256sum -c SHA256SUMS` in that directory
+answered OK for all 23 with exit `0`. `0.9.1` does not step the schema, so the store half is there because
+a write made during this deploy would otherwise survive a rollback, not because the number moved — and the
+way back is still two halves, the store put back first and then the release and declaration, followed by
+one restart.
+
 ## Two facts a reader has to know
 
 - **Installing restarts the core.** `module add` writes the record; a core that is already answering read
