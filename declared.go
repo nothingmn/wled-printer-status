@@ -20,7 +20,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/nothingmn/wled-printer-status/internal/wled"
@@ -148,17 +151,96 @@ func normaliseDeclaredAddress(raw string) string {
 		return ""
 	}
 
-	if !strings.Contains(typed, "://") {
-		typed = "http://" + typed
-	}
-
-	base := strings.TrimRight(typed, "/")
-
-	if _, err := wled.New(base); err != nil {
+	base, err := checkLightAddress(typed)
+	if err != nil {
 		return ""
 	}
 
 	return base
+}
+
+// The two ports this release declares on a light, and the only two it may
+// reach. 80 is WLED's own web interface — the facts, the state and the control
+// writes — and 4048 is DDP, the pixel path, over UDP. The manifest carries both
+// on every one of the five egress entries; an address that would make this
+// process dial anything else is a connection the operator never approved.
+const (
+	lightWebPort = 80
+	lightDDPPort = 4048
+)
+
+// checkLightAddress is what one light address may be: plain `http`, on port 80,
+// naming a bare host — `10.0.0.253` or `10.0.0.253:80`, which are the same
+// address. Anything else is refused in words that name the two ports the
+// release declares, because the reason is not a matter of taste: `https://`,
+// `:8080` and a path all reach past what the manifest's egress block approved.
+//
+// It is the one rule, in one place. A settings value goes through it at start
+// (checkDeclaredAddresses), a binding typed into a route goes through it before
+// the store is touched, and the lenient reading of a document written by an
+// older build goes through it too — where it permits nothing rather than
+// failing a start.
+func checkLightAddress(address string) (string, error) {
+	typed := strings.TrimSpace(address)
+	if typed == "" {
+		return "", errors.New(
+			"no address was given: write the light's IP address, such as 10.0.0.253")
+	}
+
+	// A typed address without a scheme is read as http, because that is how a
+	// person writes a light's address and what a WLED controller answers on.
+	base := typed
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+
+	base = strings.TrimRight(base, "/")
+
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", notALightAddress(address, "it is not a URL")
+	}
+
+	if parsed.Scheme != "http" {
+		return "", notALightAddress(address,
+			fmt.Sprintf("its scheme is %q, and a light answers plain http", parsed.Scheme))
+	}
+
+	if port := parsed.Port(); port != "" && port != strconv.Itoa(lightWebPort) {
+		return "", notALightAddress(address,
+			fmt.Sprintf("its port is %s, and port %d is the only one a light address may name",
+				port, lightWebPort))
+	}
+
+	if parsed.Hostname() == "" {
+		return "", notALightAddress(address, "it names no host")
+	}
+
+	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", notALightAddress(address, "it is not a bare host: it carries a path or credentials")
+	}
+
+	// The client's own rule last, so that the address this module stores is one
+	// it can build a client for.
+	if _, err := wled.New(base); err != nil {
+		return "", notALightAddress(address, err.Error())
+	}
+
+	return base, nil
+}
+
+// notALightAddress is the one refusal for an address this module may not use.
+// It is written once because the same fact must read the same way wherever a
+// person meets it — an option value, a binding typed into the editor, or a row
+// in a document written by an older release.
+func notALightAddress(typed, why string) error {
+	return fmt.Errorf(
+		"%q is not a light address this module may use: %s. A light address is plain http on port %d — "+
+			"a bare host such as 10.0.0.253, or the same address written 10.0.0.253:%d. Those are the two "+
+			"ports this release declares: %d for the controller's own web interface, and %d for DDP, the "+
+			"path a picture takes. Nothing else is dialled — not https, not another port, and not a path — "+
+			"because the manifest's egress block approves those two ports and no others.",
+		typed, why, lightWebPort, lightWebPort, lightWebPort, lightDDPPort)
 }
 
 // declaredNow is the declaration in force, read on every pass the way the rest

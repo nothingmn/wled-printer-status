@@ -14,7 +14,7 @@ name: wled-printer-status
 # The kind the one instance is declared under. It offers the service runtime,
 # which is what a module with a process needs.
 kind: sink
-version: 0.9.0
+version: 0.9.1
 # The licence this module is released under. The marketplace shows it and
 # refuses a release without one. An SPDX identifier is the usual form.
 license: MIT
@@ -82,23 +82,23 @@ options:
   - key: light1_address
     type: url
     required: false
-    summary: The address of a WLED controller, such as http://10.0.0.136.
+    summary: The address of a WLED controller on plain http, port 80 — such as http://10.0.0.136 — or the same address with an explicit :80, and nothing else. This module dials port 80 for the controller's own web interface and port 4048 for DDP, the pixel path; no other scheme, port or path is reached.
   - key: light2_address
     type: url
     required: false
-    summary: The address of a second WLED controller, such as http://10.0.0.253.
+    summary: The address of a second WLED controller on plain http, port 80, such as http://10.0.0.253 — or the same address with an explicit :80, and nothing else. This module dials port 80 for the controller's own web interface and port 4048 for DDP, the pixel path; no other scheme, port or path is reached.
   - key: light3_address
     type: url
     required: false
-    summary: The address of a third WLED controller, such as http://10.0.0.137.
+    summary: The address of a third WLED controller on plain http, port 80 — such as http://10.0.0.137 — or the same address with an explicit :80, and nothing else. This module dials port 80 for the controller's own web interface and port 4048 for DDP, the pixel path; no other scheme, port or path is reached.
   - key: light4_address
     type: url
     required: false
-    summary: The address of a fourth WLED controller, such as http://10.0.0.254.
+    summary: The address of a fourth WLED controller on plain http, port 80, such as http://10.0.0.254 — or the same address with an explicit :80, and nothing else. This module dials port 80 for the controller's own web interface and port 4048 for DDP, the pixel path; no other scheme, port or path is reached.
   - key: light5_address
     type: url
     required: false
-    summary: The address of a fifth WLED controller, such as http://10.0.0.138.
+    summary: The address of a fifth WLED controller on plain http, port 80 — such as http://10.0.0.138 — or the same address with an explicit :80, and nothing else. This module dials port 80 for the controller's own web interface and port 4048 for DDP, the pixel path; no other scheme, port or path is reached.
 
 # One egress entry per declared slot, and not one more. Each names the option an operator fills in,
 # and the module reads the host from exactly that value; there is no code path that dials anything

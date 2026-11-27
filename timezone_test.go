@@ -218,6 +218,9 @@ func TestTheStoresZoneWinsOverTheSetting(t *testing.T) {
 func TestAModuleWithNoStoreStillRunsOnTheSetting(t *testing.T) {
 	storeSettings(t, &Settings{Timezone: "America/Denver"})
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	tableAPI{tables: &configTables{}, clock: at}.mount(mux)
 
@@ -521,6 +524,9 @@ func newZoneUnderTest(t *testing.T, document string) *zoneUnderTest {
 	now := &clock
 
 	page := deviceapi.Page{Items: twoPrinters(), Total: len(twoPrinters())}
+
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
 
 	mux := http.NewServeMux()
 	tableAPI{

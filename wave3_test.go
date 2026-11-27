@@ -61,6 +61,9 @@ func newWave3UnderTest(t *testing.T, printers []deviceapi.Device, start bindings
 
 	page := deviceapi.Page{Items: printers, Total: len(printers)}
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	tableAPI{
 		live:   under.watch,

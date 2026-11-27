@@ -32,6 +32,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
+
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/text"
@@ -1268,7 +1270,9 @@ func TestTheStatusRouteCarriesThePercentageAndTheName(t *testing.T) {
 		},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
-			publish(printer.Snapshot{}, shape.frame)
+			// The printer the route is answered for: a reading with no printer in it is not a thing a
+			// watch publishes, and the route is now asked which printers the caller may see.
+			publish(printer.Snapshot{ID: "01J8DEVICE", Name: "Morpheus", Connected: true}, shape.frame)
 			defer publish(printer.Snapshot{}, render.Frame{})
 
 			// A watch holding one binding publishes into that store, so the per-binding one has to be empty
@@ -1276,7 +1280,7 @@ func TestTheStatusRouteCarriesThePercentageAndTheName(t *testing.T) {
 			forgetBindings()
 
 			recorder := httptest.NewRecorder()
-			routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+			statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("the status route answered %d, want 200: %s", recorder.Code, recorder.Body.String())

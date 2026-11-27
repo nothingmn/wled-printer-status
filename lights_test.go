@@ -79,6 +79,9 @@ func newLightsOverStore(t *testing.T, fleet *probeFleet, start storedConfig) *li
 		fleet = &probeFleet{answers: map[string]probeAnswer{}}
 	}
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	lightsAPI{tables: tables, newLight: fleet.client, probe: time.Second}.mount(mux)
 

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,7 +31,16 @@ func recordingController(t *testing.T) (*httptest.Server, *atomic.Int32) {
 
 	var hits atomic.Int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(recordingHandler(&hits))
+
+	t.Cleanup(server.Close)
+
+	return server, &hits
+}
+
+// recordingHandler is one controller's answers, counting every request it receives.
+func recordingHandler(hits *atomic.Int32) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -43,11 +53,33 @@ func recordingController(t *testing.T) (*httptest.Server, *atomic.Int32) {
 		default:
 			_, _ = io.WriteString(w, `{}`)
 		}
-	}))
+	})
+}
+
+// controllerOnPort80 is a recording controller at an address the address rule admits: plain http on
+// port 80, which is the only port a light address may name. The option value is therefore the bare
+// host, and the server is real rather than a fake, so that "the declared light is painted" stays a
+// claim about a socket.
+//
+// It binds the loopback's port 80 rather than a port of its own. That is not a convenience: an
+// address with a port of its own is the very thing this release refuses, so a test that points the
+// module at `127.0.0.1:35019` would be testing an address this module cannot be configured with.
+func controllerOnPort80(t *testing.T, address string) (*atomic.Int32, string) {
+	t.Helper()
+
+	var hits atomic.Int32
+
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("listen on %s, which stands in for a light address port 80 is the only one of: %v", address, err)
+	}
+
+	server := &httptest.Server{Listener: listener, Config: &http.Server{Handler: recordingHandler(&hits)}}
+	server.Start()
 
 	t.Cleanup(server.Close)
 
-	return server, &hits
+	return &hits, "http://" + strings.TrimSuffix(address, ":80")
 }
 
 // storeNaming is a document holding one binding and one light row, both at one address.
@@ -156,18 +188,18 @@ func TestAnUndeclaredAddressIsNeverContacted(t *testing.T) {
 // the test above and be useless. The same store, the same controller, and the option names its
 // address: the writer reads the light and paints it.
 func TestAFilledSlotIsDriven(t *testing.T) {
-	server, hits := recordingController(t)
+	hits, address := controllerOnPort80(t, "127.0.0.1:80")
 
-	tables := storeNaming(t, server.URL)
+	tables := storeNaming(t, address)
 
-	declaration := Settings{Light1Address: server.URL}
+	declaration := Settings{Light1Address: address}
 	r := runningAt(t, declaration, tables)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	set := bindings{{
-		ID: "binding-1", DeviceID: "printer-1", Address: server.URL, Segment: -1, Brightness: 128,
+		ID: "binding-1", DeviceID: "printer-1", Address: address, Segment: -1, Brightness: 128,
 	}}
 
 	if err := r.apply(ctx, set); err != nil {
@@ -206,6 +238,9 @@ func TestNoFilledSlotDrivesNothingAndShowsFiveEmptySlots(t *testing.T) {
 	if got := hits.Load(); got != 0 {
 		t.Fatalf("with every option empty the module contacted a controller %d times, want zero", got)
 	}
+
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
 
 	mux := http.NewServeMux()
 	lightsAPI{tables: tables, slots: declaration.DeclaredLights, permits: declaration.declares}.mount(mux)
@@ -257,7 +292,9 @@ func TestNoFilledSlotDrivesNothingAndShowsFiveEmptySlots(t *testing.T) {
 func TestASlotNotInTheOptionsIsRefusedAndNothingIsWritten(t *testing.T) {
 	withHost(t, allowing{})
 
-	server, hits := recordingController(t)
+	// A live controller at an address the rule admits but the settings do not name: port 80 on the
+	// loopback. It is reachable, so "the refused binding never reached it" is a fact about a socket.
+	hits, address := controllerOnPort80(t, "127.0.0.1:80")
 
 	dir := t.TempDir()
 
@@ -271,6 +308,9 @@ func TestASlotNotInTheOptionsIsRefusedAndNothingIsWritten(t *testing.T) {
 	declaration := Settings{Light1Address: "http://192.0.2.10"}
 	r := runningAt(t, declaration, tables)
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	bindingAPI{
 		live:    r,
@@ -282,7 +322,7 @@ func TestASlotNotInTheOptionsIsRefusedAndNothingIsWritten(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, forwarded(http.MethodPost, "/bindings",
-		strings.NewReader(`{"printer":"printer-1","controller":"`+server.URL+`"}`)))
+		strings.NewReader(`{"printer":"printer-1","controller":"`+address+`"}`)))
 
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("a binding at an undeclared address answered %d, want 409: %s", recorder.Code, recorder.Body.String())

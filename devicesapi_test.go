@@ -240,6 +240,9 @@ func newDevicesUnderTest(t *testing.T) *devicesUnderTest {
 	clock := time.Date(2026, time.November, 19, 18, 30, 0, 0, time.UTC)
 	now := &clock
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	deviceAPI{
 		live:      watch,

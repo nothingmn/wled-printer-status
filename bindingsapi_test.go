@@ -109,6 +109,9 @@ func newAPIStored(t *testing.T, light *fakeStrip, printers []deviceapi.Device, s
 	page := deviceapi.Page{Items: printers, Total: len(printers)}
 	fleet := fakeFleet{page: page}
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	bindingAPI{
 		live:     watch,
@@ -556,6 +559,9 @@ func TestThePrinterListIsWhereADeviceIdComesFrom(t *testing.T) {
 // what printers it holds: a 503 with a code, not an empty list that reads like a host with no
 // printers on it.
 func TestAPrinterListThatCannotBeReadIsARefusal(t *testing.T) {
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	bindingAPI{
 		live:  &runner{logf: quiet},

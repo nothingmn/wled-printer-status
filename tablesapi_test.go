@@ -83,6 +83,9 @@ func newTablesUnderTest(t *testing.T, printers []deviceapi.Device, start binding
 
 	page := deviceapi.Page{Items: printers, Total: len(printers)}
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	tableAPI{
 		live:   watch,
@@ -993,6 +996,9 @@ func stateRoutesAt(t *testing.T, clock func() time.Time) *tablesUnderTest {
 
 	tables := &configTables{}
 	tables.grant(dir)
+
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
 
 	mux := http.NewServeMux()
 	tableAPI{tables: tables, clock: clock}.mount(mux)

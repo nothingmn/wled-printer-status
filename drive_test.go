@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
 	"github.com/prusa3d/prusa-connect/sdk/wire"
 
 	"github.com/nothingmn/wled-printer-status/internal/printer"
@@ -717,7 +718,7 @@ func TestTheStatusRouteSaysStartingForAPrintAtZero(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+	statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /status answered %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -808,7 +809,7 @@ func TestTheStatusRoutePublishesWhatTheBuildIs(t *testing.T) {
 		t.Helper()
 
 		recorder := httptest.NewRecorder()
-		routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+		statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s: GET /status answered %d, want %d: %s",
@@ -890,7 +891,7 @@ func TestTheStatusRouteAnswersWhatTheModuleThinks(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+	statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /status answered %d, want %d", recorder.Code, http.StatusOK)
@@ -986,7 +987,7 @@ func TestTheStatusRouteKeepsTheTruthWhileTheFinishedPanelHolds(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+	statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("GET /status answered %d, want %d", recorder.Code, http.StatusOK)
@@ -1044,7 +1045,7 @@ func TestTheStatusRouteRefusesBeforeItHasLooked(t *testing.T) {
 	})
 
 	recorder := httptest.NewRecorder()
-	routes().ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
+	statusHost(t, deviceapi.Device{ID: "01J8DEVICE"}).ServeHTTP(recorder, forwarded(http.MethodGet, "/status", nil))
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /status answered %d before the first reading, want %d",

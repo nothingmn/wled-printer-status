@@ -10,7 +10,7 @@
       "get": {
         "operationId": "list-bindings",
         "summary": "The printers this module is showing",
-        "description": "Every binding in force, in the operator's order: the printer, the controller, and the segment it drives with -1 for the whole controller. A binding is one printer shown on one segment of one controller, and this is the set the writer is running on now, which is the set in this module's own configuration store, so the next start runs it — the source member says where it came from. A printer's name comes from the host's own list, so it is absent, with names_read_failed saying why, when the host will not answer: the set is this module's record and must not become unreadable because a name could not be fetched. The host takes view_resource on the module's instance before this is called.",
+        "description": "Every binding in force that the caller may see, in the operator's order: the printer, the controller, and the segment it drives with -1 for the whole controller. A binding is one printer shown on one segment of one controller, and this is the set the writer is running on now, which is the set in this module's own configuration store, so the next start runs it — the source member says where it came from. The host is asked which printers the caller may see, as that person and never as this module, and a binding whose printer is not in the answer is absent from this list rather than listed with its printer blanked out. A host that cannot answer is refused with ACCESS_UNKNOWN and never answered with the whole fleet, so names_read_failed is absent on this route: the set cannot be read at all when the names cannot. A printer's name comes from the same host answer. The host takes view_resource on the module's instance before this is called.",
         "responses": {
           "200": {
             "description": "The set in force.",
@@ -26,8 +26,7 @@
                     },
                     "count": {"type": "integer", "description": "How many bindings the set holds."},
                     "source": {"type": "string", "description": "Where this set came from: the bindings setting, the four settings that came before it, or a change made through these routes, which is written into this module's own store."},
-                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the set it is showing is the one in it, so the next start runs it. False means no document could be read — no data directory, or one this build will not act on — and then a change here cannot be kept."},
-                    "names_read_failed": {"type": "string", "description": "Why a printer's name is missing, absent when the host answered."}
+                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the set it is showing is the one in it, so the next start runs it. False means no document could be read — no data directory, or one this build will not act on — and then a change here cannot be kept."}
                   },
                   "required": ["bindings", "count", "source", "persisted"]
                 }
@@ -124,8 +123,7 @@
                   "type": "object",
                   "properties": {
                     "binding": {"$ref": "#/components/schemas/Binding"},
-                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the binding is in it, so the next start runs it."},
-                    "names_read_failed": {"type": "string", "description": "Why the printer's name is missing, absent when the host answered."}
+                    "persisted": {"type": "boolean", "description": "True when this module has a configuration store and the binding is in it, so the next start runs it."}
                   },
                   "required": ["binding", "persisted"]
                 }

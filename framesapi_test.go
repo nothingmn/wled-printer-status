@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
+
 	"github.com/nothingmn/wled-printer-status/internal/printer"
 	"github.com/nothingmn/wled-printer-status/internal/render"
 	"github.com/nothingmn/wled-printer-status/internal/text"
@@ -58,9 +60,21 @@ func newFramesUnderTest(t *testing.T, set bindings) *framesUnderTest {
 
 	cache := newFrameCache()
 
+	// The host's answer for this fixture: every printer the set drives, which is what a person who
+	// may see this module's own printers is given. A test about a restricted caller hands its own.
+	printers := make([]deviceapi.Device, 0, len(set))
+	for _, b := range set {
+		printers = append(printers, deviceapi.Device{ID: b.DeviceID, Name: b.DeviceID})
+	}
+
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	framesAPI{
 		live:  &runner{held: set, layout: defaultLayout(), logf: quiet},
+		fleet: func() devices { return fakeFleet{page: deviceapi.Page{Items: printers, Total: len(printers)}} },
+		bound: time.Second,
 		clock: func() time.Time { return framesAt },
 		cache: cache,
 	}.mount(mux)

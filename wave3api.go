@@ -157,9 +157,7 @@ func (api tableAPI) mountWave3(mux *http.ServeMux) {
 // a binding that has since been removed is refused as a binding that does not exist rather than
 // silently kept. A binding whose address will not parse cannot be in a running set — bindings.check
 // refuses it — so the error here is a set this process could not have started with.
-func (api tableAPI) bindingAndLight(id string) (binding, controllerAnswer, bool, error) {
-	set := api.live.set()
-
+func (api tableAPI) bindingAndLight(set bindings, id string) (binding, controllerAnswer, bool, error) {
 	found, ok := set.find(id)
 	if !ok {
 		return binding{}, controllerAnswer{}, false, nil
@@ -319,7 +317,12 @@ func layoutAnswerFor(config storedConfig, b binding, light controllerAnswer, zon
 // readLayout is GET /bindings/{id}/layout: the layout one binding composes with, every value with the
 // origin it came from.
 func (api tableAPI) readLayout(w http.ResponseWriter, r *http.Request) {
-	found, light, ok, err := api.bindingAndLight(r.PathValue("id"))
+	_, set, ok := api.visibleSet(w, r)
+	if !ok {
+		return
+	}
+
+	found, light, ok, err := api.bindingAndLight(set, r.PathValue("id"))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -367,7 +370,7 @@ func (api tableAPI) readLayout(w http.ResponseWriter, r *http.Request) {
 // for the reason setState replaces a state's: a route that merged would have to guess, for every
 // absent field, whether the caller meant "leave it" or "clear it".
 func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
-	found, light, ok, err := api.bindingAndLight(r.PathValue("id"))
+	found, light, ok, err := api.bindingAndLight(api.live.set(), r.PathValue("id"))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -422,7 +425,7 @@ func (api tableAPI) updateLayout(w http.ResponseWriter, r *http.Request) {
 // already composing with, because a screen distinguishing "already at the default" from "no such
 // binding" needs those to be different answers.
 func (api tableAPI) deleteLayout(w http.ResponseWriter, r *http.Request) {
-	found, light, ok, err := api.bindingAndLight(r.PathValue("id"))
+	found, light, ok, err := api.bindingAndLight(api.live.set(), r.PathValue("id"))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -457,7 +460,12 @@ func (api tableAPI) deleteLayout(w http.ResponseWriter, r *http.Request) {
 // listLayouts is GET /lights/{light}/layouts: every binding on one light, each with its layout — the
 // shape the Layout screen is drawn from, because the screen is scoped to one light.
 func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
-	light, found, err := api.lightOf(r.PathValue("light"))
+	seen, set, ok := api.visibleSet(w, r)
+	if !ok {
+		return
+	}
+
+	light, found, err := api.lightOf(r.PathValue("light"), set)
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -465,7 +473,7 @@ func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		refuse(w, r, api.unknownLight(r.PathValue("light")))
+		refuse(w, r, api.unknownLight(r.PathValue("light"), set))
 
 		return
 	}
@@ -484,7 +492,6 @@ func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	set := api.live.set()
 	on := bindingsOn(set, light)
 
 	out := make([]layoutAnswer, 0, len(on))
@@ -502,7 +509,9 @@ func (api tableAPI) listLayouts(w http.ResponseWriter, r *http.Request) {
 		"note":      layoutFitNote,
 	}
 
-	if unknown := unknownLayouts(config, set); len(unknown) > 0 {
+	// A layout row whose binding is not in the caller's set is not reported as unknown: the name
+	// carries the printer's device id, and this person may not see that printer at all.
+	if unknown := seen.namedAmong(unknownLayouts(config, api.live.set())); len(unknown) > 0 {
 		said["unknown_layouts"] = unknown
 	}
 
@@ -1026,7 +1035,7 @@ func (api tableAPI) setGlobalPause(w http.ResponseWriter, r *http.Request) {
 // setBindingPause is PUT /bindings/{id}/pause: one binding paused, and the rest of the module left
 // alone.
 func (api tableAPI) setBindingPause(w http.ResponseWriter, r *http.Request) {
-	found, _, ok, err := api.bindingAndLight(r.PathValue("id"))
+	found, _, ok, err := api.bindingAndLight(api.live.set(), r.PathValue("id"))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -1096,7 +1105,7 @@ func (api tableAPI) clearGlobalPause(w http.ResponseWriter, r *http.Request) {
 
 // clearBindingPause is DELETE /bindings/{id}/pause: one binding's own pause, taken out.
 func (api tableAPI) clearBindingPause(w http.ResponseWriter, r *http.Request) {
-	found, _, ok, err := api.bindingAndLight(r.PathValue("id"))
+	found, _, ok, err := api.bindingAndLight(api.live.set(), r.PathValue("id"))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 

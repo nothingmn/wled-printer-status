@@ -177,6 +177,9 @@ func newIdentifyHarness(t *testing.T, borrowed bool, store lights, state wled.St
 
 	t.Cleanup(forgetPreview)
 
+	// No kept host answer survives from another fixture: see forgetSeen.
+	forgetSeen()
+
 	mux := http.NewServeMux()
 	deviceAPI{live: live, clock: clock.Now}.mount(mux)
 

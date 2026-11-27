@@ -71,6 +71,14 @@ const (
 type framesAPI struct {
 	live *runner
 
+	// fleet is the host's printer list, asked for the caller of the request: a thumbnail names a
+	// printer and draws that printer's job, so a frame for a printer the caller may not see is not
+	// drawn at all. See visible.go.
+	fleet func() devices
+
+	// bound is how long that one read may take. Zero means resolveTimeout.
+	bound time.Duration
+
 	// clock dates a frame, which matters for one thing only: the half of a panel's rotation the
 	// picture shows. Nil means time.Now.
 	clock func() time.Time
@@ -78,6 +86,15 @@ type framesAPI struct {
 	// cache holds encoded pictures by the frame they were made from. Nil is allowed and means no
 	// cache, which is what a test that wants to see the encoding happen uses.
 	cache *frameCache
+}
+
+// timeout is how long one read of the host's printer list may take.
+func (api framesAPI) timeout() time.Duration {
+	if api.bound > 0 {
+		return api.bound
+	}
+
+	return resolveTimeout
 }
 
 // frameCache is the encoded-picture cache, and it is honest about what it is: a key made of the
@@ -198,9 +215,18 @@ const framesNote = "Each picture is reconstructed from the frame this module dec
 // It refuses only when there is nothing to describe at all — no frame has been decided yet — which is
 // the same refusal /status makes and for the same reason: a frame of zeros would read as "the light
 // is black", and that is a claim this module has not made.
+//
+// One frame per binding whose printer the caller may see. A caller who may see no printer at all is
+// answered an empty list rather than that refusal: there is nothing wrong with the module, there is
+// simply nothing of theirs in it — see visible.go.
 func (api framesAPI) listFrames(w http.ResponseWriter, r *http.Request) {
-	published := bindingsSeen()
-	set := api.live.set()
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return
+	}
+
+	published := publishedFor(bindingsSeen(), seen)
+	set := seen.only(api.live.set())
 
 	out := make([]frameAnswer, 0, max(len(published), 1))
 
@@ -231,11 +257,19 @@ func (api framesAPI) listFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A caller who may see none of this module's printers asked for their own list, and an empty one
+	// with no error is the answer: the module is driving lights for somebody else.
+	if len(seen.ids) == 0 {
+		answer(w, http.StatusOK, framesAnswer{Frames: []frameAnswer{}, Count: 0, Note: framesNote})
+
+		return
+	}
+
 	// A watch holding one binding publishes into the store /status has always read, because that is
 	// what an install built from settings answers. The frame is the same frame; what it lacks is the
 	// binding's own name, which the running set has.
-	seen := current.Load()
-	if seen == nil || len(set) != 1 {
+	state := current.Load()
+	if state == nil || len(set) != 1 {
 		if len(set) == 0 {
 			refuse(w, r, NoReadingYet.New(drivingNothing))
 
@@ -248,12 +282,20 @@ func (api framesAPI) listFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The single-binding store names one printer, and it may be one this caller may not see: the
+	// answer is then the empty list above, not a frame with the printer blanked out.
+	if !seen.has(state.Printer.ID) {
+		answer(w, http.StatusOK, framesAnswer{Frames: []frameAnswer{}, Count: 0, Note: framesNote})
+
+		return
+	}
+
 	held := bindingStatus{
 		Controller: set[0].Address,
 		Segment:    set[0].Segment,
-		Printer:    seen.Printer,
-		Reading:    seen.Reading,
-		Frame:      seen.Frame,
+		Printer:    state.Printer,
+		Reading:    state.Reading,
+		Frame:      state.Frame,
 		LastSend:   sent.Load(),
 	}
 

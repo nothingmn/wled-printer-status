@@ -126,7 +126,7 @@ import (
 // manifest's, and the host holds the two to each other.
 const (
 	name    = "wled-printer-status"
-	release = extension.Version("0.9.0")
+	release = extension.Version("0.9.1")
 
 	// repository is where this module's source lives. It is published with the build facts rather
 	// than written into the browser bundle, so the one address a screen links to comes off the
@@ -957,8 +957,80 @@ func resolvePrinter(ctx context.Context, fleet devices, setting string) (string,
 // on its own and the other never will until somebody adds a light.
 const drivingNothing = "this module is driving nothing: no light is configured yet, so there is no frame to report. Add one on this module's Bindings screen."
 
-// The binding editor's routes are mounted from bindingsapi.go, which says what they are for and
-// what a change through them costs.
+// statusRoute is GET /status over one host: the route as the mux mounts it, with the printer list
+// the caller's read is answered from.
+//
+// It is a function rather than a closure written where it is mounted because the printers a person
+// may see change the answer on every branch, and a test of that has to hand it a host of its own.
+//
+// The binding editor's routes are mounted from bindingsapi.go, which says what they are for and what
+// a change through them costs.
+func statusRoute(host func() devices) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		// The printers this caller may see, asked for them and not for the module. Every branch
+		// below answers from that set: a reading, a frame or a light named for a printer this
+		// person may not see is not in the answer at all. See visible.go.
+		seen, ok := seenOrRefuse(w, r, host, resolveTimeout)
+		if !ok {
+			return
+		}
+
+		// A watch holding more than one binding publishes each binding under its own
+		// controller and segment, because one body cannot say whose frame it describes. That
+		// store is empty for a single-binding install — the shape every install built from
+		// settings has — so this branch costs one lock and the body below is unchanged.
+		if published := publishedFor(bindingsSeen(), seen); len(published) > 0 {
+			// The build facts ride on both shapes of this answer, so a screen reads them whichever
+			// one the instance answers with, and neither has to guess which it got.
+			answer(w, http.StatusOK, map[string]any{"bindings": published, "build": buildFacts()})
+
+			return
+		}
+
+		reading := current.Load()
+
+		// A caller who may see none of this module's printers is answered the list shape with
+		// nothing in it, rather than the refusal below: the module owes them an empty list, not an
+		// error about a printer they never asked about.
+		if len(seen.ids) == 0 {
+			answer(w, http.StatusOK, map[string]any{"bindings": []bindingStatus{}, "build": buildFacts()})
+
+			return
+		}
+
+		if reading == nil {
+			if len(live.set()) == 0 {
+				refuse(w, r, NoReadingYet.New(drivingNothing))
+
+				return
+			}
+
+			refuse(w, r, NoReadingYet.New(
+				"this module has not decided a frame yet: it answers this once it has taken its first reading"))
+
+			return
+		}
+
+		// The single-binding store names one printer, and it may be one this caller may not see:
+		// then the answer is the empty list above, not a reading with the printer blanked out.
+		if !seen.has(reading.Printer.ID) {
+			answer(w, http.StatusOK, map[string]any{"bindings": []bindingStatus{}, "build": buildFacts()})
+
+			return
+		}
+
+		answer(w, http.StatusOK, statusAnswer{
+			Printer:  reading.Printer,
+			Reading:  reading.Reading,
+			Frame:    reading.Frame,
+			LastSend: sent.Load(),
+			Build:    buildFacts(),
+		})
+
+	}
+}
+
 func routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -1020,6 +1092,7 @@ func routes() http.Handler {
 	// code that draws the light and cheap enough to ask for on every draw. See framesapi.go.
 	framesAPI{
 		live:  live,
+		fleet: held,
 		cache: newFrameCache(),
 	}.mount(mux)
 
@@ -1041,41 +1114,7 @@ func routes() http.Handler {
 	// the light. A frame of zeros would read as "the light is black", which is a claim
 	// this module has not made, so a request that arrives before the first frame is
 	// decided is refused by code instead.
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		// A watch holding more than one binding publishes each binding under its own
-		// controller and segment, because one body cannot say whose frame it describes. That
-		// store is empty for a single-binding install — the shape every install built from
-		// settings has — so this branch costs one lock and the body below is unchanged.
-		if held := bindingsSeen(); len(held) > 0 {
-			// The build facts ride on both shapes of this answer, so a screen reads them whichever
-			// one the instance answers with, and neither has to guess which it got.
-			answer(w, http.StatusOK, map[string]any{"bindings": held, "build": buildFacts()})
-
-			return
-		}
-
-		seen := current.Load()
-		if seen == nil {
-			if len(live.set()) == 0 {
-				refuse(w, r, NoReadingYet.New(drivingNothing))
-
-				return
-			}
-
-			refuse(w, r, NoReadingYet.New(
-				"this module has not decided a frame yet: it answers this once it has taken its first reading"))
-
-			return
-		}
-
-		answer(w, http.StatusOK, statusAnswer{
-			Printer:  seen.Printer,
-			Reading:  seen.Reading,
-			Frame:    seen.Frame,
-			LastSend: sent.Load(),
-			Build:    buildFacts(),
-		})
-	})
+	mux.HandleFunc("GET /status", statusRoute(held))
 
 	// The finished word, now, so that a person can look at it without waiting for a print to
 	// end. It fires the same event a completed print fires — the same word, the same colour,

@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/prusa3d/prusa-connect/sdk/fault"
+	"github.com/prusa3d/prusa-connect/sdk/routesapi"
 )
 
 // The notes every write on these routes carries, because the two things a caller must not be
@@ -773,8 +774,8 @@ type momentsAnswer struct {
 // A light is a controller on these routes and is named the way GET /controllers names one: its
 // address without the scheme, so that the name is one path segment. There is no second noun with a
 // second naming rule, which would be a second thing for a person to get wrong.
-func (api tableAPI) lightOf(name string) (controllerAnswer, bool, error) {
-	found, err := controllersOf(api.live.set())
+func (api tableAPI) lightOf(name string, set bindings) (controllerAnswer, bool, error) {
+	found, err := controllersOf(set)
 	if err != nil {
 		return controllerAnswer{}, false, err
 	}
@@ -790,8 +791,11 @@ func (api tableAPI) lightOf(name string) (controllerAnswer, bool, error) {
 
 // unknownLight is the refusal for a light name this module does not drive, listing the ones it
 // does. It is the controller's own code, because a light here is a controller: one fact, one code.
-func (api tableAPI) unknownLight(named string) *fault.Fault {
-	found, _ := controllersOf(api.live.set())
+//
+// The list is the caller's own: a light this module drives only for printers the caller may not see
+// is not named here, because naming it would be telling them about rows they cannot read.
+func (api tableAPI) unknownLight(named string, set bindings) *fault.Fault {
+	found, _ := controllersOf(set)
 
 	names := make([]string, 0, len(found))
 	for _, one := range found {
@@ -870,10 +874,29 @@ func bindingsOn(set bindings, light controllerAnswer) bindings {
 	return held
 }
 
+// visibleSet is the caller's printers, and the running set narrowed to them.
+//
+// It is the one thing a table route asks before it answers: a moment's rows, a layout's rows and a
+// light's own name are all about printers, so the set they are read from is the caller's and not
+// the module's. It writes the refusal itself, the way seenOrRefuse does. See visible.go.
+func (api tableAPI) visibleSet(w http.ResponseWriter, r *http.Request) (visible, bindings, bool) {
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return visible{}, nil, false
+	}
+
+	return seen, seen.only(api.live.set()), true
+}
+
 // listMoments is GET /lights/{light}/moments: every moment that light has, each with its entry for
-// every printer on it.
+// every printer on it — the printers the caller may see, and no others.
 func (api tableAPI) listMoments(w http.ResponseWriter, r *http.Request) {
-	light, found, err := api.lightOf(r.PathValue("light"))
+	seen, set, ok := api.visibleSet(w, r)
+	if !ok {
+		return
+	}
+
+	light, found, err := api.lightOf(r.PathValue("light"), set)
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -881,7 +904,7 @@ func (api tableAPI) listMoments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		refuse(w, r, api.unknownLight(r.PathValue("light")))
+		refuse(w, r, api.unknownLight(r.PathValue("light"), set))
 
 		return
 	}
@@ -893,12 +916,12 @@ func (api tableAPI) listMoments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, _ := printerNames(r.Context(), api.fleet(), api.timeout())
+	names := namesOf(seen)
 
 	moments := make([]momentAnswer, 0, len(momentTable))
 
 	for _, definition := range momentTable {
-		entries, err := entriesOf(config, light, api.live.set(), definition, names)
+		entries, err := entriesOf(config, light, set, definition, names)
 		if err != nil {
 			refuse(w, r, StoreUnavailable.New("this module's configuration store cannot be acted on: "+err.Error()))
 
@@ -917,7 +940,7 @@ func (api tableAPI) listMoments(w http.ResponseWriter, r *http.Request) {
 	said := momentsAnswer{
 		Light:          light.Name,
 		Address:        light.Address,
-		Printers:       answersOf(bindingsOn(api.live.set(), light), names),
+		Printers:       answersOf(bindingsOn(set, light), names),
 		Moments:        moments,
 		Count:          len(moments),
 		Persisted:      available,
@@ -931,9 +954,15 @@ func (api tableAPI) listMoments(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, said)
 }
 
-// readMoment is GET /lights/{light}/moments/{moment}: one moment, with one entry per printer.
+// readMoment is GET /lights/{light}/moments/{moment}: one moment, with one entry per printer the
+// caller may see.
 func (api tableAPI) readMoment(w http.ResponseWriter, r *http.Request) {
-	light, found, err := api.lightOf(r.PathValue("light"))
+	seen, set, ok := api.visibleSet(w, r)
+	if !ok {
+		return
+	}
+
+	light, found, err := api.lightOf(r.PathValue("light"), set)
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -941,7 +970,7 @@ func (api tableAPI) readMoment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		refuse(w, r, api.unknownLight(r.PathValue("light")))
+		refuse(w, r, api.unknownLight(r.PathValue("light"), set))
 
 		return
 	}
@@ -960,9 +989,9 @@ func (api tableAPI) readMoment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, _ := printerNames(r.Context(), api.fleet(), api.timeout())
+	names := namesOf(seen)
 
-	entries, err := entriesOf(config, light, api.live.set(), definition, names)
+	entries, err := entriesOf(config, light, set, definition, names)
 	if err != nil {
 		refuse(w, r, StoreUnavailable.New("this module's configuration store cannot be acted on: "+err.Error()))
 
@@ -1100,7 +1129,7 @@ func printerBindingOn(set bindings, light controllerAnswer, deviceID string) (bi
 // standing in front of it with a phone. A preset name is therefore accepted as written — see
 // momenttable.go.
 func (api tableAPI) updateMoment(w http.ResponseWriter, r *http.Request) {
-	light, found, err := api.lightOf(r.PathValue("light"))
+	light, found, err := api.lightOf(r.PathValue("light"), api.live.set())
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -1108,7 +1137,7 @@ func (api tableAPI) updateMoment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		refuse(w, r, api.unknownLight(r.PathValue("light")))
+		refuse(w, r, api.unknownLight(r.PathValue("light"), api.live.set()))
 
 		return
 	}
@@ -1158,7 +1187,7 @@ func (api tableAPI) updateMoment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, _ := printerNames(r.Context(), api.fleet(), api.timeout())
+	names, _ := printerNames(r.Context(), api.fleet(), routesapi.PrincipalOf(r), api.timeout())
 
 	held, _ := printerBindingOn(api.live.set(), light, printer.DeviceID)
 
@@ -1179,7 +1208,7 @@ func (api tableAPI) updateMoment(w http.ResponseWriter, r *http.Request) {
 // carries the light and the moment; and because a DELETE body is the one part of HTTP a proxy may
 // drop. Absent, it is the light's only printer when the light carries one — see printerOn.
 func (api tableAPI) deleteMoment(w http.ResponseWriter, r *http.Request) {
-	light, found, err := api.lightOf(r.PathValue("light"))
+	light, found, err := api.lightOf(r.PathValue("light"), api.live.set())
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -1187,7 +1216,7 @@ func (api tableAPI) deleteMoment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		refuse(w, r, api.unknownLight(r.PathValue("light")))
+		refuse(w, r, api.unknownLight(r.PathValue("light"), api.live.set()))
 
 		return
 	}
@@ -1218,7 +1247,7 @@ func (api tableAPI) deleteMoment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, _ := printerNames(r.Context(), api.fleet(), api.timeout())
+	names, _ := printerNames(r.Context(), api.fleet(), routesapi.PrincipalOf(r), api.timeout())
 
 	held, _ := printerBindingOn(api.live.set(), light, printer.DeviceID)
 

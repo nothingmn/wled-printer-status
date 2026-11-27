@@ -44,7 +44,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -210,28 +209,11 @@ func lightKey(address string) string {
 // normaliseLightAddress is a typed address as this module stores it, or the refusal that says what
 // is wrong with it.
 //
-// An address typed without a scheme is read as http, because that is how a person writes a light's
-// address and what a WLED controller answers on. Everything after that is the client's own rule
-// (wled.New), not a second copy of it here: the address this module stores is one it can build a
-// client for, which is the same check a binding's address already goes through.
+// The rule is checkLightAddress (declared.go), which is the same rule a settings value and a store
+// row are held to: plain http on port 80, a bare host, because those two ports are the whole of what
+// the manifest declares on a light.
 func normaliseLightAddress(address string) (string, error) {
-	typed := strings.TrimSpace(address)
-
-	if typed == "" {
-		return "", errors.New("no address was given: write the light's IP address, such as 10.0.0.253")
-	}
-
-	if !strings.Contains(typed, "://") {
-		typed = "http://" + typed
-	}
-
-	base := strings.TrimRight(typed, "/")
-
-	if _, err := wled.New(base); err != nil {
-		return "", fmt.Errorf("%q is not an address a light can answer at: %w", address, err)
-	}
-
-	return base, nil
+	return checkLightAddress(address)
 }
 
 // lightOf is one light as the store keeps it, from what the light answered and when.
@@ -708,7 +690,10 @@ func (api lightsAPI) slotAnswers(stored []storedLight) []lightSlot {
 		if !slot.Filled {
 			said.Note = fmt.Sprintf(
 				"Slot %d is empty. Fill it in the extension's own settings — light%d_address — not on this screen; "+
-					"this module reads nothing at that slot until it has an address.", slot.Slot, slot.Slot)
+					"this module reads nothing at that slot until it has an address. A light address is plain http on "+
+					"port 80 — a bare host such as 10.0.0.136, or the same address with an explicit :80, and nothing "+
+					"else: this module dials port 80 for the controller's own web interface and port 4048 for DDP, the "+
+					"pixel path, and no other scheme, port or path.", slot.Slot, slot.Slot)
 
 			out = append(out, said)
 

@@ -53,6 +53,7 @@ import (
 
 	"github.com/prusa3d/prusa-connect/sdk/deviceapi"
 	"github.com/prusa3d/prusa-connect/sdk/fault"
+	"github.com/prusa3d/prusa-connect/sdk/routesapi"
 
 	"github.com/nothingmn/wled-printer-status/internal/wled"
 )
@@ -234,9 +235,6 @@ type bindingsAnswer struct {
 	// so here, before a caller finds it out by looking at a dark light after a restart.
 	Persisted bool `json:"persisted"`
 
-	// NamesReadFailed says why a printer's name is missing, absent when the host answered.
-	NamesReadFailed string `json:"names_read_failed,omitempty"`
-
 	// Refused is every binding the store holds whose address is not one of the five declared light
 	// slots. It is not driven, not probed and never written to (declared.go). It is reported here
 	// rather than silently dropped, because the row is exactly what a person has to see in order
@@ -327,7 +325,7 @@ func (api bindingAPI) timeout() time.Duration {
 // a name beside a device id, and the moment table, to label the sub-rows an Events screen draws —
 // and a second copy of this read would be a second place for the bound and the failure sentence to
 // drift.
-func printerNames(ctx context.Context, fleet devices, bound time.Duration) (map[string]string, string) {
+func printerNames(ctx context.Context, fleet devices, person string, bound time.Duration) (map[string]string, string) {
 	if fleet == nil {
 		return nil, "this process has no connection to the host yet"
 	}
@@ -335,7 +333,10 @@ func printerNames(ctx context.Context, fleet devices, bound time.Duration) (map[
 	reading, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
-	page, err := fleet.List(reading, deviceapi.ListParams{Limit: deviceapi.MaxPageLimit})
+	// The caller's own read: a name is a fact about a printer, and this map is handed to the
+	// route that draws it, so the host is asked for the printers this person may see and no
+	// others. See visible.go.
+	page, err := fleet.List(reading, deviceapi.ListParams{Principal: person, Limit: deviceapi.MaxPageLimit})
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -350,32 +351,46 @@ func printerNames(ctx context.Context, fleet devices, bound time.Duration) (map[
 }
 
 // printerNames is the same read on the binding editor's own route, with the bound this value
-// carries.
-func (api bindingAPI) printerNames(ctx context.Context) (map[string]string, string) {
-	return printerNames(ctx, api.fleet(), api.timeout())
+// carries, asked for the caller of this request.
+func (api bindingAPI) printerNames(ctx context.Context, person string) (map[string]string, string) {
+	return printerNames(ctx, api.fleet(), person, api.timeout())
 }
 
-// listBindings is GET /bindings: the set this module is driving.
+// listBindings is GET /bindings: the set this module is driving, as the caller may see it.
 func (api bindingAPI) listBindings(w http.ResponseWriter, r *http.Request) {
-	// The whole stored set, refused rows included: a binding the declaration will not drive is a
-	// row a person has to be able to find, so it is answered in `refused` rather than left out.
-	running := api.live.set()
-	names, why := api.printerNames(r.Context())
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return
+	}
+
+	// The whole stored set the caller may see, refused rows included: a binding the declaration
+	// will not drive is a row a person has to be able to find, so it is answered in `refused`
+	// rather than left out. A binding whose printer this caller may not see is not in either
+	// list: it is not a row with its printer blanked out, it is absent.
+	running := seen.only(api.live.set())
+	names := namesOf(seen)
 
 	answer(w, http.StatusOK, bindingsAnswer{
-		Bindings:        answersOf(running, names),
-		Count:           len(running),
-		Refused:         refusedAnswersOf(api.live.refused()),
-		Source:          api.live.source(),
-		Persisted:       api.kept(),
-		NamesReadFailed: why,
+		Bindings:  answersOf(running, names),
+		Count:     len(running),
+		Refused:   refusedAnswersOf(seen.only(api.live.refused())),
+		Source:    api.live.source(),
+		Persisted: api.kept(),
 	})
 }
 
 // readBinding is GET /bindings/{id}: one binding, by its own name.
+//
+// A binding of a printer the caller may not see is answered exactly as a name this module does not
+// drive, which is what keeps its existence out of the answer.
 func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return
+	}
+
 	id := r.PathValue("id")
-	set := api.live.all()
+	set := seen.only(api.live.all())
 
 	found, ok := set.find(id)
 	if !ok {
@@ -386,14 +401,13 @@ func (api bindingAPI) readBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, why := api.printerNames(r.Context())
+	names := namesOf(seen)
 
 	foundAnswer := answerOf(found, positionOf(set, found.ID), names)
 
 	said := map[string]any{
-		"binding":           foundAnswer,
-		"persisted":         api.kept(),
-		"names_read_failed": why,
+		"binding":   foundAnswer,
+		"persisted": api.kept(),
 	}
 
 	if !api.allows(found.Address) {
@@ -485,7 +499,16 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The declaration first, before the host is asked and before the store is touched: an address
+	// The address rule first, before the declaration and before the host is asked: an address with a
+	// scheme or a port of its own names a connection this module does not declare, and the refusal
+	// has to say that in words that name the two ports it does — see declared.go.
+	if _, err := checkLightAddress(strings.TrimSpace(asked.Controller)); err != nil {
+		refuse(w, r, BindingRefused.New(err.Error()))
+
+		return
+	}
+
+	// The declaration next, before the host is asked and before the store is touched: an address
 	// the settings do not name is a binding this module may not drive, so it is refused in words
 	// and nothing is written. This is the route-level half of declared.go's rule; the watch is the
 	// other half, for a binding that reached the store before the rule existed.
@@ -522,7 +545,7 @@ func (api bindingAPI) createBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, why := api.printerNames(r.Context())
+	names, why := api.printerNames(r.Context(), routesapi.PrincipalOf(r))
 
 	answer(w, http.StatusCreated, map[string]any{
 		"binding":           answerOf(added, positionOf(set, added.ID), names),
@@ -556,8 +579,15 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A move to an address the declaration does not name is refused before anything is read or
-	// written, for the same reason a create is: the watch would never drive it.
+	// The address rule first, and then the declaration: a move to an address this module may not use,
+	// or one the settings do not name, is refused before anything is read or written, for the same
+	// reason a create is: the watch would never drive it. See declared.go.
+	if _, err := checkLightAddress(strings.TrimSpace(asked.Controller)); err != nil {
+		refuse(w, r, BindingRefused.New(err.Error()))
+
+		return
+	}
+
 	if !api.allows(strings.TrimSpace(asked.Controller)) {
 		refuse(w, r, BindingRefused.New(refusedReason(strings.TrimSpace(asked.Controller))))
 
@@ -603,7 +633,7 @@ func (api bindingAPI) updateBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	names, why := api.printerNames(r.Context())
+	names, why := api.printerNames(r.Context(), routesapi.PrincipalOf(r))
 
 	answer(w, http.StatusOK, map[string]any{
 		"binding":           answerOf(changed, positionOf(set, changed.ID), names),
@@ -711,35 +741,26 @@ type boundAnswer struct {
 	Whole      bool   `json:"whole"`
 }
 
-// listPrinters is GET /printers: every printer the host holds, each with the binding that
-// already shows it.
+// listPrinters is GET /printers: every printer the host holds that this caller may see, each with
+// the binding that already shows it.
 //
-// This is the route that answers "where would someone get that GUID": nobody types one. A
-// caller reads this list and passes back an `id`, and the same list says which of them are
-// already taken.
+// This is the route that answers "where would someone get that GUID": nobody types one. A caller
+// reads this list and passes back an `id`, and the same list says which of them are already taken.
+//
+// The question is asked for the caller, not for the module. The host answers with the printers this
+// person may see — see visible.go — and the rows are built from that answer, so `count` and `total`
+// are both that person's fleet and not the server's.
 func (api bindingAPI) listPrinters(w http.ResponseWriter, r *http.Request) {
-	fleet := api.fleet()
-	if fleet == nil {
-		refuse(w, r, PrintersUnavailable.New("This process has no connection to the host yet. It answers once the module is configured."))
-
+	seen, ok := seenOrPrinters(w, r, api.fleet, api.timeout())
+	if !ok {
 		return
 	}
 
-	reading, cancel := context.WithTimeout(r.Context(), api.timeout())
-	defer cancel()
+	set := seen.only(api.live.set())
 
-	page, err := fleet.List(reading, deviceapi.ListParams{Limit: deviceapi.MaxPageLimit})
-	if err != nil {
-		refuse(w, r, PrintersUnavailable.New(err.Error()))
+	out := make([]printerAnswer, 0, len(seen.items))
 
-		return
-	}
-
-	set := api.live.set()
-
-	out := make([]printerAnswer, 0, len(page.Items))
-
-	for _, device := range page.Items {
+	for _, device := range seen.items {
 		one := printerAnswer{ID: device.ID, Name: device.Name, Model: device.Model, Connected: device.Connected}
 
 		// Every binding that shows this printer, not only the first: a printer on two lights is
@@ -762,7 +783,7 @@ func (api bindingAPI) listPrinters(w http.ResponseWriter, r *http.Request) {
 	answer(w, http.StatusOK, map[string]any{
 		"printers": out,
 		"count":    len(out),
-		"total":    page.Total,
+		"total":    seen.total,
 	})
 }
 
@@ -897,9 +918,16 @@ func nameOfController(key string) string {
 	return key
 }
 
-// listControllers is GET /controllers: every controller the running set drives.
+// listControllers is GET /controllers: every controller the running set drives, as the caller may
+// see it. A controller whose bindings all show printers this person may not see is not in the list:
+// a row with no printers on it would be a light this module drives for somebody else.
 func (api bindingAPI) listControllers(w http.ResponseWriter, r *http.Request) {
-	found, err := controllersOf(api.live.set())
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return
+	}
+
+	found, err := controllersOf(seen.only(api.live.set()))
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 
@@ -917,10 +945,20 @@ func (api bindingAPI) listControllers(w http.ResponseWriter, r *http.Request) {
 // really holds, with the name he gave it in WLED's own interface to recognise it by. The answer
 // is one read of the controller's /json/state, whose seg array is what it says it holds; that
 // document is already parsed by internal/wled for the borrow, and this is the same read.
+//
+// The controller is resolved from the bindings the caller may see. A light that only shows
+// printers this person may not see answers as a controller this module does not drive.
 func (api bindingAPI) readController(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	found, err := controllersOf(api.live.set())
+	seen, ok := seenOrRefuse(w, r, api.fleet, api.timeout())
+	if !ok {
+		return
+	}
+
+	set := seen.only(api.live.set())
+
+	found, err := controllersOf(set)
 	if err != nil {
 		refuse(w, r, BindingRefused.New(err.Error()))
 

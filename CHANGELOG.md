@@ -10,6 +10,38 @@ refusal. Name the route and the setting key, never a function or a file.
 A change that has landed but has not been released sits under `Unreleased` at
 the top, and `version:` in `module.yaml` is the newest released heading below it.
 
+## 0.9.1 — 2026-11-27
+
+**Every read route now asks the server which printers the person making the request may see, and answers
+only those.** This is a fix, under the same manifest and the same declared egress: a viewer could open the
+extension and read every printer on the server — its state, its job, its progress — because the routes read
+the fleet as the module itself. The driver is untouched, and a person who may see no printer is answered an
+empty list rather than an error.
+
+- **`GET /printers` asks for the caller.** The printer list is the server's answer to "which printers may
+  this person see", and `count` and `total` are both that person's fleet. A printer somebody else owns is not
+  in the list at all.
+- **`GET /bindings`, `GET /bindings/{id}`, `GET /controllers` and `GET /controllers/{name}` omit a binding,
+  a refused row, a taken segment or a controller whose printer the caller may not see.** A binding the
+  server does not show them is answered as a name this module does not drive, and a light whose only
+  printers are somebody else's is not listed. `GET /bindings/{id}/layout` and `GET /lights/{light}/layouts`
+  answer the same way.
+- **`GET /status` and `GET /frames` omit the reading, the frame and the thumbnail of a printer the caller
+  may not see.** A caller who may see none of this module's printers is answered an empty `bindings` list or
+  an empty `frames` list, with `build` still beside it, and not the "no reading yet" refusal: nothing is
+  wrong with the module, there is simply nothing of theirs in it.
+- **The moments routes are narrowed the same way.** `GET /lights/{light}/moments` and
+  `GET /lights/{light}/moments/{moment}` carry a `printers` list and one entry per printer that the caller
+  may see, and a light with no such printer answers as a light this module does not drive.
+- **A server that cannot answer is a refusal.** A read the server does not answer for — or a request it did
+  not attribute to anybody — answers `ACCESS_UNKNOWN`, and never the whole fleet. The answer is kept for
+  thirty seconds per person, so one screenful of reads is one question.
+- **A light address is plain http on port 80, and nothing else.** `https://`, a port of its own such as
+  `:8080`, or a path reaches a connection the manifest does not declare, so `light1_address` to
+  `light5_address` and a binding's `controller` refuse it in words that name the two ports this release
+  declares: 80 for the controller's own web interface and 4048 for DDP, the pixel path. A bare host and the
+  same address written `:80` are the same address and are accepted.
+
 ## 0.9.0 — 2026-11-23
 
 **The manifest now declares the connections this module makes, and the five declared light addresses are
